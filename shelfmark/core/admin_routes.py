@@ -61,7 +61,7 @@ def _sanitize_user(user: dict) -> dict:
     return user
 
 
-def register_admin_routes(app: Flask, user_db: UserDB) -> None:
+def register_admin_routes(app: Flask, user_db: UserDB, request_db=None) -> None:
     """Register admin user management routes on the Flask app."""
 
     @app.route("/api/admin/users", methods=["GET"])
@@ -251,6 +251,11 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
             ]
             if not local_admins:
                 return jsonify({"error": "Cannot delete the last local admin account"}), 400
+
+        # Delete all user's requests first (cascade delete)
+        if request_db:
+            deleted_count = request_db.delete_requests_by_user(user_id)
+            logger.info(f"Deleted {deleted_count} requests for user {user_id}")
 
         user_db.delete_user(user_id)
         logger.info(f"Admin deleted user {user_id}: {user['username']}")

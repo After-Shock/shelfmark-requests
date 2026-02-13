@@ -172,26 +172,24 @@ export const RequestsSidebar = ({
   };
 
   const handleClearFulfilled = async () => {
-    // For admins: clear all completed (fulfilled, denied, failed)
-    // For users: only clear pending (backend restriction - users can only delete pending)
-    const clearableRequests = isAdmin
-      ? requests.filter((r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed')
-      : requests.filter((r) => r.status === 'pending');
+    // Clear all completed requests (fulfilled, denied, failed, cancelled)
+    const clearableRequests = requests.filter(
+      (r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed' || r.status === 'cancelled'
+    );
 
     // Delete all clearable requests in parallel
     try {
       await Promise.all(clearableRequests.map((r) => onDelete(r.id)));
     } catch (error) {
-      console.error('Failed to clear requests:', error);
+      console.error('Failed to clear completed requests:', error);
       // Errors are already handled by individual onDelete calls
     }
   };
 
-  // For admins: show clear button if there are completed requests
-  // For users: show clear button if there are pending requests
-  const hasClearable = isAdmin
-    ? requests.some((r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed')
-    : requests.some((r) => r.status === 'pending');
+  // Show clear button if there are any completed requests
+  const hasClearable = requests.some(
+    (r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed' || r.status === 'cancelled'
+  );
 
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
@@ -201,8 +199,8 @@ export const RequestsSidebar = ({
     const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
     // Show "Mark Completed" for any non-fulfilled/non-cancelled request
     const canMarkCompleted = req.status !== 'fulfilled' && req.status !== 'cancelled';
-    // For regular users, only allow deletion of pending requests (backend restriction)
-    const canDelete = isAdmin || req.status === 'pending';
+    // Users can now delete their own requests (any status), admins can delete any request
+    const canDelete = true;
 
     return (
       <div
@@ -490,14 +488,14 @@ export const RequestsSidebar = ({
             paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',
           }}
         >
-          {/* Clear button: "Clear Pending" for users, hidden for admins */}
+          {/* Clear Completed button - only show for non-admin users */}
           {!isAdmin && hasClearable && (
             <button
               type="button"
               onClick={handleClearFulfilled}
               className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
             >
-              Clear Pending
+              Clear Completed
             </button>
           )}
         </div>

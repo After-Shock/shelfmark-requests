@@ -296,6 +296,17 @@ class RequestDB:
             finally:
                 conn.close()
 
+    def delete_requests_by_user(self, user_id: int) -> int:
+        """Delete all requests for a given user. Returns number of deleted requests."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                cursor = conn.execute("DELETE FROM requests WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return cursor.rowcount
+            finally:
+                conn.close()
+
     def get_requests_by_download_task(self, task_id: str) -> List[Dict[str, Any]]:
         """Get all requests linked to a download task ID."""
         conn = self._connect()

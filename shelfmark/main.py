@@ -101,12 +101,16 @@ try:
     import shelfmark.config.users_settings as _  # noqa: F401 - registers users tab
     from shelfmark.core.oidc_routes import register_oidc_routes
     from shelfmark.core.admin_routes import register_admin_routes
-    register_oidc_routes(app, user_db)
-    register_admin_routes(app, user_db)
     from shelfmark.core.request_db import RequestDB
     from shelfmark.core.request_routes import register_request_routes
+
+    # Initialize request database
     request_db = RequestDB(_user_db_path)
     request_db.initialize()
+
+    # Register routes
+    register_oidc_routes(app, user_db)
+    register_admin_routes(app, user_db, request_db)
     register_request_routes(app, request_db, user_db)
 except (sqlite3.OperationalError, OSError) as e:
     logger.warning(
