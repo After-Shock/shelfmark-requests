@@ -30,6 +30,7 @@ const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: st
   downloading: { bg: 'bg-indigo-500/20', text: 'text-indigo-700 dark:text-indigo-300', label: 'Downloading' },
   fulfilled: { bg: 'bg-green-500/20', text: 'text-green-700 dark:text-green-300', label: 'Fulfilled' },
   failed: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' },
+  cancelled: { bg: 'bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', label: 'Cancelled' },
 };
 
 const BookThumbnail = ({ coverUrl, title }: { coverUrl?: string; title?: string }) => {
@@ -169,7 +170,9 @@ export const RequestsSidebar = ({
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
-    const isFailed = req.status === 'failed';
+    // Show retry for: failed, cancelled, stuck downloading, or approved (audiobooks)
+    const isRetryable = req.status === 'failed' || req.status === 'cancelled' || req.status === 'downloading' || req.status === 'approved';
+    const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
 
     return (
       <div
@@ -251,25 +254,47 @@ export const RequestsSidebar = ({
                 </div>
               )}
 
-              {/* Admin retry button for failed items */}
-              {isAdmin && isFailed && (
+              {/* Admin retry/deny buttons for retryable items (failed or cancelled) */}
+              {isAdmin && isRetryable && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleRetryClick(req.id)}
+                    disabled={processingId === req.id}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{
+                      backgroundColor: 'rgba(0, 188, 212, 0.2)',
+                      color: theme.primary.turquoise
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.3)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.2)';
+                    }}
+                  >
+                    {processingId === req.id ? 'Retrying...' : 'Retry'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDenyClick(req.id)}
+                    disabled={processingId === req.id}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
+                  </button>
+                </div>
+              )}
+
+              {/* Admin deny button for other deniable statuses (approved, downloading, etc.) */}
+              {isAdmin && !isPending && !isRetryable && isDeniable && (
                 <button
                   type="button"
-                  onClick={() => handleRetryClick(req.id)}
+                  onClick={() => handleDenyClick(req.id)}
                   disabled={processingId === req.id}
-                  className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{
-                    backgroundColor: 'rgba(0, 188, 212, 0.2)',
-                    color: theme.primary.turquoise
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.3)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.2)';
-                  }}
+                  className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {processingId === req.id ? 'Retrying...' : 'Retry'}
+                  {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                 </button>
               )}
 
@@ -403,7 +428,8 @@ export const RequestsSidebar = ({
             paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',
           }}
         >
-          {hasClearable && (
+          {/* Only show Clear Completed for non-admins (users can clear their own view) */}
+          {!isAdmin && hasClearable && (
             <button
               type="button"
               onClick={handleClearFulfilled}

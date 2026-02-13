@@ -181,7 +181,7 @@ export const useRequests = ({
     if (deletedRequest) {
       setCounts(prev => ({
         ...prev,
-        [deletedRequest.status]: Math.max(0, prev[deletedRequest.status as keyof RequestCounts] - 1),
+        [deletedRequest.status]: Math.max(0, (prev[deletedRequest.status as keyof RequestCounts] || 0) - 1),
         total: Math.max(0, prev.total - 1),
       }));
     }

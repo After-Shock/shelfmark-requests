@@ -209,20 +209,7 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
       {/* Requests Button */}
       {onRequestsClick && (
         <button
-          onClick={() => {
-            // Check if there are any status changes (approved, downloading, fulfilled)
-            const hasStatusChanges = requestCounts && (requestCounts.approved > 0 || requestCounts.downloading > 0 || requestCounts.fulfilled > 0);
-
-            if (hasStatusChanges) {
-              // Open requests sidebar if there are status changes
-              onRequestsClick();
-            } else {
-              // Show toast if no status changes
-              if (onShowToast) {
-                onShowToast('No new status changes on any requests', 'info');
-              }
-            }
-          }}
+          onClick={onRequestsClick}
           className="relative flex items-center gap-2 px-3 py-2 rounded-full hover-action transition-all duration-200 text-gray-900 dark:text-gray-100"
           aria-label="View requests"
           title="Requests"
@@ -242,14 +229,14 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
                 d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"
               />
             </svg>
-            {/* Status change notification badge - approved, downloading, completed */}
-            {requestCounts && (requestCounts.approved > 0 || requestCounts.downloading > 0 || requestCounts.fulfilled > 0) && (
+            {/* Unviewed requests notification badge */}
+            {requestCounts && requestCounts.unviewed !== undefined && requestCounts.unviewed > 0 && (
               <span
                 className="absolute -top-1 -right-1 text-white text-[0.55rem] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center"
                 style={{ backgroundColor: '#FE9A76' }}
-                title={`${requestCounts.approved + requestCounts.downloading + requestCounts.fulfilled} status updates`}
+                title={`${requestCounts.unviewed} new update${requestCounts.unviewed > 1 ? 's' : ''}`}
               >
-                {requestCounts.approved + requestCounts.downloading + requestCounts.fulfilled}
+                {requestCounts.unviewed}
               </span>
             )}
           </div>

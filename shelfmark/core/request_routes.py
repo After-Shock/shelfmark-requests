@@ -174,7 +174,22 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         """Get request counts by status for badge display."""
         user_id = None if _is_admin() else _get_db_user_id()
         counts = request_db.get_request_counts(user_id=user_id)
+
+        # Get unviewed count for non-admins
+        if not _is_admin():
+            unviewed = request_db.get_unviewed_count(user_id)
+            counts["unviewed"] = unviewed
+
         return jsonify(counts)
+
+    @app.route("/api/requests/mark-viewed", methods=["POST"])
+    @_require_auth
+    def mark_requests_viewed_route():
+        """Mark all requests as viewed for the current user."""
+        user_id = _get_db_user_id()
+        user_db.update_requests_last_viewed(user_id)
+        logger.debug(f"User {user_id} marked requests as viewed")
+        return jsonify({"success": True})
 
     @app.route("/api/requests/<int:request_id>", methods=["GET"])
     @_require_auth
@@ -213,7 +228,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>/approve", methods=["POST"])
     @_require_admin
     def approve_request_route(request_id):
-        """Approve a request and trigger auto-download."""
+        """Approve a request. Audiobooks stay at 'approved', ebooks trigger auto-download."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
@@ -233,10 +248,16 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         # Send notification to requester
         _send_status_notification(user_db, req, "approved")
 
+        # For audiobooks, just stay at "approved" status - admin will manually manage
+        content_type = req.get("content_type", "ebook")
+        if content_type == "audiobook":
+            logger.info(f"Request #{request_id} is audiobook - staying at 'approved' for manual management")
+            return jsonify(updated)
+
+        # For ebooks, start auto-download in background thread
         # Capture session data before spawning thread (session unavailable outside request context)
         admin_username = session.get("user_id")
 
-        # Start auto-download in background thread
         thread = threading.Thread(
             target=_auto_download_request,
             args=(request_db, user_db, request_id, req, admin_user_id, admin_username),
@@ -249,14 +270,12 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>/deny", methods=["POST"])
     @_require_admin
     def deny_request_route(request_id):
-        """Deny a request with optional admin note."""
+        """Deny a request with optional admin note. Can be used on any status."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
 
-        if req["status"] != "pending":
-            return jsonify({"error": f"Cannot deny a request with status '{req['status']}'"}), 400
-
+        # Allow deny on any status - admin can reject at any time
         data = request.get_json() or {}
         admin_note = (data.get("admin_note") or "").strip() or None
         admin_user_id = _get_db_user_id()
@@ -265,7 +284,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             request_id, "denied",
             admin_note=admin_note, approved_by=admin_user_id
         )
-        logger.info(f"Request #{request_id} denied by admin {admin_user_id}")
+        logger.info(f"Request #{request_id} denied by admin {admin_user_id} (was {req['status']})")
         _broadcast_request_update(updated)
 
         # Send notification to requester
@@ -273,15 +292,48 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         return jsonify(updated)
 
-    @app.route("/api/requests/<int:request_id>/retry", methods=["POST"])
+    @app.route("/api/requests/<int:request_id>/status", methods=["PUT"])
     @_require_admin
-    def retry_request_route(request_id):
-        """Retry a failed request."""
+    def update_request_status_route(request_id):
+        """Admin: manually update request status to any value."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
 
-        if req["status"] != "failed":
+        data = request.get_json() or {}
+        new_status = data.get("status")
+        if not new_status:
+            return jsonify({"error": "status is required"}), 400
+
+        valid_statuses = ["pending", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled"]
+        if new_status not in valid_statuses:
+            return jsonify({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}), 400
+
+        admin_note = (data.get("admin_note") or "").strip() or None
+        admin_user_id = _get_db_user_id()
+
+        updated = request_db.update_request_status(
+            request_id, new_status,
+            admin_note=admin_note, approved_by=admin_user_id
+        )
+        logger.info(f"Request #{request_id} status changed to '{new_status}' by admin {admin_user_id} (was {req['status']})")
+        _broadcast_request_update(updated)
+
+        # Send notification to requester if status changed significantly
+        if new_status in ["approved", "denied", "fulfilled", "failed"]:
+            _send_status_notification(user_db, req, new_status, admin_note=admin_note)
+
+        return jsonify(updated)
+
+    @app.route("/api/requests/<int:request_id>/retry", methods=["POST"])
+    @_require_admin
+    def retry_request_route(request_id):
+        """Retry a failed, cancelled, downloading, or approved request."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+
+        if req["status"] not in ("failed", "cancelled", "downloading", "approved"):
             return jsonify({"error": f"Cannot retry a request with status '{req['status']}'"}), 400
 
         admin_user_id = _get_db_user_id()
@@ -329,10 +381,16 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         _broadcast_request_update(updated)
 
+        # For audiobooks, just stay at "approved" status - admin will manually manage
+        content_type = updated.get("content_type", "ebook")
+        if content_type == "audiobook":
+            logger.info(f"Request #{request_id} is audiobook - staying at 'approved' for manual management")
+            return jsonify(updated)
+
+        # For ebooks, start auto-download in background thread
         # Capture session data before spawning thread
         admin_username = session.get("user_id")
 
-        # Start auto-download in background thread
         thread = threading.Thread(
             target=_auto_download_request,
             args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),

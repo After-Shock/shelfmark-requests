@@ -196,6 +196,34 @@ class RequestDB:
         finally:
             conn.close()
 
+    def get_unviewed_count(self, user_id: int) -> int:
+        """Get count of requests with status updates since user last viewed."""
+        conn = self._connect()
+        try:
+            # Get user's last viewed timestamp from users table
+            user_row = conn.execute(
+                "SELECT requests_last_viewed_at FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+
+            if not user_row or not user_row["requests_last_viewed_at"]:
+                # User has never viewed requests, count all their requests
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM requests WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()
+                return row["cnt"] if row else 0
+
+            # Count requests updated after last viewed time
+            row = conn.execute(
+                """SELECT COUNT(*) AS cnt FROM requests
+                   WHERE user_id = ? AND updated_at > ?""",
+                (user_id, user_row["requests_last_viewed_at"]),
+            ).fetchone()
+            return row["cnt"] if row else 0
+        finally:
+            conn.close()
+
     def update_request_status(
         self,
         request_id: int,

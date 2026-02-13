@@ -19,6 +19,7 @@ const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: st
   downloading: { bg: 'bg-indigo-500/20', text: 'text-indigo-700 dark:text-indigo-300', label: 'Downloading' },
   fulfilled: { bg: 'bg-green-500/20', text: 'text-green-700 dark:text-green-300', label: 'Fulfilled' },
   failed: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' },
+  cancelled: { bg: 'bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', label: 'Cancelled' },
 };
 
 const formatRelativeTime = (dateString: string): string => {
@@ -175,7 +176,9 @@ export const UserDashboard = ({
                         {formatRelativeTime(req.created_at)}
                       </p>
                       {req.admin_note && (
-                        <p className="text-xs opacity-50 italic truncate mt-0.5">{req.admin_note}</p>
+                        <p className="text-xs text-red-600 dark:text-red-400 truncate mt-0.5">
+                          <span className="font-medium">Deny Reason:</span> {req.admin_note}
+                        </p>
                       )}
                     </div>
 

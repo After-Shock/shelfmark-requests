@@ -63,6 +63,13 @@ class UserDB:
                     """)
                     logger.info("Added is_initial_admin column and marked first admin")
 
+                # Migration: Add requests_last_viewed_at column if it doesn't exist
+                cursor = conn.execute("PRAGMA table_info(users)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'requests_last_viewed_at' not in columns:
+                    conn.execute("ALTER TABLE users ADD COLUMN requests_last_viewed_at TIMESTAMP")
+                    logger.info("Added requests_last_viewed_at column")
+
                 conn.commit()
             finally:
                 conn.close()
@@ -199,6 +206,19 @@ class UserDB:
                     """INSERT INTO user_settings (user_id, settings_json) VALUES (?, ?)
                        ON CONFLICT(user_id) DO UPDATE SET settings_json = ?""",
                     (user_id, settings_json, settings_json),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def update_requests_last_viewed(self, user_id: int) -> None:
+        """Update the timestamp when user last viewed their requests."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "UPDATE users SET requests_last_viewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (user_id,)
                 )
                 conn.commit()
             finally:

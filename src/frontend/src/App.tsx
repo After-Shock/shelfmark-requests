@@ -164,6 +164,7 @@ function App() {
     handleDeny: handleRequestDeny,
     handleRetry: handleRequestRetry,
     handleDelete: handleRequestDelete,
+    refreshRequests,
   } = useRequests({ enabled: requestsEnabled });
 
   // Wrap approve/deny handlers to show toast notifications
@@ -196,6 +197,22 @@ function App() {
       throw error;
     }
   }, [handleRequestRetry, showToast]);
+
+  // Handle opening requests sidebar and marking as viewed
+  const handleOpenRequestsSidebar = useCallback(async () => {
+    setRequestsSidebarOpen(true);
+    // Mark requests as viewed for non-admin users
+    if (!isAdmin && requestsEnabled) {
+      try {
+        const { markRequestsViewed } = await import('./services/api');
+        await markRequestsViewed();
+        // Refresh counts to update badge
+        refreshRequests();
+      } catch (error) {
+        console.error('Failed to mark requests as viewed:', error);
+      }
+    }
+  }, [isAdmin, requestsEnabled, refreshRequests]);
 
   // UI state
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
@@ -612,7 +629,7 @@ function App() {
       });
       showToast(`Requested: ${book.title}`, 'success');
       setSelectedBook(null);
-      setRequestsSidebarOpen(true);
+      handleOpenRequestsSidebar();
     } catch (error) {
       console.error('Request failed:', error);
       showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
@@ -779,7 +796,7 @@ function App() {
         onRemoveToast={removeToast}
         contentType={contentType}
         onContentTypeChange={setContentType}
-        onRequestsClick={requestsEnabled ? () => setRequestsSidebarOpen(true) : undefined}
+        onRequestsClick={requestsEnabled ? handleOpenRequestsSidebar : undefined}
         requestCounts={requestsEnabled ? requestCounts : undefined}
       />
 

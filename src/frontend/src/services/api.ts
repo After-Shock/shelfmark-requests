@@ -550,3 +550,20 @@ export const deleteBookRequest = async (requestId: number): Promise<{ success: b
     method: 'DELETE',
   });
 };
+
+export const markRequestsViewed = async (): Promise<{ success: boolean }> => {
+  return fetchJSON<{ success: boolean }>(`${API_BASE}/requests/mark-viewed`, {
+    method: 'POST',
+  });
+};
+
+export const updateRequestStatus = async (
+  requestId: number,
+  status: string,
+  adminNote?: string
+): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status, admin_note: adminNote }),
+  });
+};

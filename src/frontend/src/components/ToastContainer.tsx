@@ -20,7 +20,7 @@ export const ToastContainer = ({ toasts }: ToastContainerProps) => {
   }, [toasts]);
 
   const toastTypeStyles: Record<Toast['type'], { backgroundColor: string; color: string }> = {
-    success: { backgroundColor: '#10b981', color: 'white' },
+    success: { backgroundColor: '#9333ea', color: 'white' },  // Purple for success notifications
     error: { backgroundColor: '#dc2626', color: 'white' },
     info: { backgroundColor: theme.primary.turquoise, color: 'white' },
   };
