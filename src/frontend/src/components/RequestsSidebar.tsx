@@ -11,6 +11,7 @@ interface RequestsSidebarProps {
   onDeny: (requestId: number, adminNote?: string) => Promise<void>;
   onRetry: (requestId: number) => Promise<void>;
   onDelete: (requestId: number) => Promise<void>;
+  onMarkCompleted: (requestId: number) => Promise<void>;
 }
 
 type FilterTab = 'all' | 'pending' | 'fulfilled';
@@ -87,6 +88,7 @@ export const RequestsSidebar = ({
   onDeny,
   onRetry,
   onDelete,
+  onMarkCompleted,
 }: RequestsSidebarProps) => {
   const [filter, setFilter] = useState<FilterTab>('all');
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
@@ -156,11 +158,31 @@ export const RequestsSidebar = ({
     }
   };
 
-  const handleClearFulfilled = () => {
+  const handleMarkCompletedClick = async (requestId: number) => {
+    setProcessingId(requestId);
+    try {
+      await onMarkCompleted(requestId);
+    } catch (error) {
+      console.error('Failed to mark request as completed:', error);
+      // Re-throw so App.tsx can show error toast
+      throw error;
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleClearFulfilled = async () => {
     const fulfilledRequests = requests.filter(
       (r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed'
     );
-    fulfilledRequests.forEach((r) => onDelete(r.id));
+
+    // Delete all completed requests in parallel
+    try {
+      await Promise.all(fulfilledRequests.map((r) => onDelete(r.id)));
+    } catch (error) {
+      console.error('Failed to clear completed requests:', error);
+      // Errors are already handled by individual onDelete calls
+    }
   };
 
   const hasClearable = requests.some(
@@ -170,9 +192,13 @@ export const RequestsSidebar = ({
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
-    // Show retry for: failed, cancelled, stuck downloading, or approved (audiobooks)
-    const isRetryable = req.status === 'failed' || req.status === 'cancelled' || req.status === 'downloading' || req.status === 'approved';
+    // Show retry for: failed, cancelled, denied, stuck downloading, or approved (audiobooks)
+    const isRetryable = req.status === 'failed' || req.status === 'cancelled' || req.status === 'denied' || req.status === 'downloading' || req.status === 'approved';
     const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
+    // Show "Mark Completed" for any non-fulfilled/non-cancelled request
+    const canMarkCompleted = req.status !== 'fulfilled' && req.status !== 'cancelled';
+    // For regular users, only allow deletion of fulfilled requests
+    const canDelete = isAdmin || req.status === 'fulfilled';
 
     return (
       <div
@@ -180,18 +206,20 @@ export const RequestsSidebar = ({
         className="relative rounded-lg border hover:shadow-md transition-shadow overflow-hidden"
         style={{ borderColor: 'var(--border-muted)', background: 'var(--bg-soft)' }}
       >
-        {/* Delete button - top right */}
-        <button
-          type="button"
-          onClick={() => onDelete(req.id)}
-          className="absolute top-1 right-1 z-10 flex h-8 w-8 items-center justify-center rounded-full transition-colors text-gray-500 hover:text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
-          title="Cancel request"
-          aria-label="Cancel request"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        {/* Delete button - top right (only show if allowed) */}
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(req.id)}
+            className="absolute top-1 right-1 z-10 flex h-8 w-8 items-center justify-center rounded-full transition-colors text-gray-500 hover:text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
+            title="Cancel request"
+            aria-label="Cancel request"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
 
         <div className="flex gap-2">
           {/* Book Thumbnail */}
@@ -232,9 +260,9 @@ export const RequestsSidebar = ({
 
             {/* Status badge + admin actions */}
             <div className="flex items-center justify-between mt-auto pt-1 gap-2">
-              {/* Admin approve/deny buttons for pending items */}
+              {/* Admin approve/deny/complete buttons for pending items */}
               {isAdmin && isPending && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
                   <button
                     type="button"
                     onClick={() => handleApproveClick(req.id)}
@@ -242,6 +270,14 @@ export const RequestsSidebar = ({
                     className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {processingId === req.id ? 'Processing...' : 'Approve'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMarkCompletedClick(req.id)}
+                    disabled={processingId === req.id}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {processingId === req.id ? 'Marking...' : 'Mark Completed'}
                   </button>
                   <button
                     type="button"
@@ -254,9 +290,9 @@ export const RequestsSidebar = ({
                 </div>
               )}
 
-              {/* Admin retry/deny buttons for retryable items (failed or cancelled) */}
+              {/* Admin retry/deny/complete buttons for retryable items */}
               {isAdmin && isRetryable && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
                   <button
                     type="button"
                     onClick={() => handleRetryClick(req.id)}
@@ -275,6 +311,16 @@ export const RequestsSidebar = ({
                   >
                     {processingId === req.id ? 'Retrying...' : 'Retry'}
                   </button>
+                  {canMarkCompleted && (
+                    <button
+                      type="button"
+                      onClick={() => handleMarkCompletedClick(req.id)}
+                      disabled={processingId === req.id}
+                      className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {processingId === req.id ? 'Marking...' : 'Mark Completed'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleDenyClick(req.id)}
@@ -286,16 +332,28 @@ export const RequestsSidebar = ({
                 </div>
               )}
 
-              {/* Admin deny button for other deniable statuses (approved, downloading, etc.) */}
+              {/* Admin deny/complete buttons for other deniable statuses (non-pending, non-retryable) */}
               {isAdmin && !isPending && !isRetryable && isDeniable && (
-                <button
-                  type="button"
-                  onClick={() => handleDenyClick(req.id)}
-                  disabled={processingId === req.id}
-                  className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
-                </button>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {canMarkCompleted && (
+                    <button
+                      type="button"
+                      onClick={() => handleMarkCompletedClick(req.id)}
+                      disabled={processingId === req.id}
+                      className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {processingId === req.id ? 'Marking...' : 'Mark Completed'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDenyClick(req.id)}
+                    disabled={processingId === req.id}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
+                  </button>
+                </div>
               )}
 
               <span

@@ -176,8 +176,8 @@ export const UserDashboard = ({
                         {formatRelativeTime(req.created_at)}
                       </p>
                       {req.admin_note && (
-                        <p className="text-xs text-red-600 dark:text-red-400 truncate mt-0.5">
-                          <span className="font-medium">Deny Reason:</span> {req.admin_note}
+                        <p className="text-xs opacity-70 italic truncate mt-0.5">
+                          Reason Denied {req.admin_note}
                         </p>
                       )}
                     </div>

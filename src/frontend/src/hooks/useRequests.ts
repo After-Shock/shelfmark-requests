@@ -37,6 +37,7 @@ interface UseRequestsReturn {
   handleDeny: (requestId: number, adminNote?: string) => Promise<void>;
   handleRetry: (requestId: number) => Promise<void>;
   handleDelete: (requestId: number) => Promise<void>;
+  handleMarkCompleted: (requestId: number) => Promise<void>;
   refreshRequests: () => Promise<void>;
 }
 
@@ -200,6 +201,19 @@ export const useRequests = ({
     }
   }, [requests, counts]);
 
+  const handleMarkCompleted = useCallback(async (requestId: number) => {
+    try {
+      // Use the manual status update endpoint to mark as fulfilled
+      const { updateRequestStatus } = await import('../services/api');
+      await updateRequestStatus(requestId, 'fulfilled');
+      // Force immediate refresh to show the updated status
+      await fetchAll();
+    } catch (error) {
+      console.error('Failed to mark request as completed:', error);
+      throw error;
+    }
+  }, [fetchAll]);
+
   return {
     requests,
     counts,
@@ -209,6 +223,7 @@ export const useRequests = ({
     handleDeny,
     handleRetry,
     handleDelete,
+    handleMarkCompleted,
     refreshRequests: fetchAll,
   };
 };

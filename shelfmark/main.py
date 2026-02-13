@@ -408,6 +408,24 @@ def login_required(f):
     return decorated_function
 
 
+def _require_admin(f):
+    """Decorator requiring admin session."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_mode = get_auth_mode()
+        # If no authentication is configured, allow access
+        if auth_mode == "none":
+            return f(*args, **kwargs)
+        # Check if user is authenticated
+        if "user_id" not in session:
+            return jsonify({"error": "Unauthorized"}), 401
+        # Check if user is admin
+        if not session.get("is_admin", False):
+            return jsonify({"error": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
 _BASE_TAG = '<base href="/" data-shelfmark-base />'
 
 
@@ -480,6 +498,7 @@ if DEBUG:
 
     @app.route('/api/debug', methods=['GET'])
     @login_required
+    @_require_admin
     def debug() -> Union[Response, Tuple[Response, int]]:
         """
         This will run the /app/genDebug.sh script, which will generate a debug zip with all the logs
@@ -515,11 +534,27 @@ if DEBUG:
 
     @app.route('/api/restart', methods=['GET'])
     @login_required
+    @_require_admin
     def restart() -> Union[Response, Tuple[Response, int]]:
         """
-        Restart the application
+        Restart the application.
+        For Docker: exits with code 0, which triggers container restart if configured with --restart policy.
+        For local: exits the process, allowing process manager to restart.
         """
-        os._exit(0)
+        logger.info("Restart endpoint called by admin, exiting application...")
+        # Return success response before exiting
+        response = jsonify({"success": True, "message": "Application restarting..."})
+
+        # Schedule exit after response is sent
+        def exit_after_response():
+            time.sleep(0.5)  # Give response time to be sent
+            logger.info("Exiting application for restart...")
+            os._exit(0)
+
+        import threading
+        threading.Thread(target=exit_after_response, daemon=True).start()
+
+        return response
 
 @app.route('/api/search', methods=['GET'])
 @login_required
@@ -1316,6 +1351,48 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
 
     logger.info(f"New user registered: '{username}'")
     return jsonify({"success": True}), 201
+
+
+@app.route('/api/auth/change-password', methods=['POST'])
+@login_required
+def api_change_password() -> Union[Response, Tuple[Response, int]]:
+    """Allow authenticated users to change their own password."""
+    if user_db is None:
+        return jsonify({"error": "User management not available"}), 503
+
+    auth_mode = get_auth_mode()
+    if auth_mode != "builtin":
+        return jsonify({"error": "Password change not available for this auth mode"}), 403
+
+    db_user_id = session.get('db_user_id')
+    if not db_user_id:
+        return jsonify({"error": "User session invalid"}), 401
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    new_password = data.get("new_password", "")
+
+    if not new_password or len(new_password) < 4:
+        return jsonify({"error": "New password must be at least 4 characters"}), 400
+
+    # Get current user
+    user = user_db.get_user(user_id=db_user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Update password
+    from werkzeug.security import generate_password_hash
+    new_password_hash = generate_password_hash(new_password)
+
+    try:
+        user_db.update_user(db_user_id, password_hash=new_password_hash)
+        logger.info(f"User '{user['username']}' changed their password")
+        return jsonify({"success": True, "message": "Password changed successfully"}), 200
+    except Exception as e:
+        logger.error(f"Failed to change password for user {user['username']}: {e}")
+        return jsonify({"error": "Failed to change password"}), 500
 
 
 @app.route('/api/auth/logout', methods=['POST'])

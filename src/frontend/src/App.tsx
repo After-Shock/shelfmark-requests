@@ -31,6 +31,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { SettingsModal } from './components/settings';
+import { AccountModal } from './components/AccountModal';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DEFAULT_LANGUAGES, DEFAULT_SUPPORTED_FORMATS } from './data/languages';
@@ -164,6 +165,7 @@ function App() {
     handleDeny: handleRequestDeny,
     handleRetry: handleRequestRetry,
     handleDelete: handleRequestDelete,
+    handleMarkCompleted: handleRequestMarkCompleted,
     refreshRequests,
   } = useRequests({ enabled: requestsEnabled });
 
@@ -198,6 +200,16 @@ function App() {
     }
   }, [handleRequestRetry, showToast]);
 
+  const handleMarkCompletedWithToast = useCallback(async (requestId: number) => {
+    try {
+      await handleRequestMarkCompleted(requestId);
+      showToast('Request marked as completed', 'success');
+    } catch (error) {
+      showToast('Failed to mark request as completed', 'error');
+      throw error;
+    }
+  }, [handleRequestMarkCompleted, showToast]);
+
   // Handle opening requests sidebar and marking as viewed
   const handleOpenRequestsSidebar = useCallback(async () => {
     setRequestsSidebarOpen(true);
@@ -221,6 +233,7 @@ function App() {
   const [downloadsSidebarOpen, setDownloadsSidebarOpen] = useState(false);
   const [requestsSidebarOpen, setRequestsSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [configBannerOpen, setConfigBannerOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [emailRecipientModalOpen, setEmailRecipientModalOpen] = useState(false);
@@ -773,6 +786,7 @@ function App() {
             setConfigBannerOpen(true);
           }
         } : undefined}
+        onAccountClick={authRequired && isAuthenticated ? () => setAccountOpen(true) : undefined}
         statusCounts={statusCounts}
         onLogoClick={() => handleResetSearch(config)}
         authRequired={authRequired}
@@ -929,9 +943,8 @@ function App() {
       </main>
 
       <Footer
-        buildVersion={config?.build_version}
-        releaseVersion={config?.release_version}
         debug={config?.debug}
+        isAdmin={isAdmin}
       />
       <ToastContainer toasts={toasts} />
 
@@ -953,6 +966,7 @@ function App() {
           onDeny={handleDenyWithToast}
           onRetry={handleRetryWithToast}
           onDelete={handleRequestDelete}
+          onMarkCompleted={handleMarkCompletedWithToast}
         />
       )}
 
@@ -961,6 +975,12 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         onShowToast={showToast}
         onSettingsSaved={handleSettingsSaved}
+      />
+
+      <AccountModal
+        isOpen={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        onShowToast={showToast}
       />
 
       {/* Auto-show banner on startup for users without config */}

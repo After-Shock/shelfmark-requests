@@ -38,6 +38,7 @@ interface HeaderProps {
   onContentTypeChange?: (type: ContentType) => void;
   onRequestsClick?: () => void;
   requestCounts?: RequestCounts;
+  onAccountClick?: () => void;
 }
 
 export const Header = forwardRef<HeaderHandle, HeaderProps>(({
@@ -65,6 +66,7 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
   onContentTypeChange,
   onRequestsClick,
   requestCounts,
+  onAccountClick,
 }, ref) => {
   const searchBarRef = useRef<SearchBarHandle>(null);
 
@@ -326,33 +328,6 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
           >
             <div className="py-1">
 
-              {/* Report a Bug - Admin only */}
-              {isAdmin && (
-                <a
-                  href="https://github.com/calibrain/shelfmark/issues"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full text-left px-4 py-2 hover-surface transition-colors flex items-center gap-3 text-slate-700 dark:text-slate-200"
-                  title="Submit a bug report"
-                >
-                  <svg
-                    className="w-5 h-5"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth="1.5"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5"
-                    />
-                  </svg>
-                  <span>Report a Bug</span>
-                </a>
-              )}
-
               {/* Requests Menu Item - for all authenticated users */}
               {onRequestsClick && (
                 <button
@@ -378,6 +353,34 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
                     />
                   </svg>
                   <span>My Requests</span>
+                </button>
+              )}
+
+              {/* Account Button - for authenticated users */}
+              {authRequired && isAuthenticated && onAccountClick && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeDropdown();
+                    onAccountClick();
+                  }}
+                  className="w-full text-left px-4 py-2 hover-surface transition-colors flex items-center gap-3"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth="1.5"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                  <span>Account</span>
                 </button>
               )}
 
@@ -469,17 +472,48 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
                     </svg>
                     <span>Debug</span>
                   </button>
-                  <form action={withBasePath('/api/restart')} method="get" className="w-full">
-                    <button
-                      className="w-full text-left px-4 py-2 hover-surface transition-colors flex items-center gap-3 text-orange-600 dark:text-orange-400"
-                      type="submit"
-                    >
-                      <svg className="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                      </svg>
-                      <span>Restart</span>
-                    </button>
-                  </form>
+                  <button
+                    className="w-full text-left px-4 py-2 hover-surface transition-colors flex items-center gap-3 text-orange-600 dark:text-orange-400"
+                    onClick={async () => {
+                      closeDropdown();
+                      const loadingToastId = onShowToast?.('Restarting application...', 'info', true);
+                      try {
+                        const response = await fetch(withBasePath('/api/restart'), {
+                          method: 'GET',
+                          credentials: 'include',
+                        });
+
+                        if (!response.ok) {
+                          throw new Error(`Restart failed: ${response.statusText}`);
+                        }
+
+                        // Dismiss loading toast and show success
+                        if (loadingToastId) {
+                          onRemoveToast?.(loadingToastId);
+                        }
+                        onShowToast?.('Application is restarting. Page will reload...', 'success');
+
+                        // Wait a moment then reload the page to reconnect
+                        setTimeout(() => {
+                          window.location.reload();
+                        }, 3000);
+                      } catch (error) {
+                        console.error('Restart failed:', error);
+                        if (loadingToastId) {
+                          onRemoveToast?.(loadingToastId);
+                        }
+                        onShowToast?.(
+                          error instanceof Error ? error.message : 'Failed to restart application',
+                          'error'
+                        );
+                      }
+                    }}
+                  >
+                    <svg className="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                    <span>Restart</span>
+                  </button>
                 </>
               )}
 

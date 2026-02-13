@@ -483,6 +483,15 @@ export const registerUser = async (data: {
   });
 };
 
+export const changePassword = async (data: {
+  new_password: string;
+}): Promise<{ success: boolean; message: string }> => {
+  return fetchJSON(`${API_BASE}/auth/change-password`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
 // Book request API functions
 
 export const createBookRequest = async (

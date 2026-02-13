@@ -328,12 +328,12 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>/retry", methods=["POST"])
     @_require_admin
     def retry_request_route(request_id):
-        """Retry a failed, cancelled, downloading, or approved request."""
+        """Retry a failed, cancelled, denied, downloading, or approved request."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
 
-        if req["status"] not in ("failed", "cancelled", "downloading", "approved"):
+        if req["status"] not in ("failed", "cancelled", "denied", "downloading", "approved"):
             return jsonify({"error": f"Cannot retry a request with status '{req['status']}'"}), 400
 
         admin_user_id = _get_db_user_id()
