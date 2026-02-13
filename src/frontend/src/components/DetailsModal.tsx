@@ -282,7 +282,7 @@ export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSea
                             onSearchSeries(book.series_name!);
                             handleClose();
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex-shrink-0"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-[#00BCD4]/10 dark:bg-[#00BCD4]/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex-shrink-0"
                         >
                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
@@ -335,7 +335,7 @@ export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSea
                   disabled={!isMetadata && buttonState.state !== 'download'}
                   className={`rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
                     isMetadata
-                      ? 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500'
+                      ? 'bg-[#00BCD4] hover:bg-[#00ACC1] focus:ring-[#00BCD4]'
                       : 'bg-sky-700 hover:bg-sky-800 focus:ring-sky-500'
                   }`}
                 >

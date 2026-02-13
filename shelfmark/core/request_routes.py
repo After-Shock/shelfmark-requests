@@ -291,6 +291,42 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             request_id, "approved", approved_by=admin_user_id
         )
         logger.info(f"Request #{request_id} retrying by admin {admin_user_id}")
+
+        # If request is missing metadata (from old direct-mode requests), search for it now
+        if not updated.get("provider") or not updated.get("provider_id"):
+            logger.info(f"Request #{request_id} missing metadata, searching...")
+            try:
+                from shelfmark.metadata_providers import get_configured_provider
+                from shelfmark.config.settings import get_config
+
+                # Get current metadata provider
+                settings_config = get_config("settings")
+                provider_name = settings_config.get("METADATA_PROVIDER", "openlibrary")
+                provider = get_configured_provider(provider_name)
+
+                if provider:
+                    # Search using title and author from the request
+                    search_query = updated.get("title", "")
+                    if updated.get("author"):
+                        search_query += f" {updated['author']}"
+
+                    results = provider.search(search_query)
+                    if results:
+                        # Use the first result and update the request with metadata
+                        best_match = results[0]
+                        request_db.update_request_metadata(
+                            request_id,
+                            provider=provider_name,
+                            provider_id=best_match.provider_id
+                        )
+                        # Re-fetch the updated request
+                        updated = request_db.get_request(request_id)
+                        logger.info(f"Request #{request_id} metadata updated: {provider_name}:{best_match.provider_id}")
+                    else:
+                        logger.warning(f"Request #{request_id} metadata search returned no results")
+            except Exception as e:
+                logger.error(f"Failed to fetch metadata for request #{request_id}: {e}")
+
         _broadcast_request_update(updated)
 
         # Capture session data before spawning thread

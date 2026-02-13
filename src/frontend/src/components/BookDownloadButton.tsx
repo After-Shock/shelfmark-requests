@@ -72,7 +72,7 @@ export const BookDownloadButton = ({
 
   const primaryStateClasses =
     isCompleted
-      ? 'bg-green-600 cursor-not-allowed'
+      ? 'bg-[#00BCD4] cursor-not-allowed'
       : hasError
       ? 'bg-red-600 cursor-not-allowed opacity-75'
       : isInProgress
@@ -81,7 +81,7 @@ export const BookDownloadButton = ({
 
   const iconStateClasses =
     isCompleted
-      ? 'bg-green-600 text-white cursor-not-allowed'
+      ? 'bg-[#00BCD4] text-white cursor-not-allowed'
       : hasError
       ? 'bg-red-600 text-white cursor-not-allowed opacity-75'
       : isInProgress

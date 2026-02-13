@@ -103,7 +103,7 @@ export const ResultsSection = ({
               className={`p-2 rounded-full transition-all duration-200 ${
                 viewMode === 'card'
                   ? searchMode === 'universal'
-                    ? 'text-white bg-emerald-600 hover:bg-emerald-700'
+                    ? 'text-white bg-[#00BCD4] hover:bg-[#00ACC1]'
                     : 'text-white bg-sky-700 hover:bg-sky-800'
                   : 'hover-action text-gray-900 dark:text-gray-100'
               }`}
@@ -131,7 +131,7 @@ export const ResultsSection = ({
             className={`p-2 rounded-full transition-all duration-200 ${
               viewMode === 'compact'
                 ? searchMode === 'universal'
-                  ? 'text-white bg-emerald-600 hover:bg-emerald-700'
+                  ? 'text-white bg-[#00BCD4] hover:bg-[#00ACC1]'
                   : 'text-white bg-sky-700 hover:bg-sky-800'
                 : 'hover-action text-gray-900 dark:text-gray-100'
             }`}
@@ -157,7 +157,7 @@ export const ResultsSection = ({
             className={`p-2 rounded-full transition-all duration-200 ${
               viewMode === 'list'
                 ? searchMode === 'universal'
-                  ? 'text-white bg-emerald-600 hover:bg-emerald-700'
+                  ? 'text-white bg-[#00BCD4] hover:bg-[#00ACC1]'
                   : 'text-white bg-sky-700 hover:bg-sky-800'
                 : 'hover-action text-gray-900 dark:text-gray-100'
             }`}
@@ -242,7 +242,7 @@ export const ResultsSection = ({
             className={`px-3 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
               isLoadingMore
                 ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-wait'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : 'bg-[#00BCD4] hover:bg-[#00ACC1] text-white'
             }`}
           >
             {isLoadingMore ? (

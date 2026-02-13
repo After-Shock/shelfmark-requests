@@ -230,6 +230,33 @@ class RequestDB:
             finally:
                 conn.close()
 
+    def update_request_metadata(
+        self,
+        request_id: int,
+        provider: Optional[str] = None,
+        provider_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Update request metadata (provider and provider_id). Returns updated request or None."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                sets = ["updated_at = CURRENT_TIMESTAMP"]
+                params: list = []
+                if provider is not None:
+                    sets.append("provider = ?")
+                    params.append(provider)
+                if provider_id is not None:
+                    sets.append("provider_id = ?")
+                    params.append(provider_id)
+                params.append(request_id)
+                conn.execute(
+                    f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params
+                )
+                conn.commit()
+                return self._get_request(conn, request_id)
+            finally:
+                conn.close()
+
     def delete_request(self, request_id: int) -> bool:
         """Delete a request. Returns True if a row was deleted."""
         with self._lock:

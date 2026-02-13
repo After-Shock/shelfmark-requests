@@ -477,7 +477,7 @@ export const ReleaseCell = ({ column, release, compact = false, onlineServers }:
           return (
             <span className="inline-flex items-center gap-1">
               <span
-                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`}
+                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isOnline ? 'bg-[#00BCD4]' : 'bg-gray-400'}`}
                 title={isOnline ? 'Online' : 'Offline'}
               />
               {displayValue}
@@ -491,7 +491,7 @@ export const ReleaseCell = ({ column, release, compact = false, onlineServers }:
         <div className={`flex items-center ${alignClass} text-xs text-gray-600 dark:text-gray-300 truncate`}>
           {isServerColumn && (
             <span
-              className={`w-2 h-2 rounded-full mr-1.5 flex-shrink-0 ${isOnline ? 'bg-emerald-500' : 'bg-gray-400'}`}
+              className={`w-2 h-2 rounded-full mr-1.5 flex-shrink-0 ${isOnline ? 'bg-[#00BCD4]' : 'bg-gray-400'}`}
               title={isOnline ? 'Online' : 'Offline'}
             />
           )}
