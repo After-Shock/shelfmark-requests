@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { withBasePath } from '../utils/basePath';
 import { registerUser } from '../services/api';
+import { theme } from '../theme';
 
 interface RegisterPageProps {
   onRegisterComplete: () => void;
@@ -24,6 +25,10 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
       setError('Username is required');
       return;
     }
+    if (!email.trim()) {
+      setError('Email is required');
+      return;
+    }
     if (password.length < 4) {
       setError('Password must be at least 4 characters');
       return;
@@ -38,7 +43,7 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
       await registerUser({
         username: username.trim(),
         password,
-        email: email.trim() || undefined,
+        email: email.trim(),
       });
       onRegisterComplete();
     } catch (err) {
@@ -89,8 +94,11 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 disabled={isLoading}
-                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 transition-colors"
-                style={inputStyle}
+                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors"
+                style={{
+                  ...inputStyle,
+                  '--tw-ring-color': theme.primary.turquoise,
+                } as React.CSSProperties}
                 autoFocus
                 autoCapitalize="none"
                 autoCorrect="off"
@@ -100,7 +108,7 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
 
             <div className="mb-4">
               <label htmlFor="email" className="block text-sm font-medium mb-2">
-                Email <span className="opacity-50">(optional, for notifications)</span>
+                Email
               </label>
               <input
                 type="email"
@@ -108,9 +116,13 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={isLoading}
-                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 transition-colors"
-                style={inputStyle}
+                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors"
+                style={{
+                  ...inputStyle,
+                  '--tw-ring-color': theme.primary.turquoise,
+                } as React.CSSProperties}
                 placeholder="you@example.com"
+                required
               />
             </div>
 
@@ -124,8 +136,11 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isLoading}
-                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 transition-colors"
-                style={inputStyle}
+                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors"
+                style={{
+                  ...inputStyle,
+                  '--tw-ring-color': theme.primary.turquoise,
+                } as React.CSSProperties}
                 autoComplete="new-password"
                 required
               />
@@ -141,8 +156,11 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 disabled={isLoading}
-                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:opacity-50 transition-colors"
-                style={inputStyle}
+                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors"
+                style={{
+                  ...inputStyle,
+                  '--tw-ring-color': theme.primary.turquoise,
+                } as React.CSSProperties}
                 autoComplete="new-password"
                 required
               />
@@ -151,7 +169,10 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50 bg-sky-700 hover:bg-sky-800"
+              className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50"
+              style={{ backgroundColor: theme.button.secondary }}
+              onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = theme.button.secondaryHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.button.secondary)}
             >
               {isLoading ? 'Creating Account...' : 'Create Account'}
             </button>
@@ -159,7 +180,11 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
 
           <p className="text-center text-sm mt-4 opacity-70">
             Already have an account?{' '}
-            <Link to="/login" className="text-sky-600 hover:text-sky-500 font-medium">
+            <Link
+              to="/login"
+              className="font-medium hover:opacity-80 transition-opacity"
+              style={{ color: theme.primary.turquoise }}
+            >
               Sign In
             </Link>
           </p>
