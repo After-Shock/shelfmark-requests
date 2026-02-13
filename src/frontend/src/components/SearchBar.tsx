@@ -1,6 +1,7 @@
 import { KeyboardEvent, InputHTMLAttributes, useRef, forwardRef, useImperativeHandle, useState, useEffect } from 'react';
 import { useSearchMode } from '../contexts/SearchModeContext';
 import { ContentType } from '../types';
+import { theme } from '../theme';
 
 interface SearchBarProps {
   value: string;
@@ -52,7 +53,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(({
   contentType = 'ebook',
   onContentTypeChange,
 }, ref) => {
-  const { searchMode, isUniversalMode } = useSearchMode();
+  const { isUniversalMode } = useSearchMode();
   const inputRef = useRef<HTMLInputElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -200,10 +201,10 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(({
                   onClick={() => handleContentTypeSelect('ebook')}
                   className={`w-full px-3 py-2.5 text-sm font-medium flex items-center gap-2.5 transition-colors ${
                     contentType === 'ebook'
-                      ? 'bg-emerald-600 text-white'
+                      ? 'text-white'
                       : 'hover-surface'
                   }`}
-                  style={contentType !== 'ebook' ? { color: 'var(--text)' } : undefined}
+                  style={contentType === 'ebook' ? { backgroundColor: theme.primary.turquoise } : { color: 'var(--text)' }}
                   role="option"
                   aria-selected={contentType === 'ebook'}
                 >
@@ -220,12 +221,12 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(({
                   onClick={() => handleContentTypeSelect('audiobook')}
                   className={`w-full px-3 py-2.5 text-sm font-medium flex items-center gap-2.5 transition-colors border-t ${
                     contentType === 'audiobook'
-                      ? 'bg-emerald-600 text-white'
+                      ? 'text-white'
                       : 'hover-surface'
                   }`}
                   style={{
                     borderColor: 'var(--border-muted)',
-                    ...(contentType !== 'audiobook' ? { color: 'var(--text)' } : {}),
+                    ...(contentType === 'audiobook' ? { backgroundColor: theme.primary.turquoise } : { color: 'var(--text)' }),
                   }}
                   role="option"
                   aria-selected={contentType === 'audiobook'}
@@ -316,10 +317,17 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(({
           type="button"
           onClick={onSubmit}
           className={`p-2 rounded-full text-white disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center transition-colors search-bar-button ${
-            searchMode === 'universal'
-              ? 'bg-emerald-600 hover:bg-emerald-700'
-              : 'bg-sky-700 hover:bg-sky-800'
+            ''
           }`}
+          style={{
+            backgroundColor: theme.button.secondary,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = theme.button.secondaryHover;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = theme.button.secondary;
+          }}
           aria-label={searchButtonLabel}
           title={searchButtonTitle}
           disabled={isLoading}

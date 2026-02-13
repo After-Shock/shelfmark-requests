@@ -1,4 +1,4 @@
-import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse } from '../types';
+import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, RequestsListResponse, RequestCounts } from '../types';
 import { SettingsResponse, ActionResult, UpdateResult } from '../types/settings';
 import { MetadataBookData, transformMetadataToBook } from '../utils/bookTransformers';
 import { getApiBase } from '../utils/basePath';
@@ -457,4 +457,96 @@ export interface BookloreOptions {
 
 export const getBookloreOptions = async (): Promise<BookloreOptions> => {
   return fetchJSON<BookloreOptions>(`${API_BASE}/admin/booklore-options`);
+};
+
+// Auth setup and registration
+
+export const setupAdmin = async (data: {
+  username: string;
+  password: string;
+  email?: string;
+}): Promise<{ success: boolean; user: { id: number; username: string; role: string } }> => {
+  return fetchJSON(`${API_BASE}/auth/setup`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const registerUser = async (data: {
+  username: string;
+  password: string;
+  email?: string;
+}): Promise<{ success: boolean }> => {
+  return fetchJSON(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+// Book request API functions
+
+export const createBookRequest = async (
+  data: {
+    title: string;
+    content_type?: string;
+    author?: string;
+    year?: string;
+    cover_url?: string;
+    description?: string;
+    isbn_10?: string;
+    isbn_13?: string;
+    provider?: string;
+    provider_id?: string;
+    series_name?: string;
+    series_position?: number;
+  }
+): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const getRequests = async (
+  status?: string,
+  limit: number = 100,
+  offset: number = 0
+): Promise<RequestsListResponse> => {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  return fetchJSON<RequestsListResponse>(`${API_BASE}/requests?${params.toString()}`);
+};
+
+export const getRequestCounts = async (): Promise<RequestCounts> => {
+  return fetchJSON<RequestCounts>(`${API_BASE}/requests/counts`);
+};
+
+export const approveRequest = async (requestId: number): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/approve`, {
+    method: 'POST',
+  });
+};
+
+export const denyRequest = async (
+  requestId: number,
+  adminNote?: string
+): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/deny`, {
+    method: 'POST',
+    body: JSON.stringify({ admin_note: adminNote }),
+  });
+};
+
+export const retryRequest = async (requestId: number): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/retry`, {
+    method: 'POST',
+  });
+};
+
+export const deleteBookRequest = async (requestId: number): Promise<{ success: boolean }> => {
+  return fetchJSON<{ success: boolean }>(`${API_BASE}/requests/${requestId}`, {
+    method: 'DELETE',
+  });
 };

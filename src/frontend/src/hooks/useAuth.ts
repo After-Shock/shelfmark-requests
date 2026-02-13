@@ -13,12 +13,16 @@ interface UseAuthReturn {
   authRequired: boolean;
   authChecked: boolean;
   isAdmin: boolean;
+  isInitialAdmin: boolean;
   authMode: string;
+  needsSetup: boolean;
+  registrationEnabled: boolean;
   loginError: string | null;
   isLoggingIn: boolean;
   setIsAuthenticated: (value: boolean) => void;
   handleLogin: (credentials: LoginCredentials) => Promise<void>;
   handleLogout: () => Promise<void>;
+  recheckAuth: () => Promise<void>;
 }
 
 export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
@@ -29,24 +33,38 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
   const [authRequired, setAuthRequired] = useState<boolean>(true);
   const [authChecked, setAuthChecked] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isInitialAdmin, setIsInitialAdmin] = useState<boolean>(false);
   const [authMode, setAuthMode] = useState<string>('none');
+  const [needsSetup, setNeedsSetup] = useState<boolean>(false);
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+
+  const applyAuthResponse = useCallback((response: Awaited<ReturnType<typeof checkAuth>>) => {
+    setAuthRequired(response.auth_required !== false);
+    setIsAuthenticated(response.authenticated || false);
+    setIsAdmin(response.is_admin || false);
+    setIsInitialAdmin(response.is_initial_admin || false);
+    setAuthMode(response.auth_mode || 'none');
+    setNeedsSetup(response.needs_setup || false);
+    setRegistrationEnabled(response.registration_enabled || false);
+  }, []);
+
+  const recheckAuth = useCallback(async () => {
+    try {
+      const response = await checkAuth();
+      applyAuthResponse(response);
+    } catch (error) {
+      console.error('Auth re-check failed:', error);
+    }
+  }, [applyAuthResponse]);
 
   // Check authentication on mount
   useEffect(() => {
     const verifyAuth = async () => {
       try {
         const response = await checkAuth();
-        const authenticated = response.authenticated || false;
-        const authIsRequired = response.auth_required !== false;
-        const admin = response.is_admin || false;
-        const mode = response.auth_mode || 'none';
-
-        setAuthRequired(authIsRequired);
-        setIsAuthenticated(authenticated);
-        setIsAdmin(admin);
-        setAuthMode(mode);
+        applyAuthResponse(response);
       } catch (error) {
         console.error('Auth check failed:', error);
         setAuthRequired(true);
@@ -57,7 +75,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
       }
     };
     verifyAuth();
-  }, []);
+  }, [applyAuthResponse]);
 
   const handleLogin = useCallback(async (credentials: LoginCredentials) => {
     setIsLoggingIn(true);
@@ -106,11 +124,15 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
     authRequired,
     authChecked,
     isAdmin,
+    isInitialAdmin,
     authMode,
+    needsSetup,
+    registrationEnabled,
     loginError,
     isLoggingIn,
     setIsAuthenticated,
     handleLogin,
     handleLogout,
+    recheckAuth,
   };
 }

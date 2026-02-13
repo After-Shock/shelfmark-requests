@@ -11,14 +11,15 @@ logger = setup_logger(__name__)
 
 _CREATE_TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT UNIQUE NOT NULL,
-    email         TEXT,
-    display_name  TEXT,
-    password_hash TEXT,
-    oidc_subject  TEXT UNIQUE,
-    role          TEXT NOT NULL DEFAULT 'user',
-    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    username          TEXT UNIQUE NOT NULL,
+    email             TEXT,
+    display_name      TEXT,
+    password_hash     TEXT,
+    oidc_subject      TEXT UNIQUE,
+    role              TEXT NOT NULL DEFAULT 'user',
+    is_initial_admin  INTEGER DEFAULT 0,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -48,6 +49,20 @@ class UserDB:
             try:
                 conn.executescript(_CREATE_TABLES_SQL)
                 conn.execute("PRAGMA journal_mode=WAL")
+
+                # Migration: Add is_initial_admin column if it doesn't exist
+                cursor = conn.execute("PRAGMA table_info(users)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'is_initial_admin' not in columns:
+                    conn.execute("ALTER TABLE users ADD COLUMN is_initial_admin INTEGER DEFAULT 0")
+                    # Mark the first admin as the initial admin
+                    conn.execute("""
+                        UPDATE users SET is_initial_admin = 1
+                        WHERE role = 'admin'
+                        AND id = (SELECT MIN(id) FROM users WHERE role = 'admin')
+                    """)
+                    logger.info("Added is_initial_admin column and marked first admin")
+
                 conn.commit()
             finally:
                 conn.close()
@@ -61,15 +76,16 @@ class UserDB:
         password_hash: Optional[str] = None,
         oidc_subject: Optional[str] = None,
         role: str = "user",
+        is_initial_admin: bool = False,
     ) -> Dict[str, Any]:
         """Create a new user. Raises ValueError if username or oidc_subject already exists."""
         with self._lock:
             conn = self._connect()
             try:
                 cursor = conn.execute(
-                    """INSERT INTO users (username, email, display_name, password_hash, oidc_subject, role)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (username, email, display_name, password_hash, oidc_subject, role),
+                    """INSERT INTO users (username, email, display_name, password_hash, oidc_subject, role, is_initial_admin)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (username, email, display_name, password_hash, oidc_subject, role, 1 if is_initial_admin else 0),
                 )
                 conn.commit()
                 user_id = cursor.lastrowid

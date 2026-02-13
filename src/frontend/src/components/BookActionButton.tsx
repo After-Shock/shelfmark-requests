@@ -18,6 +18,9 @@ interface BookActionButtonProps {
   fullWidth?: boolean;
   className?: string;
   style?: CSSProperties;
+  isAdmin?: boolean;
+  showRequestButton?: boolean;
+  onRequest?: (book: Book) => void;
 }
 
 export function BookActionButton({
@@ -31,9 +34,35 @@ export function BookActionButton({
   fullWidth,
   className,
   style,
+  isAdmin,
+  showRequestButton,
+  onRequest,
 }: BookActionButtonProps) {
   const { searchMode } = useSearchMode();
 
+  // Non-admin users with requests enabled see Request button only
+  if (showRequestButton && !isAdmin && onRequest) {
+    const sizeClasses = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
+    const sulleyBlue = '#00BCD4'; // Sulley from Monsters Inc - teal/turquoise
+    const sulleyBlueHover = '#00ACC1';
+    return (
+      <button
+        onClick={() => onRequest(book)}
+        className={`${sizeClasses} rounded font-medium text-white transition-colors ${fullWidth ? 'w-full' : ''} ${className || ''}`}
+        style={{
+          backgroundColor: sulleyBlue,
+          boxShadow: '0 2px 8px rgba(0, 188, 212, 0.3)',
+          ...style
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = sulleyBlueHover}
+        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = sulleyBlue}
+      >
+        Request
+      </button>
+    );
+  }
+
+  // Admin users see download buttons
   if (searchMode === 'universal') {
     return (
       <BookGetButton

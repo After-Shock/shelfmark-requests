@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Toast } from '../types';
+import { theme } from '../theme';
 
 interface ToastContainerProps {
   toasts: Toast[];
@@ -18,10 +19,10 @@ export const ToastContainer = ({ toasts }: ToastContainerProps) => {
     });
   }, [toasts]);
 
-  const toastTypeClasses: Record<Toast['type'], string> = {
-    success: 'bg-green-600 text-white',
-    error: 'bg-red-600 text-white',
-    info: 'bg-blue-600 text-white',
+  const toastTypeStyles: Record<Toast['type'], { backgroundColor: string; color: string }> = {
+    success: { backgroundColor: '#10b981', color: 'white' },
+    error: { backgroundColor: '#dc2626', color: 'white' },
+    info: { backgroundColor: theme.primary.turquoise, color: 'white' },
   };
 
   return (
@@ -30,8 +31,9 @@ export const ToastContainer = ({ toasts }: ToastContainerProps) => {
         <div
           key={toast.id}
           className={`toast-notification px-4 py-3 rounded-md shadow-lg text-sm font-medium transition-all duration-300 ${
-            toastTypeClasses[toast.type]
-          } ${visibleToasts.has(toast.id) ? 'toast-visible' : ''}`}
+            visibleToasts.has(toast.id) ? 'toast-visible' : ''
+          }`}
+          style={toastTypeStyles[toast.type]}
         >
           {toast.message}
         </div>

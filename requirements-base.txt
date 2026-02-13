@@ -4,6 +4,7 @@ flask-socketio
 python-socketio
 requests[socks]
 beautifulsoup4
+lxml
 tqdm
 dnspython
 gunicorn

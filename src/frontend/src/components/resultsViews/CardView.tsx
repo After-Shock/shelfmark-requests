@@ -16,9 +16,12 @@ interface CardViewProps {
   buttonState: ButtonStateInfo;
   animationDelay?: number;
   showSeriesPosition?: boolean;
+  isAdmin?: boolean;
+  showRequestButton?: boolean;
+  onRequest?: (book: Book) => void;
 }
 
-export const CardView = ({ book, onDetails, onDownload, onGetReleases, buttonState, animationDelay = 0, showSeriesPosition = false }: CardViewProps) => {
+export const CardView = ({ book, onDetails, onDownload, onGetReleases, buttonState, animationDelay = 0, showSeriesPosition = false, isAdmin, showRequestButton, onRequest }: CardViewProps) => {
   const { searchMode } = useSearchMode();
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isLoadingReleases, setIsLoadingReleases] = useState(false);
@@ -174,6 +177,9 @@ export const CardView = ({ book, onDetails, onDownload, onGetReleases, buttonSta
             isLoadingReleases={isLoadingReleases}
             size="sm"
             className="flex-1"
+            isAdmin={isAdmin}
+            showRequestButton={showRequestButton}
+            onRequest={onRequest}
           />
         </div>
       </div>
@@ -190,6 +196,9 @@ export const CardView = ({ book, onDetails, onDownload, onGetReleases, buttonSta
           borderBottomLeftRadius: '.75rem',
           borderBottomRightRadius: '.75rem',
         }}
+        isAdmin={isAdmin}
+        showRequestButton={showRequestButton}
+        onRequest={onRequest}
       />
     </article>
   );

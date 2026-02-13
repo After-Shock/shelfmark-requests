@@ -72,7 +72,7 @@ export const SearchSection = ({
       <div className={`flex items-center justify-center gap-3 transition-all duration-300 ${
         isInitialState ? 'opacity-100 mb-6 sm:mb-8' : 'opacity-0 h-0 mb-0 overflow-hidden'
       }`}>
-        <img src={logoUrl} alt="Logo" className="h-8 w-8" />
+        <img src={logoUrl} alt="Logo" className="h-30 w-30" />
         <h1 className="text-2xl font-semibold">Book Search & Download</h1>
       </div>
       <div className={`flex flex-col gap-3 search-wrapper transition-all duration-500 ${

@@ -17,9 +17,12 @@ interface CompactViewProps {
   showDetailsButton?: boolean;
   animationDelay?: number;
   showSeriesPosition?: boolean;
+  isAdmin?: boolean;
+  showRequestButton?: boolean;
+  onRequest?: (book: Book) => void;
 }
 
-export const CompactView = ({ book, onDetails, onDownload, onGetReleases, buttonState, showDetailsButton = false, animationDelay = 0, showSeriesPosition = false }: CompactViewProps) => {
+export const CompactView = ({ book, onDetails, onDownload, onGetReleases, buttonState, showDetailsButton = false, animationDelay = 0, showSeriesPosition = false, isAdmin, showRequestButton, onRequest }: CompactViewProps) => {
   const { searchMode } = useSearchMode();
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isLoadingReleases, setIsLoadingReleases] = useState(false);
@@ -172,6 +175,9 @@ export const CompactView = ({ book, onDetails, onDownload, onGetReleases, button
                 isLoadingReleases={isLoadingReleases}
                 size="sm"
                 className="flex-1"
+                isAdmin={isAdmin}
+                showRequestButton={showRequestButton}
+                onRequest={onRequest}
               />
             </div>
           ) : (
@@ -183,6 +189,9 @@ export const CompactView = ({ book, onDetails, onDownload, onGetReleases, button
               isLoadingReleases={isLoadingReleases}
               size="sm"
               fullWidth
+              isAdmin={isAdmin}
+              showRequestButton={showRequestButton}
+              onRequest={onRequest}
             />
           )}
         </div>

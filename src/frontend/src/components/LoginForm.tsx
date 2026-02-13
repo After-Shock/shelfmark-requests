@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { LoginCredentials } from '../types';
 import { withBasePath } from '../utils/basePath';
+import { theme } from '../theme';
 
 interface LoginFormProps {
   onSubmit: (credentials: LoginCredentials) => void;
@@ -195,7 +196,12 @@ export const LoginForm = ({
           type="submit"
           name="submit"
           disabled={isLoading}
-          className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-sky-700 hover:bg-sky-800 disabled:hover:bg-sky-700"
+          className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{
+            backgroundColor: theme.button.primary,
+          }}
+          onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = theme.button.primaryHover)}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.button.primary)}
           aria-label="Sign in"
         >
           {isLoading ? (

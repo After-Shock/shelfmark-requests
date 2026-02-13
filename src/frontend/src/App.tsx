@@ -14,6 +14,7 @@ import { useAuth } from './hooks/useAuth';
 import { useSearch } from './hooks/useSearch';
 import { useUrlSearch } from './hooks/useUrlSearch';
 import { useDownloadTracking } from './hooks/useDownloadTracking';
+import { useRequests } from './hooks/useRequests';
 import { Header } from './components/Header';
 import { SearchSection } from './components/SearchSection';
 import { AdvancedFilters } from './components/AdvancedFilters';
@@ -22,9 +23,13 @@ import { DetailsModal } from './components/DetailsModal';
 import { EmailRecipientModal } from './components/EmailRecipientModal';
 import { ReleaseModal } from './components/ReleaseModal';
 import { DownloadsSidebar } from './components/DownloadsSidebar';
+import { RequestsSidebar } from './components/RequestsSidebar';
+import { UserDashboard } from './components/UserDashboard';
 import { ToastContainer } from './components/ToastContainer';
 import { Footer } from './components/Footer';
 import { LoginPage } from './pages/LoginPage';
+import { SetupPage } from './pages/SetupPage';
+import { RegisterPage } from './pages/RegisterPage';
 import { SettingsModal } from './components/settings';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
 import { OnboardingModal } from './components/OnboardingModal';
@@ -80,11 +85,14 @@ function App() {
     authChecked,
     isAdmin,
     authMode,
+    needsSetup,
+    registrationEnabled,
     loginError,
     isLoggingIn,
     setIsAuthenticated,
     handleLogin,
     handleLogout,
+    recheckAuth,
   } = useAuth({
     showToast,
   });
@@ -132,16 +140,69 @@ function App() {
 
   // Wire up logout callback to clear search state
   const handleLogoutWithCleanup = useCallback(async () => {
-    await handleLogout();
+    // Clear all UI state before logout
     setBooks([]);
+    setSelectedBook(null);
+    setReleaseBook(null);
+    setSearchInput('');
+    setShowAdvanced(false);
     clearTracking();
-  }, [handleLogout, setBooks, clearTracking]);
+    setDownloadsSidebarOpen(false);
+    setRequestsSidebarOpen(false);
+
+    // Then perform logout
+    await handleLogout();
+  }, [handleLogout, setBooks, clearTracking, setSearchInput, setShowAdvanced]);
+
+  // Request workflow (Overseerr-style)
+  const requestsEnabled = authRequired && isAuthenticated;
+  const {
+    requests: bookRequests,
+    counts: requestCounts,
+    submitRequest,
+    handleApprove: handleRequestApprove,
+    handleDeny: handleRequestDeny,
+    handleRetry: handleRequestRetry,
+    handleDelete: handleRequestDelete,
+  } = useRequests({ enabled: requestsEnabled });
+
+  // Wrap approve/deny handlers to show toast notifications
+  const handleApproveWithToast = useCallback(async (requestId: number) => {
+    try {
+      await handleRequestApprove(requestId);
+      showToast('Request approved - download queued', 'success');
+    } catch (error) {
+      showToast('Failed to approve request', 'error');
+      throw error;
+    }
+  }, [handleRequestApprove, showToast]);
+
+  const handleDenyWithToast = useCallback(async (requestId: number, adminNote?: string) => {
+    try {
+      await handleRequestDeny(requestId, adminNote);
+      showToast('Request denied', 'success');
+    } catch (error) {
+      showToast('Failed to deny request', 'error');
+      throw error;
+    }
+  }, [handleRequestDeny, showToast]);
+
+  const handleRetryWithToast = useCallback(async (requestId: number) => {
+    try {
+      await handleRequestRetry(requestId);
+      showToast('Request retry initiated - download queued', 'success');
+    } catch (error) {
+      showToast('Failed to retry request', 'error');
+      throw error;
+    }
+  }, [handleRequestRetry, showToast]);
 
   // UI state
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [releaseBook, setReleaseBook] = useState<Book | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [downloadsSidebarOpen, setDownloadsSidebarOpen] = useState(false);
+  const [requestsSidebarOpen, setRequestsSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [configBannerOpen, setConfigBannerOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -426,6 +487,38 @@ function App() {
     setShowAdvanced,
   ]);
 
+  // Predictive search: auto-search after 3+ characters with debounce
+  useEffect(() => {
+    // Only trigger if user has typed 3+ characters
+    if (!searchInput || searchInput.trim().length < 3) {
+      return;
+    }
+
+    // Don't auto-search if advanced filters are shown
+    if (showAdvanced) {
+      return;
+    }
+
+    // Debounce: wait 500ms after user stops typing
+    const timeoutId = setTimeout(() => {
+      const query = buildSearchQuery({
+        searchInput,
+        showAdvanced: false,
+        advancedFilters,
+        bookLanguages: config?.book_languages || [],
+        defaultLanguage:
+          config?.default_language && config.default_language.length > 0
+            ? config.default_language
+            : [config?.book_languages?.[0]?.code || 'en'],
+        searchMode: config?.search_mode || 'direct',
+      });
+      handleSearch(query, config);
+    }, 500); // 500ms debounce
+
+    // Cleanup: cancel timeout if user types again
+    return () => clearTimeout(timeoutId);
+  }, [searchInput, config, showAdvanced, advancedFilters, handleSearch]);
+
   const handleSettingsSaved = useCallback(() => {
     loadConfig('settings-saved');
   }, [loadConfig]);
@@ -499,6 +592,32 @@ function App() {
       throw error;
     }
   };
+
+  // Handle book request (non-admin users)
+  const handleRequest = useCallback(async (book: Book) => {
+    try {
+      await submitRequest({
+        title: book.title,
+        content_type: contentType,
+        author: book.author,
+        year: book.year,
+        cover_url: book.preview,
+        description: book.description,
+        isbn_10: book.isbn_10,
+        isbn_13: book.isbn_13,
+        provider: book.provider,
+        provider_id: book.provider_id,
+        series_name: book.series_name,
+        series_position: book.series_position,
+      });
+      showToast(`Requested: ${book.title}`, 'success');
+      setSelectedBook(null);
+      setRequestsSidebarOpen(true);
+    } catch (error) {
+      console.error('Request failed:', error);
+      showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
+    }
+  }, [submitRequest, contentType, showToast]);
 
   // Cancel download
   const handleCancel = async (id: string) => {
@@ -593,7 +712,7 @@ function App() {
       : [bookLanguages[0]?.code || 'en'];
 
   const searchMode = config?.search_mode || 'direct';
-  const logoUrl = withBasePath('/logo.png');
+  const logoUrl = withBasePath('/logo.svg');
 
   // Handle "View Series" - trigger search with series field and series order sort
   const handleSearchSeries = useCallback((seriesName: string) => {
@@ -629,7 +748,7 @@ function App() {
         showSearch={!isInitialState}
         searchInput={searchInput}
         onSearchChange={setSearchInput}
-        onDownloadsClick={() => setDownloadsSidebarOpen(true)}
+        onDownloadsClick={isAdmin ? () => setDownloadsSidebarOpen(true) : undefined}
         onSettingsClick={isAdmin ? () => {
           if (config?.settings_enabled) {
             setSettingsOpen(true);
@@ -641,6 +760,7 @@ function App() {
         onLogoClick={() => handleResetSearch(config)}
         authRequired={authRequired}
         isAuthenticated={isAuthenticated}
+        isAdmin={isAdmin}
         onLogout={handleLogoutWithCleanup}
         onSearch={() => {
           const query = buildSearchQuery({
@@ -659,6 +779,8 @@ function App() {
         onRemoveToast={removeToast}
         contentType={contentType}
         onContentTypeChange={setContentType}
+        onRequestsClick={requestsEnabled ? () => setRequestsSidebarOpen(true) : undefined}
+        requestCounts={requestsEnabled ? requestCounts : undefined}
       />
 
       <AdvancedFilters
@@ -685,26 +807,50 @@ function App() {
       />
 
       <main className="relative w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-6">
-        <SearchSection
-          onSearch={(query) => handleSearch(query, config, searchFieldValues)}
-          isLoading={isSearching}
-          isInitialState={isInitialState}
-          bookLanguages={bookLanguages}
-          defaultLanguage={defaultLanguageCodes}
-          supportedFormats={config?.supported_formats || DEFAULT_SUPPORTED_FORMATS}
-          logoUrl={logoUrl}
-          searchInput={searchInput}
-          onSearchInputChange={setSearchInput}
-          showAdvanced={showAdvanced}
-          onAdvancedToggle={() => setShowAdvanced(!showAdvanced)}
-          advancedFilters={advancedFilters}
-          onAdvancedFiltersChange={updateAdvancedFilters}
-          metadataSearchFields={config?.metadata_search_fields}
-          searchFieldValues={searchFieldValues}
-          onSearchFieldChange={updateSearchFieldValue}
-          contentType={contentType}
-          onContentTypeChange={setContentType}
-        />
+        {!isAdmin && requestsEnabled && isInitialState ? (
+          <UserDashboard
+            requests={bookRequests}
+            counts={requestCounts}
+            logoUrl={logoUrl}
+            searchInput={searchInput}
+            onSearchInputChange={setSearchInput}
+            onSearch={(query) => {
+              setSearchInput(query);
+              const builtQuery = buildSearchQuery({
+                searchInput: query,
+                showAdvanced: false,
+                advancedFilters,
+                bookLanguages,
+                defaultLanguage: defaultLanguageCodes,
+                searchMode,
+              });
+              handleSearch(builtQuery, config, searchFieldValues);
+            }}
+            contentType={contentType}
+            onContentTypeChange={setContentType}
+          />
+        ) : (
+          <SearchSection
+            onSearch={(query) => handleSearch(query, config, searchFieldValues)}
+            isLoading={isSearching}
+            isInitialState={isInitialState}
+            bookLanguages={bookLanguages}
+            defaultLanguage={defaultLanguageCodes}
+            supportedFormats={config?.supported_formats || DEFAULT_SUPPORTED_FORMATS}
+            logoUrl={logoUrl}
+            searchInput={searchInput}
+            onSearchInputChange={setSearchInput}
+            showAdvanced={showAdvanced}
+            onAdvancedToggle={() => setShowAdvanced(!showAdvanced)}
+            advancedFilters={advancedFilters}
+            onAdvancedFiltersChange={updateAdvancedFilters}
+            metadataSearchFields={config?.metadata_search_fields}
+            searchFieldValues={searchFieldValues}
+            onSearchFieldChange={updateSearchFieldValue}
+            contentType={contentType}
+            onContentTypeChange={setContentType}
+          />
+        )}
 
         <ResultsSection
           books={books}
@@ -721,6 +867,9 @@ function App() {
           isLoadingMore={isLoadingMore}
           onLoadMore={() => loadMore(config)}
           totalFound={totalFound}
+          isAdmin={isAdmin}
+          showRequestButton={requestsEnabled}
+          onRequest={handleRequest}
         />
 
         {selectedBook && (
@@ -731,6 +880,9 @@ function App() {
             onFindDownloads={handleFindDownloads}
             onSearchSeries={handleSearchSeries}
             buttonState={getButtonState(selectedBook.id)}
+            onRequest={handleRequest}
+            isAdmin={isAdmin}
+            showRequestButton={requestsEnabled}
           />
         )}
 
@@ -773,6 +925,19 @@ function App() {
         onClearCompleted={handleClearCompleted}
         onCancel={handleCancel}
       />
+
+      {requestsEnabled && (
+        <RequestsSidebar
+          isOpen={requestsSidebarOpen}
+          onClose={() => setRequestsSidebarOpen(false)}
+          requests={bookRequests}
+          isAdmin={isAdmin}
+          onApprove={handleApproveWithToast}
+          onDeny={handleDenyWithToast}
+          onRetry={handleRetryWithToast}
+          onDelete={handleRequestDelete}
+        />
+      )}
 
       <SettingsModal
         isOpen={settingsOpen}
@@ -837,14 +1002,39 @@ function App() {
   }
 
   const shouldRedirectFromLogin = !authRequired || isAuthenticated;
-  const appElement = authRequired && !isAuthenticated ? (
-    <Navigate to="/login" replace />
-  ) : (
-    mainAppContent
-  );
+
+  // Determine what the main route should show
+  let appElement;
+  if (needsSetup) {
+    appElement = <Navigate to="/setup" replace />;
+  } else if (authRequired && !isAuthenticated) {
+    appElement = <Navigate to="/login" replace />;
+  } else {
+    appElement = mainAppContent;
+  }
 
   return (
     <Routes>
+      <Route
+        path="/setup"
+        element={
+          needsSetup ? (
+            <SetupPage onSetupComplete={recheckAuth} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/register"
+        element={
+          registrationEnabled && !isAuthenticated ? (
+            <RegisterPage onRegisterComplete={recheckAuth} />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
       <Route
         path="/login"
         element={
@@ -856,6 +1046,7 @@ function App() {
               error={loginError}
               isLoading={isLoggingIn}
               authMode={authMode}
+              registrationEnabled={registrationEnabled}
             />
           )
         }

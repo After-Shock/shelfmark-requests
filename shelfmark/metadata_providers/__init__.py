@@ -394,8 +394,15 @@ def get_enabled_providers() -> List[str]:
 
 
 def get_configured_provider(content_type: str = "ebook") -> Optional[MetadataProvider]:
-    """Get the currently configured metadata provider for the content type."""
+    """Get the currently configured metadata provider for the content type.
+
+    If the configured provider is unavailable (e.g., missing API key),
+    automatically falls back to the first available provider.
+    """
     from shelfmark.core.config import config as app_config
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     # Refresh config to ensure we have the latest saved settings
     app_config.refresh()
@@ -419,7 +426,34 @@ def get_configured_provider(content_type: str = "ebook") -> Optional[MetadataPro
         return None
 
     kwargs = get_provider_kwargs(metadata_provider)
-    return get_provider(metadata_provider, **kwargs)
+    provider = get_provider(metadata_provider, **kwargs)
+
+    # If configured provider is available, use it
+    if provider.is_available():
+        return provider
+
+    # Fallback: try other providers in priority order
+    fallback_order = ["openlibrary", "googlebooks", "hardcover"]
+    for fallback_name in fallback_order:
+        if fallback_name == metadata_provider:
+            continue  # Already tried this one
+        if fallback_name not in _PROVIDERS:
+            continue
+        if not is_provider_enabled(fallback_name):
+            continue
+
+        fallback_kwargs = get_provider_kwargs(fallback_name)
+        fallback = get_provider(fallback_name, **fallback_kwargs)
+        if fallback.is_available():
+            logger.warning(
+                f"Configured provider '{metadata_provider}' unavailable, "
+                f"falling back to '{fallback_name}'"
+            )
+            return fallback
+
+    # No available provider found, return the original anyway (caller can handle)
+    logger.warning(f"No available metadata provider found (configured: {metadata_provider})")
+    return provider
 
 
 def _get_configured_provider_name() -> str:

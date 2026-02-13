@@ -4,6 +4,7 @@ services:
     extends:
       file: ./compose/docker-compose.yml
       service: shelfmark
+    image: shelfmark-dev  # Override inherited image to use locally built image
     build:
       context: .
       dockerfile: Dockerfile

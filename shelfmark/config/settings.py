@@ -390,6 +390,17 @@ def general_settings():
             options=_LANGUAGE_OPTIONS,
             default=["en"],
         ),
+        HeadingField(
+            key="notifications_heading",
+            title="Notifications",
+            description="Email notifications for book requests. Requires SMTP settings to be configured in Downloads.",
+        ),
+        CheckboxField(
+            key="NOTIFY_REQUESTS_VIA_EMAIL",
+            label="Email Request Notifications",
+            description="Send email notifications to users when their book requests are approved, denied, fulfilled, or failed. Uses the SMTP settings from the Downloads tab.",
+            default=False,
+        ),
     ]
 
 

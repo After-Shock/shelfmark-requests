@@ -9,9 +9,12 @@ interface DetailsModalProps {
   onFindDownloads?: (book: Book) => void;  // For Universal mode
   onSearchSeries?: (seriesName: string) => void;  // Callback to search for series
   buttonState: ButtonStateInfo;
+  onRequest?: (book: Book) => void;  // Request workflow
+  isAdmin?: boolean;
+  showRequestButton?: boolean;
 }
 
-export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSearchSeries, buttonState }: DetailsModalProps) => {
+export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSearchSeries, buttonState, onRequest, isAdmin, showRequestButton }: DetailsModalProps) => {
   const [isQueuing, setIsQueuing] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
@@ -105,9 +108,6 @@ export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSea
   // Other display fields (pages, editions, etc.) shown inline
   const otherDisplayFields = isMetadata && book.display_fields?.filter(f => f.icon !== 'star' && f.icon !== 'users');
 
-  // Use provider display name from backend, fall back to capitalized provider name
-  const providerDisplay = book.provider_display_name
-    || (book.provider ? book.provider.charAt(0).toUpperCase() + book.provider.slice(1) : '');
   const artworkMaxHeight = 'calc(90vh - 220px)';
   const artworkMaxWidth = 'min(45vw, 520px, calc((90vh - 220px) / 1.6))';
   const additionalInfo =
@@ -315,38 +315,33 @@ export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSea
             className="border-t border-[var(--border-muted)] bg-[var(--bg)] sm:bg-[var(--bg-soft)] px-5 py-4"
             style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
           >
-            <div className="flex items-center justify-between gap-4">
-              {/* Source link - shown for both Universal and Direct Download modes */}
-              {book.source_url && (
-                <a
-                  href={book.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-muted)] bg-[var(--bg)] px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-900 dark:text-gray-400 dark:hover:border-gray-500 dark:hover:text-gray-200"
+            <div className="flex items-center justify-center gap-4">
+              {/* Request button - shown for non-admin users when requests are enabled (all search modes) */}
+              {showRequestButton && !isAdmin && onRequest && (
+                <button
+                  onClick={() => onRequest(book)}
+                  className="rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+                  style={{ backgroundColor: '#00BCD4', boxShadow: '0 2px 8px rgba(0, 188, 212, 0.3)' }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#00ACC1'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#00BCD4'}
                 >
-                  View on {isMetadata ? providerDisplay : "Source"}
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                    />
-                  </svg>
-                </a>
+                  Request
+                </button>
               )}
-              {/* Action button - Find Downloads (Universal) or Download (Direct) */}
-              <button
-                onClick={isMetadata ? () => onFindDownloads?.(book) : handleDownload}
-                disabled={!isMetadata && buttonState.state !== 'download'}
-                className={`ml-auto rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                  isMetadata
-                    ? 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500'
-                    : 'bg-sky-700 hover:bg-sky-800 focus:ring-sky-500'
-                }`}
-              >
-                {isMetadata ? 'Find Downloads' : buttonState.text}
-              </button>
+              {/* Action button - Find Downloads (Universal) or Download (Direct) - Admin only */}
+              {isAdmin && (
+                <button
+                  onClick={isMetadata ? () => onFindDownloads?.(book) : handleDownload}
+                  disabled={!isMetadata && buttonState.state !== 'download'}
+                  className={`rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isMetadata
+                      ? 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500'
+                      : 'bg-sky-700 hover:bg-sky-800 focus:ring-sky-500'
+                  }`}
+                >
+                  {isMetadata ? 'Find Downloads' : buttonState.text}
+                </button>
+              )}
             </div>
           </footer>
         </div>

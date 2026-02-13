@@ -30,6 +30,10 @@ interface ResultsSectionProps {
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
   totalFound?: number;
+  // Request workflow
+  isAdmin?: boolean;
+  showRequestButton?: boolean;
+  onRequest?: (book: Book) => void;
 }
 
 export const ResultsSection = ({
@@ -47,6 +51,9 @@ export const ResultsSection = ({
   isLoadingMore,
   onLoadMore,
   totalFound,
+  isAdmin,
+  showRequestButton,
+  onRequest,
 }: ResultsSectionProps) => {
   const { searchMode } = useSearchMode();
   const [viewMode, setViewMode] = useState<'card' | 'compact' | 'list'>(() => {
@@ -175,7 +182,7 @@ export const ResultsSection = ({
         </div>
       </div>
       {viewMode === 'list' ? (
-        <ListView books={books} onDetails={onDetails} onDownload={onDownload} onGetReleases={onGetReleases} getButtonState={getButtonState} getUniversalButtonState={getUniversalButtonState} showSeriesPosition={sortValue === 'series_order'} />
+        <ListView books={books} onDetails={onDetails} onDownload={onDownload} onGetReleases={onGetReleases} getButtonState={getButtonState} getUniversalButtonState={getUniversalButtonState} showSeriesPosition={sortValue === 'series_order'} isAdmin={isAdmin} showRequestButton={showRequestButton} onRequest={onRequest} />
       ) : (
         <div
           id="results-grid"
@@ -199,6 +206,9 @@ export const ResultsSection = ({
                 buttonState={buttonState}
                 animationDelay={animationDelay}
                 showSeriesPosition={sortValue === 'series_order'}
+                isAdmin={isAdmin}
+                showRequestButton={showRequestButton}
+                onRequest={onRequest}
               />
             ) : (
               <CompactView
@@ -211,6 +221,9 @@ export const ResultsSection = ({
                 showDetailsButton={!isDesktop}
                 animationDelay={animationDelay}
                 showSeriesPosition={sortValue === 'series_order'}
+                isAdmin={isAdmin}
+                showRequestButton={showRequestButton}
+                onRequest={onRequest}
               />
             );
           })}

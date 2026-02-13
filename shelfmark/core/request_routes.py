@@ -1,0 +1,415 @@
+"""Request management API routes.
+
+Registers /api/requests endpoints for the book request workflow.
+Authenticated users can create requests; admins can approve/deny them.
+"""
+
+import threading
+from functools import wraps
+
+from flask import Flask, jsonify, request, session
+
+from shelfmark.core.logger import setup_logger
+from shelfmark.core.request_db import RequestDB
+from shelfmark.core.user_db import UserDB
+
+logger = setup_logger(__name__)
+
+
+def _get_auth_mode():
+    """Get current auth mode from config."""
+    try:
+        from shelfmark.core.settings_registry import load_config_file
+        config = load_config_file("security")
+        return config.get("AUTH_METHOD", "none")
+    except Exception:
+        return "none"
+
+
+def _require_auth(f):
+    """Decorator requiring an authenticated session."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_mode = _get_auth_mode()
+        if auth_mode != "none":
+            if "user_id" not in session:
+                return jsonify({"error": "Authentication required"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _require_admin(f):
+    """Decorator requiring admin session."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_mode = _get_auth_mode()
+        if auth_mode != "none":
+            if "user_id" not in session:
+                return jsonify({"error": "Authentication required"}), 401
+            if not session.get("is_admin", False):
+                return jsonify({"error": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _get_db_user_id() -> int | None:
+    """Get the database user ID from session."""
+    return session.get("db_user_id")
+
+
+def _is_admin() -> bool:
+    """Check if current user is admin."""
+    auth_mode = _get_auth_mode()
+    if auth_mode == "none":
+        return True
+    return session.get("is_admin", False)
+
+
+def _broadcast_request_update(request_data: dict | None = None) -> None:
+    """Broadcast a request_update event via WebSocket."""
+    try:
+        from shelfmark.api.websocket import ws_manager
+        if ws_manager and ws_manager.is_enabled():
+            ws_manager.socketio.emit("request_update", request_data or {})
+    except Exception as e:
+        logger.warning(f"Failed to broadcast request update: {e}")
+
+
+def _send_status_notification(
+    user_db: UserDB, req: dict, new_status: str, admin_note: str | None = None
+) -> None:
+    """Send email notification to the requesting user (best-effort, non-blocking)."""
+    try:
+        user_id = req.get("user_id")
+        if not user_id:
+            return
+        user = user_db.get_user(user_id=user_id)
+        if not user or not user.get("email"):
+            return
+        from shelfmark.core.request_notifications import send_request_notification
+        send_request_notification(
+            user_email=user["email"],
+            request_title=req.get("title", "Unknown"),
+            new_status=new_status,
+            admin_note=admin_note,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send notification for request #{req.get('id')}: {e}")
+
+
+def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) -> None:
+    """Register request management routes on the Flask app."""
+
+    @app.route("/api/requests", methods=["POST"])
+    @_require_auth
+    def create_request_route():
+        """Create a new book request."""
+        db_user_id = _get_db_user_id()
+        if not db_user_id:
+            return jsonify({"error": "User session not found"}), 401
+
+        data = request.get_json() or {}
+        title = (data.get("title") or "").strip()
+        if not title:
+            return jsonify({"error": "Title is required"}), 400
+
+        content_type = data.get("content_type", "ebook")
+        if content_type not in ("ebook", "audiobook"):
+            return jsonify({"error": "content_type must be 'ebook' or 'audiobook'"}), 400
+
+        try:
+            req = request_db.create_request(
+                user_id=db_user_id,
+                title=title,
+                content_type=content_type,
+                author=(data.get("author") or "").strip() or None,
+                year=(data.get("year") or "").strip() or None,
+                cover_url=data.get("cover_url"),
+                description=data.get("description"),
+                isbn_10=data.get("isbn_10"),
+                isbn_13=data.get("isbn_13"),
+                provider=data.get("provider"),
+                provider_id=data.get("provider_id"),
+                series_name=data.get("series_name"),
+                series_position=data.get("series_position"),
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
+        _broadcast_request_update(req)
+        return jsonify(req), 201
+
+    @app.route("/api/requests", methods=["GET"])
+    @_require_auth
+    def list_requests_route():
+        """List requests. Admins see all, users see own."""
+        status_filter = request.args.get("status")
+        try:
+            limit = min(int(request.args.get("limit", 100)), 200)
+        except ValueError:
+            limit = 100
+        try:
+            offset = max(0, int(request.args.get("offset", 0)))
+        except ValueError:
+            offset = 0
+
+        user_id = None if _is_admin() else _get_db_user_id()
+
+        requests_list = request_db.list_requests(
+            user_id=user_id, status=status_filter, limit=limit, offset=offset
+        )
+        total = request_db.count_requests(user_id=user_id, status=status_filter)
+
+        return jsonify({
+            "requests": requests_list,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        })
+
+    @app.route("/api/requests/counts", methods=["GET"])
+    @_require_auth
+    def request_counts_route():
+        """Get request counts by status for badge display."""
+        user_id = None if _is_admin() else _get_db_user_id()
+        counts = request_db.get_request_counts(user_id=user_id)
+        return jsonify(counts)
+
+    @app.route("/api/requests/<int:request_id>", methods=["GET"])
+    @_require_auth
+    def get_request_route(request_id):
+        """Get a single request. Owner or admin only."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+
+        if not _is_admin() and req["user_id"] != _get_db_user_id():
+            return jsonify({"error": "Access denied"}), 403
+
+        return jsonify(req)
+
+    @app.route("/api/requests/<int:request_id>", methods=["DELETE"])
+    @_require_auth
+    def delete_request_route(request_id):
+        """Delete a request. Owner can delete pending; admin can delete any."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+
+        is_admin = _is_admin()
+        is_owner = req["user_id"] == _get_db_user_id()
+
+        if not is_admin and not is_owner:
+            return jsonify({"error": "Access denied"}), 403
+        if not is_admin and req["status"] != "pending":
+            return jsonify({"error": "Only pending requests can be deleted by the requester"}), 400
+
+        request_db.delete_request(request_id)
+        logger.info(f"Request #{request_id} deleted")
+        _broadcast_request_update({"id": request_id, "deleted": True})
+        return jsonify({"success": True})
+
+    @app.route("/api/requests/<int:request_id>/approve", methods=["POST"])
+    @_require_admin
+    def approve_request_route(request_id):
+        """Approve a request and trigger auto-download."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+
+        if req["status"] != "pending":
+            return jsonify({"error": f"Cannot approve a request with status '{req['status']}'"}), 400
+
+        admin_user_id = _get_db_user_id()
+
+        # Update to approved first
+        updated = request_db.update_request_status(
+            request_id, "approved", approved_by=admin_user_id
+        )
+        logger.info(f"Request #{request_id} approved by admin {admin_user_id}")
+        _broadcast_request_update(updated)
+
+        # Send notification to requester
+        _send_status_notification(user_db, req, "approved")
+
+        # Capture session data before spawning thread (session unavailable outside request context)
+        admin_username = session.get("user_id")
+
+        # Start auto-download in background thread
+        thread = threading.Thread(
+            target=_auto_download_request,
+            args=(request_db, user_db, request_id, req, admin_user_id, admin_username),
+            daemon=True,
+        )
+        thread.start()
+
+        return jsonify(updated)
+
+    @app.route("/api/requests/<int:request_id>/deny", methods=["POST"])
+    @_require_admin
+    def deny_request_route(request_id):
+        """Deny a request with optional admin note."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+
+        if req["status"] != "pending":
+            return jsonify({"error": f"Cannot deny a request with status '{req['status']}'"}), 400
+
+        data = request.get_json() or {}
+        admin_note = (data.get("admin_note") or "").strip() or None
+        admin_user_id = _get_db_user_id()
+
+        updated = request_db.update_request_status(
+            request_id, "denied",
+            admin_note=admin_note, approved_by=admin_user_id
+        )
+        logger.info(f"Request #{request_id} denied by admin {admin_user_id}")
+        _broadcast_request_update(updated)
+
+        # Send notification to requester
+        _send_status_notification(user_db, req, "denied", admin_note=admin_note)
+
+        return jsonify(updated)
+
+    @app.route("/api/requests/<int:request_id>/retry", methods=["POST"])
+    @_require_admin
+    def retry_request_route(request_id):
+        """Retry a failed request."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+
+        if req["status"] != "failed":
+            return jsonify({"error": f"Cannot retry a request with status '{req['status']}'"}), 400
+
+        admin_user_id = _get_db_user_id()
+
+        # Update to approved status (ready for retry)
+        updated = request_db.update_request_status(
+            request_id, "approved", approved_by=admin_user_id
+        )
+        logger.info(f"Request #{request_id} retrying by admin {admin_user_id}")
+        _broadcast_request_update(updated)
+
+        # Capture session data before spawning thread
+        admin_username = session.get("user_id")
+
+        # Start auto-download in background thread
+        thread = threading.Thread(
+            target=_auto_download_request,
+            args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),
+            daemon=True,
+        )
+        thread.start()
+
+        return jsonify(updated)
+
+
+def _auto_download_request(
+    request_db: RequestDB,
+    user_db: UserDB,
+    request_id: int,
+    req: dict,
+    admin_user_id: int | None = None,
+    admin_username: str | None = None,
+) -> None:
+    """Search for and queue a download for an approved request.
+
+    Runs in a background thread. Updates the request status to
+    'downloading' or 'failed' depending on the outcome.
+    """
+    try:
+        from shelfmark.download import orchestrator as backend
+        from shelfmark.release_sources import get_source, list_available_sources
+        from shelfmark.metadata_providers import (
+            get_provider,
+            is_provider_registered,
+            get_provider_kwargs,
+        )
+        from shelfmark.core.search_plan import build_release_search_plan
+
+        provider_name = req.get("provider")
+        provider_id = req.get("provider_id")
+
+        if not provider_name or not provider_id or not is_provider_registered(provider_name):
+            request_db.update_request_status(request_id, "failed", admin_note="No metadata provider info")
+            _broadcast_request_update(request_db.get_request(request_id))
+            return
+
+        # Get book metadata from provider
+        kwargs = get_provider_kwargs(provider_name)
+        prov = get_provider(provider_name, **kwargs)
+        book = prov.get_book(provider_id)
+        if not book:
+            request_db.update_request_status(request_id, "failed", admin_note="Book not found in provider")
+            _broadcast_request_update(request_db.get_request(request_id))
+            return
+
+        # Search for releases
+        content_type = req.get("content_type", "ebook")
+        sources_to_search = [src["name"] for src in list_available_sources() if src["enabled"]]
+        if not sources_to_search:
+            request_db.update_request_status(request_id, "failed", admin_note="No release sources available")
+            _broadcast_request_update(request_db.get_request(request_id))
+            return
+
+        all_releases = []
+        for source_name in sources_to_search:
+            try:
+                source = get_source(source_name)
+                plan = build_release_search_plan(book)
+                releases = source.search(book, plan, expand_search=True, content_type=content_type)
+                all_releases.extend(releases)
+            except Exception as e:
+                logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
+
+        if not all_releases:
+            request_db.update_request_status(request_id, "failed", admin_note="No releases found")
+            _broadcast_request_update(request_db.get_request(request_id))
+            return
+
+        # Pick the first (best) release
+        release = all_releases[0]
+
+        # Get admin's user settings for download overrides
+        user_overrides = user_db.get_user_settings(admin_user_id) if admin_user_id else {}
+
+        from dataclasses import asdict
+        release_data = asdict(release)
+        release_data["author"] = book.authors[0] if book.authors else None
+        release_data["year"] = str(book.publish_year) if book.publish_year else None
+        release_data["preview"] = book.cover_url
+        release_data["content_type"] = content_type
+        release_data["series_name"] = book.series_name
+        release_data["series_position"] = book.series_position
+
+        success, error_msg = backend.queue_release(
+            release_data, priority=0,
+            user_id=admin_user_id,
+            username=admin_username,
+            user_overrides=user_overrides,
+        )
+
+        if success:
+            task_id = release_data.get("source_id", "")
+            request_db.update_request_status(
+                request_id, "downloading", download_task_id=task_id
+            )
+            logger.info(f"Request #{request_id}: download queued (task={task_id})")
+        else:
+            request_db.update_request_status(
+                request_id, "failed", admin_note=error_msg or "Failed to queue download"
+            )
+            logger.warning(f"Request #{request_id}: failed to queue download: {error_msg}")
+
+        _broadcast_request_update(request_db.get_request(request_id))
+
+    except Exception as e:
+        logger.error(f"Auto-download error for request #{request_id}: {e}")
+        try:
+            request_db.update_request_status(request_id, "failed", admin_note=f"Error: {e}")
+            _broadcast_request_update(request_db.get_request(request_id))
+        except Exception:
+            pass

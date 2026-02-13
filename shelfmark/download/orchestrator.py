@@ -603,6 +603,46 @@ def _cleanup_progress_tracking(task_id: str) -> None:
         _last_status_event.pop(task_id, None)
 
 
+def _update_linked_requests(task_id: str, success: bool) -> None:
+    """Update any book requests linked to this download task."""
+    try:
+        import os as _os
+        from shelfmark.core.request_db import RequestDB
+        db_path = _os.path.join(_os.environ.get("CONFIG_DIR", "/config"), "users.db")
+        rdb = RequestDB(db_path)
+        linked = rdb.get_requests_by_download_task(task_id)
+        if not linked:
+            return
+        new_status = "fulfilled" if success else "failed"
+        for req in linked:
+            if req["status"] in ("downloading", "approved"):
+                rdb.update_request_status(req["id"], new_status)
+                logger.info(f"Request #{req['id']} updated to '{new_status}' (task={task_id})")
+                # Send notification to requester
+                try:
+                    from shelfmark.core.user_db import UserDB
+                    udb = UserDB(db_path)
+                    user = udb.get_user(user_id=req.get("user_id"))
+                    if user and user.get("email"):
+                        from shelfmark.core.request_notifications import send_request_notification
+                        send_request_notification(
+                            user_email=user["email"],
+                            request_title=req.get("title", "Unknown"),
+                            new_status=new_status,
+                        )
+                except Exception as ne:
+                    logger.debug(f"Could not send notification for request #{req['id']}: {ne}")
+        # Broadcast request update
+        try:
+            from shelfmark.api.websocket import ws_manager
+            if ws_manager and ws_manager.is_enabled():
+                ws_manager.socketio.emit("request_update", {})
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning(f"Failed to update linked requests for task {task_id}: {e}")
+
+
 def _process_single_download(task_id: str, cancel_flag: Event) -> None:
     """Process a single download job."""
     try:
@@ -626,8 +666,10 @@ def _process_single_download(task_id: str, cancel_flag: Event) -> None:
             task = book_queue.get_task(task_id)
             if not task or task.status != QueueStatus.COMPLETE:
                 book_queue.update_status(task_id, QueueStatus.COMPLETE)
+            _update_linked_requests(task_id, success=True)
         else:
             book_queue.update_status(task_id, QueueStatus.ERROR)
+            _update_linked_requests(task_id, success=False)
 
         # Broadcast final status (completed or error)
         if ws_manager:
@@ -644,6 +686,7 @@ def _process_single_download(task_id: str, cancel_flag: Event) -> None:
             task = book_queue.get_task(task_id)
             if task and not task.status_message:
                 book_queue.update_status_message(task_id, f"Download failed: {type(e).__name__}: {str(e)}")
+            _update_linked_requests(task_id, success=False)
         else:
             logger.info(f"Download cancelled: {task_id}")
             book_queue.update_status(task_id, QueueStatus.CANCELLED)

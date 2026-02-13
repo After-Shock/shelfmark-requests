@@ -260,6 +260,14 @@ def security_settings():
             env_supported=False,
             show_when={"field": "AUTH_METHOD", "value": "builtin"},
         ),
+        CheckboxField(
+            key="ALLOW_SELF_REGISTRATION",
+            label="Allow Self-Registration",
+            description="Allow new visitors to create their own account. Disable to require admin-created accounts only.",
+            default=True,
+            env_supported=False,
+            show_when={"field": "AUTH_METHOD", "value": "builtin"},
+        ),
         ActionButton(
             key="clear_credentials",
             label="Clear Credentials",

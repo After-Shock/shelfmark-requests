@@ -1,6 +1,7 @@
 import { useEffect, useState, CSSProperties } from 'react';
 import { ButtonStateInfo } from '../types';
 import { CircularProgress } from './shared';
+import { theme } from '../theme';
 
 type ButtonSize = 'sm' | 'md';
 type ButtonVariant = 'primary' | 'icon';
@@ -76,7 +77,7 @@ export const BookDownloadButton = ({
       ? 'bg-red-600 cursor-not-allowed opacity-75'
       : isInProgress
       ? 'bg-gray-500 cursor-not-allowed opacity-75'
-      : 'bg-sky-700 hover:bg-sky-800';
+      : '';
 
   const iconStateClasses =
     isCompleted
@@ -92,8 +93,8 @@ export const BookDownloadButton = ({
 
   const baseClasses =
     variant === 'icon'
-      ? 'flex items-center justify-center rounded-full transition-all duration-200 disabled:opacity-80 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sky-500'
-      : 'inline-flex items-center justify-center gap-1.5 rounded text-white transition-all duration-200 disabled:opacity-80 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sky-500';
+      ? 'flex items-center justify-center rounded-full transition-all duration-200 disabled:opacity-80 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
+      : 'inline-flex items-center justify-center gap-1.5 rounded text-white transition-all duration-200 disabled:opacity-80 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2';
 
   const sizeClass = variant === 'icon' ? iconVariantSizeClasses[size] : sizeClasses[size];
   const iconSizes = variant === 'icon' ? iconVariantIconSizes[size] : undefined;
@@ -183,13 +184,32 @@ export const BookDownloadButton = ({
     return null;
   };
 
+  const buttonStyle: CSSProperties = {
+    ...style,
+    ...(variant === 'primary' && buttonState.state === 'download' && !isQueuing
+      ? {
+          backgroundColor: theme.button.primary,
+        }
+      : {}),
+  };
+
   return (
     <button
       className={`${baseClasses} ${sizeClass} ${stateClasses} ${widthClasses} ${className}`.trim()}
       onClick={handleDownload}
       disabled={isDisabled || isInProgress}
       data-action="download"
-      style={style}
+      style={buttonStyle}
+      onMouseEnter={(e) => {
+        if (variant === 'primary' && buttonState.state === 'download' && !isQueuing) {
+          e.currentTarget.style.backgroundColor = theme.button.primaryHover;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (variant === 'primary' && buttonState.state === 'download' && !isQueuing) {
+          e.currentTarget.style.backgroundColor = theme.button.primary;
+        }
+      }}
       aria-label={ariaLabel ?? displayText}
     >
       {variant === 'primary' && showIcon && !isCompleted && !hasError && !showCircularProgress && !showSpinner && (

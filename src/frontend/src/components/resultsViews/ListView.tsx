@@ -13,6 +13,9 @@ interface ListViewProps {
   getButtonState: (bookId: string) => ButtonStateInfo;
   getUniversalButtonState: (bookId: string) => ButtonStateInfo;
   showSeriesPosition?: boolean;
+  isAdmin?: boolean;
+  showRequestButton?: boolean;
+  onRequest?: (book: Book) => void;
 }
 
 const ListViewThumbnail = ({ preview, title }: { preview?: string; title?: string }) => {
@@ -48,7 +51,7 @@ const ListViewThumbnail = ({ preview, title }: { preview?: string; title?: strin
   );
 };
 
-export const ListView = ({ books, onDetails, onDownload, onGetReleases, getButtonState, getUniversalButtonState, showSeriesPosition = false }: ListViewProps) => {
+export const ListView = ({ books, onDetails, onDownload, onGetReleases, getButtonState, getUniversalButtonState, showSeriesPosition = false, isAdmin, showRequestButton, onRequest }: ListViewProps) => {
   const { searchMode } = useSearchMode();
   const [detailsLoadingId, setDetailsLoadingId] = useState<string | null>(null);
   const [releasesLoadingId, setReleasesLoadingId] = useState<string | null>(null);
@@ -240,6 +243,9 @@ export const ListView = ({ books, onDetails, onDownload, onGetReleases, getButto
                     isLoadingReleases={releasesLoadingId === book.id}
                     variant="icon"
                     size="md"
+                    isAdmin={isAdmin}
+                    showRequestButton={showRequestButton}
+                    onRequest={onRequest}
                   />
                 </div>
               </div>

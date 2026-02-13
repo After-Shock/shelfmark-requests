@@ -398,6 +398,19 @@ def save_onboarding_settings(values: Dict[str, Any]) -> Dict[str, Any]:
         if search_mode == "universal":
             provider = values.get("METADATA_PROVIDER", "hardcover")
             if provider:
+                # Fall back to openlibrary if selected provider requires an API key that wasn't provided
+                needs_key = {
+                    "hardcover": "HARDCOVER_API_KEY",
+                    "googlebooks": "GOOGLEBOOKS_API_KEY",
+                }
+                required_key = needs_key.get(provider)
+                if required_key and not values.get(required_key):
+                    logger.info(f"Provider '{provider}' selected but no API key provided, falling back to openlibrary")
+                    provider = "openlibrary"
+                    # Update saved values so METADATA_PROVIDER reflects the fallback
+                    tab_values.setdefault("search_mode", {})["METADATA_PROVIDER"] = provider
+                    save_config_file("search_mode", tab_values["search_mode"])
+
                 # Map provider name to its enabled key
                 enabled_key_map = {
                     "hardcover": "HARDCOVER_ENABLED",

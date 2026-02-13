@@ -194,8 +194,11 @@ export interface AuthResponse {
   auth_required?: boolean;
   auth_mode?: string;
   is_admin?: boolean;
+  is_initial_admin?: boolean;
   error?: string;
   logout_url?: string;
+  needs_setup?: boolean;
+  registration_enabled?: boolean;
 }
 
 // Type guard to check if a book is from a metadata provider
@@ -319,4 +322,49 @@ export interface SearchStatusData {
   book_id: string;     // Book ID (may be empty)
   message: string;     // Human-readable status message
   phase: 'connecting' | 'searching' | 'downloading' | 'parsing' | 'complete' | 'error';
+}
+
+// Book request types (Overseerr-style request workflow)
+export type RequestStatus = 'pending' | 'approved' | 'denied' | 'downloading' | 'fulfilled' | 'failed';
+
+export interface BookRequest {
+  id: number;
+  user_id: number;
+  status: RequestStatus;
+  content_type: 'ebook' | 'audiobook';
+  title: string;
+  author?: string;
+  year?: string;
+  cover_url?: string;
+  description?: string;
+  isbn_10?: string;
+  isbn_13?: string;
+  provider?: string;
+  provider_id?: string;
+  series_name?: string;
+  series_position?: number;
+  admin_note?: string;
+  approved_by?: number;
+  download_task_id?: string;
+  created_at: string;
+  updated_at: string;
+  requester_username: string;
+  requester_display_name?: string;
+}
+
+export interface RequestsListResponse {
+  requests: BookRequest[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface RequestCounts {
+  pending: number;
+  approved: number;
+  denied: number;
+  downloading: number;
+  fulfilled: number;
+  failed: number;
+  total: number;
 }

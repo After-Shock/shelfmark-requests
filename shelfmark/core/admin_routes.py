@@ -150,6 +150,17 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
         if "role" in user_fields and user_fields["role"] not in ("admin", "user"):
             return jsonify({"error": "Role must be 'admin' or 'user'"}), 400
 
+        # Only initial admin can promote users to admin
+        if "role" in user_fields and user_fields["role"] == "admin" and user.get("role") != "admin":
+            # Get the current user making this request
+            current_user_id = session.get("db_user_id")
+            if current_user_id:
+                current_user = user_db.get_user(user_id=current_user_id)
+                if not current_user or not current_user.get("is_initial_admin"):
+                    return jsonify({
+                        "error": "Only the initial admin can promote users to admin role"
+                    }), 403
+
         # Prevent changing OIDC user role when group-based auth is enabled
         if "role" in user_fields and user.get("oidc_subject") and user_fields["role"] != user.get("role"):
             security_config = load_config_file("security")

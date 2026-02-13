@@ -103,6 +103,11 @@ try:
     from shelfmark.core.admin_routes import register_admin_routes
     register_oidc_routes(app, user_db)
     register_admin_routes(app, user_db)
+    from shelfmark.core.request_db import RequestDB
+    from shelfmark.core.request_routes import register_request_routes
+    request_db = RequestDB(_user_db_path)
+    request_db.initialize()
+    register_request_routes(app, request_db, user_db)
 except (sqlite3.OperationalError, OSError) as e:
     logger.warning(
         f"User database initialization failed: {e}. "
@@ -193,8 +198,12 @@ def get_auth_mode() -> str:
         auth_mode = security_config.get("AUTH_METHOD", "none")
         if auth_mode == "cwa" and CWA_DB_PATH:
             return "cwa"
-        if auth_mode == "builtin" and security_config.get("BUILTIN_USERNAME") and security_config.get("BUILTIN_PASSWORD_HASH"):
-            return "builtin"
+        if auth_mode == "builtin":
+            # Accept builtin mode if legacy credentials exist OR users exist in DB
+            if security_config.get("BUILTIN_USERNAME") and security_config.get("BUILTIN_PASSWORD_HASH"):
+                return "builtin"
+            if user_db is not None and user_db.list_users():
+                return "builtin"
         if auth_mode == "proxy" and security_config.get("PROXY_AUTH_USER_HEADER"):
             return "proxy"
         if auth_mode == "oidc" and security_config.get("OIDC_DISCOVERY_URL") and security_config.get("OIDC_CLIENT_ID"):
@@ -440,11 +449,18 @@ def index() -> Response:
     return _serve_index_html()
 
 @app.route('/logo.png')
-def logo() -> Response:
+def logo_png() -> Response:
     """
-    Serve logo from built frontend assets.
+    Serve PNG logo from built frontend assets.
     """
     return send_from_directory(FRONTEND_DIST, 'logo.png', mimetype='image/png')
+
+@app.route('/logo.svg')
+def logo_svg() -> Response:
+    """
+    Serve SVG logo from built frontend assets.
+    """
+    return send_from_directory(FRONTEND_DIST, 'logo.svg', mimetype='image/svg+xml')
 
 @app.route('/favicon.ico')
 @app.route('/favico<path:_>')
@@ -1191,6 +1207,117 @@ def api_login() -> Union[Response, Tuple[Response, int]]:
         logger.error_trace(f"Login error: {e}")
         return jsonify({"error": "Login failed"}), 500
 
+@app.route('/api/auth/setup', methods=['POST'])
+def api_setup() -> Union[Response, Tuple[Response, int]]:
+    """First-run admin account setup. Only works when no users exist."""
+    if user_db is None:
+        return jsonify({"error": "User database not available"}), 503
+
+    if user_db.list_users():
+        return jsonify({"error": "Setup already completed"}), 403
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    email = (data.get("email") or "").strip() or None
+
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    if not password or len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+
+    from werkzeug.security import generate_password_hash
+    from shelfmark.core.settings_registry import save_config_file
+
+    password_hash = generate_password_hash(password)
+
+    try:
+        new_user = user_db.create_user(
+            username=username,
+            password_hash=password_hash,
+            email=email,
+            role="admin",
+            is_initial_admin=True,
+        )
+    except ValueError:
+        return jsonify({"error": "Username already exists"}), 409
+
+    # Auto-enable builtin auth mode
+    save_config_file("security", {"AUTH_METHOD": "builtin"})
+
+    # Auto-login the new admin
+    session['user_id'] = username
+    session['db_user_id'] = new_user["id"]
+    session['is_admin'] = True
+    session.permanent = True
+
+    logger.info(f"First-run admin setup: created admin '{username}'")
+    return jsonify({"success": True, "user": {"id": new_user["id"], "username": username, "role": "admin"}}), 201
+
+
+@app.route('/api/auth/register', methods=['POST'])
+def api_register() -> Union[Response, Tuple[Response, int]]:
+    """Self-service user registration. Creates a user with 'user' role."""
+    if user_db is None:
+        return jsonify({"error": "Registration not available"}), 503
+
+    if not user_db.list_users():
+        return jsonify({"error": "Admin setup required first"}), 403
+
+    auth_mode = get_auth_mode()
+    if auth_mode != "builtin":
+        return jsonify({"error": "Registration not available for this auth mode"}), 403
+
+    from shelfmark.core.settings_registry import load_config_file
+    try:
+        security_config = load_config_file("security")
+        if not security_config.get("ALLOW_SELF_REGISTRATION", True):
+            return jsonify({"error": "Registration is disabled"}), 403
+    except Exception:
+        pass
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    email = (data.get("email") or "").strip() or None
+
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    if not password or len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+    if user_db.get_user(username=username):
+        return jsonify({"error": "Username already taken"}), 409
+
+    from werkzeug.security import generate_password_hash
+
+    password_hash = generate_password_hash(password)
+
+    try:
+        new_user = user_db.create_user(
+            username=username,
+            password_hash=password_hash,
+            email=email,
+            role="user",
+        )
+    except ValueError:
+        return jsonify({"error": "Username already taken"}), 409
+
+    # Auto-login the new user
+    session['user_id'] = username
+    session['db_user_id'] = new_user["id"]
+    session['is_admin'] = False
+    session.permanent = True
+
+    logger.info(f"New user registered: '{username}'")
+    return jsonify({"success": True}), 201
+
+
 @app.route('/api/auth/logout', methods=['POST'])
 def api_logout() -> Union[Response, Tuple[Response, int]]:
     """
@@ -1236,13 +1363,24 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
         security_config = load_config_file("security")
         auth_mode = get_auth_mode()
 
+        # Check if first-run setup is needed (no users exist)
+        needs_setup = user_db is not None and not user_db.list_users()
+
+        # Check if self-registration is available
+        registration_enabled = False
+        if auth_mode == "builtin" and not needs_setup:
+            registration_enabled = security_config.get("ALLOW_SELF_REGISTRATION", True)
+
         # If no authentication is configured, access is allowed (full admin)
         if auth_mode == "none":
             return jsonify({
                 "authenticated": True,
                 "auth_required": False,
                 "auth_mode": "none",
-                "is_admin": True
+                "is_admin": True,
+                "is_initial_admin": False,
+                "needs_setup": needs_setup,
+                "registration_enabled": False,
             })
 
         # Check if user has a valid session
@@ -1271,12 +1409,24 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
         else:
             is_admin = False
 
+        # Check if current user is the initial admin
+        is_initial_admin = False
+        if is_authenticated and user_db is not None:
+            current_user_id = session.get('db_user_id')
+            if current_user_id:
+                current_user = user_db.get_user(user_id=current_user_id)
+                if current_user:
+                    is_initial_admin = bool(current_user.get('is_initial_admin', False))
+
         response_data = {
             "authenticated": is_authenticated,
             "auth_required": True,
             "auth_mode": auth_mode,
             "is_admin": is_admin if is_authenticated else False,
-            "username": session.get('user_id') if is_authenticated else None
+            "is_initial_admin": is_initial_admin,
+            "username": session.get('user_id') if is_authenticated else None,
+            "needs_setup": needs_setup,
+            "registration_enabled": registration_enabled,
         }
         
         # Add logout URL for proxy auth if configured

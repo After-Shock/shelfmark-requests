@@ -1,0 +1,43 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bookGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7B3FF2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#9B6FF5;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bookmarkGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#00BCD4;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1DE9B6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Main book body -->
+  <rect x="20" y="25" width="70" height="85" rx="4" fill="url(#bookGradient)" stroke="#5E2AC4" stroke-width="2"/>
+
+  <!-- Book pages (white lines on the right edge) -->
+  <line x1="87" y1="30" x2="87" y2="107" stroke="#ffffff" stroke-width="1" opacity="0.3"/>
+  <line x1="84" y1="30" x2="84" y2="107" stroke="#ffffff" stroke-width="1" opacity="0.2"/>
+
+  <!-- Book spine highlight -->
+  <rect x="22" y="27" width="8" height="81" fill="#ffffff" opacity="0.15" rx="2"/>
+
+  <!-- Bookmark ribbon -->
+  <path d="M 55 20 L 55 65 L 60 60 L 65 65 L 65 20 Z" fill="url(#bookmarkGradient)" stroke="#00ACC1" stroke-width="1"/>
+
+  <!-- Playful details on book cover -->
+  <!-- Sparkle 1 -->
+  <circle cx="40" cy="50" r="2" fill="#00BCD4" opacity="0.8"/>
+  <line x1="40" y1="45" x2="40" y2="55" stroke="#00BCD4" stroke-width="1" opacity="0.6"/>
+  <line x1="35" y1="50" x2="45" y2="50" stroke="#00BCD4" stroke-width="1" opacity="0.6"/>
+
+  <!-- Sparkle 2 -->
+  <circle cx="70" cy="70" r="1.5" fill="#1DE9B6" opacity="0.8"/>
+  <line x1="70" y1="67" x2="70" y2="73" stroke="#1DE9B6" stroke-width="0.8" opacity="0.6"/>
+  <line x1="67" y1="70" x2="73" y2="70" stroke="#1DE9B6" stroke-width="0.8" opacity="0.6"/>
+
+  <!-- Playful smile on book -->
+  <path d="M 40 90 Q 55 95 70 90" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.4"/>
+
+  <!-- Book title lines (decorative) -->
+  <rect x="30" y="40" width="30" height="3" rx="1.5" fill="#ffffff" opacity="0.3"/>
+  <rect x="30" y="48" width="25" height="2" rx="1" fill="#ffffff" opacity="0.25"/>
+</svg>
