@@ -786,7 +786,7 @@ function App() {
             setConfigBannerOpen(true);
           }
         } : undefined}
-        onAccountClick={authRequired && isAuthenticated ? () => setAccountOpen(true) : undefined}
+        onAccountClick={authRequired && isAuthenticated && !isAdmin ? () => setAccountOpen(true) : undefined}
         statusCounts={statusCounts}
         onLogoClick={() => handleResetSearch(config)}
         authRequired={authRequired}
