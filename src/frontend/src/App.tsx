@@ -15,6 +15,7 @@ import { useSearch } from './hooks/useSearch';
 import { useUrlSearch } from './hooks/useUrlSearch';
 import { useDownloadTracking } from './hooks/useDownloadTracking';
 import { useRequests } from './hooks/useRequests';
+import { useTheme } from './hooks/useTheme';
 import { Header } from './components/Header';
 import { SearchSection } from './components/SearchSection';
 import { AdvancedFilters } from './components/AdvancedFilters';
@@ -41,22 +42,14 @@ import { withBasePath } from './utils/basePath';
 import { SearchModeProvider } from './contexts/SearchModeContext';
 import './styles.css';
 
-const CONTENT_TYPE_STORAGE_KEY = 'preferred-content-type';
-
+// Content type always defaults to 'ebook' for each session
 const getInitialContentType = (): ContentType => {
-  try {
-    const saved = localStorage.getItem(CONTENT_TYPE_STORAGE_KEY);
-    if (saved === 'ebook' || saved === 'audiobook') {
-      return saved;
-    }
-  } catch {
-    // localStorage may be unavailable in private browsing
-  }
   return 'ebook';
 };
 
 function App() {
   const { toasts, showToast, removeToast } = useToast();
+  const { theme, toggleTheme } = useTheme();
 
   // Realtime status with WebSocket and polling fallback
   // Socket connection is managed by SocketProvider in main.tsx
@@ -98,16 +91,8 @@ function App() {
     showToast,
   });
 
-  // Content type state (ebook vs audiobook) - defined before useSearch since it's passed to it
+  // Content type state (ebook vs audiobook) - always defaults to 'ebook' each session
   const [contentType, setContentType] = useState<ContentType>(() => getInitialContentType());
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(CONTENT_TYPE_STORAGE_KEY, contentType);
-    } catch {
-      // localStorage may be unavailable in private browsing
-    }
-  }, [contentType]);
 
   // Search state and handlers
   const {
@@ -793,6 +778,8 @@ function App() {
         isAuthenticated={isAuthenticated}
         isAdmin={isAdmin}
         onLogout={handleLogoutWithCleanup}
+        theme={theme}
+        onThemeToggle={toggleTheme}
         onSearch={() => {
           const query = buildSearchQuery({
             searchInput,
