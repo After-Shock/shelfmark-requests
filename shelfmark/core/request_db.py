@@ -57,6 +57,12 @@ class RequestDB:
             conn = self._connect()
             try:
                 conn.executescript(_CREATE_REQUESTS_TABLE_SQL)
+                # Add hidden_from_admin column if it doesn't exist (migration)
+                cursor = conn.execute("PRAGMA table_info(requests)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'hidden_from_admin' not in columns:
+                    logger.info("Adding hidden_from_admin column to requests table")
+                    conn.execute("ALTER TABLE requests ADD COLUMN hidden_from_admin INTEGER DEFAULT 0")
                 conn.commit()
             finally:
                 conn.close()
@@ -122,8 +128,18 @@ class RequestDB:
         status: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        include_hidden_from_admin: bool = False,
     ) -> List[Dict[str, Any]]:
-        """List requests with optional filters. Returns list of request dicts."""
+        """List requests with optional filters. Returns list of request dicts.
+
+        Args:
+            user_id: Filter by specific user (None = all users for admin view)
+            status: Filter by status
+            limit: Max results
+            offset: Result offset
+            include_hidden_from_admin: If False and user_id is None (admin view),
+                                      exclude requests hidden from admin
+        """
         conn = self._connect()
         try:
             conditions = []
@@ -131,6 +147,10 @@ class RequestDB:
             if user_id is not None:
                 conditions.append("r.user_id = ?")
                 params.append(user_id)
+            else:
+                # Admin view - exclude hidden requests unless explicitly requested
+                if not include_hidden_from_admin:
+                    conditions.append("(r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL)")
             if status is not None:
                 conditions.append("r.status = ?")
                 params.append(status)
@@ -291,6 +311,20 @@ class RequestDB:
             conn = self._connect()
             try:
                 cursor = conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+            finally:
+                conn.close()
+
+    def hide_request_from_admin(self, request_id: int) -> bool:
+        """Hide a request from admin view. Returns True if updated."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    "UPDATE requests SET hidden_from_admin = 1 WHERE id = ?",
+                    (request_id,)
+                )
                 conn.commit()
                 return cursor.rowcount > 0
             finally:

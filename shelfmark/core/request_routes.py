@@ -207,7 +207,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>", methods=["DELETE"])
     @_require_auth
     def delete_request_route(request_id):
-        """Delete a request. Owner can delete their own; admin can delete any."""
+        """Delete/hide a request. Owners delete permanently; admins hide from their view."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
@@ -218,13 +218,18 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         if not is_admin and not is_owner:
             return jsonify({"error": "Access denied"}), 403
 
-        # Users can now delete their own requests regardless of status
-        # This allows clearing completed/fulfilled/denied/failed requests from their view
-
-        request_db.delete_request(request_id)
-        logger.info(f"Request #{request_id} deleted by {'admin' if is_admin else 'owner'}")
-        _broadcast_request_update({"id": request_id, "deleted": True})
-        return jsonify({"success": True})
+        if is_admin and not is_owner:
+            # Admin hiding request from their view (doesn't affect user's list)
+            request_db.hide_request_from_admin(request_id)
+            logger.info(f"Request #{request_id} hidden from admin view")
+            _broadcast_request_update({"id": request_id, "deleted": True})
+            return jsonify({"success": True, "action": "hidden"})
+        else:
+            # Owner permanently deleting their own request
+            request_db.delete_request(request_id)
+            logger.info(f"Request #{request_id} permanently deleted by owner")
+            _broadcast_request_update({"id": request_id, "deleted": True})
+            return jsonify({"success": True, "action": "deleted"})
 
     @app.route("/api/requests/<int:request_id>/approve", methods=["POST"])
     @_require_admin
