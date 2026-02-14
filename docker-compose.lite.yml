@@ -1,0 +1,39 @@
+# Lite variant - uses external FlareSolverr for bypassing
+# Usage: docker compose -f docker-compose.lite.yml up -d
+
+services:
+  shelfmark-lite:
+    image: shelfmark-lite-dev
+    container_name: shelfmark-lite
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: shelfmark-lite
+    environment:
+      DEBUG: true
+      PUID: 1000
+      PGID: 1000
+      EXT_BYPASSER_URL: http://flaresolverr:8191
+      EXT_BYPASSER_PATH: /v1
+      EXT_BYPASSER_TIMEOUT: 60000
+    ports:
+      - 8084:8084
+    restart: unless-stopped
+    volumes:
+      - ./.local/config:/config
+      - ./.local/books:/books
+      - ./.local/log:/var/log/shelfmark
+      - ./.local/tmp:/tmp/shelfmark
+      # Required for torrent / usenet - path must match your download client's volume exactly
+      # - /path/to/downloads:/path/to/downloads
+    depends_on:
+      - flaresolverr
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      LOG_LEVEL: info
+    ports:
+      - 8191:8191
+    restart: unless-stopped

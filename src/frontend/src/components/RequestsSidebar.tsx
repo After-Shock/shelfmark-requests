@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BookRequest, RequestStatus } from '../types';
+import { deleteBookRequest } from '../services/api';
 import { theme } from '../theme';
 
 interface RequestsSidebarProps {
@@ -12,6 +13,7 @@ interface RequestsSidebarProps {
   onRetry: (requestId: number) => Promise<void>;
   onDelete: (requestId: number) => Promise<void>;
   onMarkCompleted: (requestId: number) => Promise<void>;
+  onRefresh: () => Promise<void>;
 }
 
 type FilterTab = 'all' | 'pending' | 'fulfilled';
@@ -34,8 +36,11 @@ const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: st
   cancelled: { bg: 'bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', label: 'Cancelled' },
 };
 
+const isValidCoverUrl = (url?: string): boolean =>
+  !!url && (url.startsWith('http://') || url.startsWith('https://'));
+
 const BookThumbnail = ({ coverUrl, title }: { coverUrl?: string; title?: string }) => {
-  if (!coverUrl) {
+  if (!isValidCoverUrl(coverUrl)) {
     return (
       <div
         className="w-16 h-24 rounded-tl bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[8px] font-medium text-gray-500 dark:text-gray-400"
@@ -89,11 +94,15 @@ export const RequestsSidebar = ({
   onRetry,
   onDelete,
   onMarkCompleted,
+  onRefresh,
 }: RequestsSidebarProps) => {
   const [filter, setFilter] = useState<FilterTab>('all');
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
   const [denyNote, setDenyNote] = useState('');
-  const [processingId, setProcessingId] = useState<number | null>(null);
+  const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
+  const addProcessing = (id: number) => setProcessingIds(prev => new Set(prev).add(id));
+  const removeProcessing = (id: number) => setProcessingIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+  const isProcessing = (id: number) => processingIds.has(id);
 
   // Handle ESC key to close sidebar
   useEffect(() => {
@@ -117,20 +126,20 @@ export const RequestsSidebar = ({
   });
 
   const handleApproveClick = async (requestId: number) => {
-    setProcessingId(requestId);
+    addProcessing(requestId);
     try {
       await onApprove(requestId);
     } catch (error) {
       console.error('Failed to approve request:', error);
     } finally {
-      setProcessingId(null);
+      removeProcessing(requestId);
     }
   };
 
   const handleDenyClick = async (requestId: number) => {
     if (denyNoteId === requestId) {
       // Submit deny with note
-      setProcessingId(requestId);
+      addProcessing(requestId);
       try {
         await onDeny(requestId, denyNote || undefined);
         setDenyNoteId(null);
@@ -138,7 +147,7 @@ export const RequestsSidebar = ({
       } catch (error) {
         console.error('Failed to deny request:', error);
       } finally {
-        setProcessingId(null);
+        removeProcessing(requestId);
       }
     } else {
       // Show note input
@@ -148,18 +157,18 @@ export const RequestsSidebar = ({
   };
 
   const handleRetryClick = async (requestId: number) => {
-    setProcessingId(requestId);
+    addProcessing(requestId);
     try {
       await onRetry(requestId);
     } catch (error) {
       console.error('Failed to retry request:', error);
     } finally {
-      setProcessingId(null);
+      removeProcessing(requestId);
     }
   };
 
   const handleMarkCompletedClick = async (requestId: number) => {
-    setProcessingId(requestId);
+    addProcessing(requestId);
     try {
       await onMarkCompleted(requestId);
     } catch (error) {
@@ -167,7 +176,7 @@ export const RequestsSidebar = ({
       // Re-throw so App.tsx can show error toast
       throw error;
     } finally {
-      setProcessingId(null);
+      removeProcessing(requestId);
     }
   };
 
@@ -177,13 +186,17 @@ export const RequestsSidebar = ({
       (r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed' || r.status === 'cancelled'
     );
 
-    // Delete all clearable requests in parallel
+    // Delete all clearable requests in parallel using the API directly,
+    // then refresh once at the end to avoid stale optimistic rollback snapshots
     try {
-      await Promise.all(clearableRequests.map((r) => onDelete(r.id)));
+      await Promise.allSettled(
+        clearableRequests.map((r) => deleteBookRequest(r.id))
+      );
     } catch (error) {
       console.error('Failed to clear completed requests:', error);
-      // Errors are already handled by individual onDelete calls
     }
+    // Single refresh to sync UI with server state
+    await onRefresh();
   };
 
   // Show clear button if there are any completed requests
@@ -268,26 +281,26 @@ export const RequestsSidebar = ({
                   <button
                     type="button"
                     onClick={() => handleApproveClick(req.id)}
-                    disabled={processingId === req.id}
+                    disabled={isProcessing(req.id)}
                     className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {processingId === req.id ? 'Processing...' : 'Approve'}
+                    {isProcessing(req.id) ? 'Processing...' : 'Approve'}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleMarkCompletedClick(req.id)}
-                    disabled={processingId === req.id}
+                    disabled={isProcessing(req.id)}
                     className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {processingId === req.id ? 'Marking...' : 'Mark Completed'}
+                    {isProcessing(req.id) ? 'Marking...' : 'Mark Completed'}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleDenyClick(req.id)}
-                    disabled={processingId === req.id}
+                    disabled={isProcessing(req.id)}
                     className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
+                    {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                   </button>
                 </div>
               )}
@@ -298,7 +311,7 @@ export const RequestsSidebar = ({
                   <button
                     type="button"
                     onClick={() => handleRetryClick(req.id)}
-                    disabled={processingId === req.id}
+                    disabled={isProcessing(req.id)}
                     className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       backgroundColor: 'rgba(0, 188, 212, 0.2)',
@@ -311,25 +324,25 @@ export const RequestsSidebar = ({
                       e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.2)';
                     }}
                   >
-                    {processingId === req.id ? 'Retrying...' : 'Retry'}
+                    {isProcessing(req.id) ? 'Retrying...' : 'Retry'}
                   </button>
                   {canMarkCompleted && (
                     <button
                       type="button"
                       onClick={() => handleMarkCompletedClick(req.id)}
-                      disabled={processingId === req.id}
+                      disabled={isProcessing(req.id)}
                       className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {processingId === req.id ? 'Marking...' : 'Mark Completed'}
+                      {isProcessing(req.id) ? 'Marking...' : 'Mark Completed'}
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={() => handleDenyClick(req.id)}
-                    disabled={processingId === req.id}
+                    disabled={isProcessing(req.id)}
                     className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
+                    {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                   </button>
                 </div>
               )}
@@ -341,19 +354,19 @@ export const RequestsSidebar = ({
                     <button
                       type="button"
                       onClick={() => handleMarkCompletedClick(req.id)}
-                      disabled={processingId === req.id}
+                      disabled={isProcessing(req.id)}
                       className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {processingId === req.id ? 'Marking...' : 'Mark Completed'}
+                      {isProcessing(req.id) ? 'Marking...' : 'Mark Completed'}
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={() => handleDenyClick(req.id)}
-                    disabled={processingId === req.id}
+                    disabled={isProcessing(req.id)}
                     className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {processingId === req.id && denyNoteId === req.id ? 'Processing...' : 'Deny'}
+                    {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                   </button>
                 </div>
               )}
@@ -376,7 +389,7 @@ export const RequestsSidebar = ({
                   placeholder="Reason (optional)"
                   className="flex-1 px-2 py-1 text-xs rounded border border-[var(--border-muted)] bg-[var(--bg)]"
                   autoFocus
-                  disabled={processingId === req.id}
+                  disabled={isProcessing(req.id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       handleDenyClick(req.id);
@@ -390,10 +403,10 @@ export const RequestsSidebar = ({
                 <button
                   type="button"
                   onClick={() => handleDenyClick(req.id)}
-                  disabled={processingId === req.id}
+                  disabled={isProcessing(req.id)}
                   className="px-2 py-1 text-xs font-medium rounded bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {processingId === req.id ? 'Sending...' : 'Send'}
+                  {isProcessing(req.id) ? 'Sending...' : 'Send'}
                 </button>
               </div>
             )}

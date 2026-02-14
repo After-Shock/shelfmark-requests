@@ -26,7 +26,6 @@ def _is_notification_enabled() -> bool:
     """Check if request email notifications are enabled."""
     try:
         import shelfmark.core.config as core_config
-        core_config.config.refresh()
         return bool(core_config.config.get("NOTIFY_REQUESTS_VIA_EMAIL", False))
     except Exception:
         return False
@@ -38,7 +37,6 @@ def _get_smtp_config():
         import shelfmark.core.config as core_config
         from shelfmark.download.outputs.email import build_email_smtp_config
 
-        core_config.config.refresh()
         settings = {
             "EMAIL_SMTP_HOST": core_config.config.get("EMAIL_SMTP_HOST", ""),
             "EMAIL_SMTP_PORT": core_config.config.get("EMAIL_SMTP_PORT", 587),

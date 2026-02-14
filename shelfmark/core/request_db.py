@@ -8,7 +8,15 @@ from shelfmark.core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-_VALID_STATUSES = ("pending", "approved", "denied", "downloading", "fulfilled", "failed")
+
+def _sanitize_url(url: Optional[str]) -> Optional[str]:
+    """Return url only if it uses http:// or https://, else None."""
+    if url and (url.startswith("http://") or url.startswith("https://")):
+        return url
+    return None
+
+
+_VALID_STATUSES = ("pending", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled")
 _VALID_CONTENT_TYPES = ("ebook", "audiobook")
 
 _CREATE_REQUESTS_TABLE_SQL = """
@@ -16,7 +24,7 @@ CREATE TABLE IF NOT EXISTS requests (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status          TEXT NOT NULL DEFAULT 'pending'
-                    CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed')),
+                    CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled')),
     content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
     title           TEXT NOT NULL,
     author          TEXT,
@@ -52,21 +60,82 @@ class RequestDB:
         return conn
 
     def initialize(self) -> None:
-        """Create requests table if it doesn't exist."""
+        """Create requests table if it doesn't exist, then run migrations."""
         with self._lock:
             conn = self._connect()
             try:
                 conn.executescript(_CREATE_REQUESTS_TABLE_SQL)
-                # Add hidden_from_admin column if it doesn't exist (migration)
-                cursor = conn.execute("PRAGMA table_info(requests)")
-                columns = [row[1] for row in cursor.fetchall()]
-                if 'hidden_from_admin' not in columns:
-                    logger.info("Adding hidden_from_admin column to requests table")
-                    conn.execute("ALTER TABLE requests ADD COLUMN hidden_from_admin INTEGER DEFAULT 0")
+                self._run_migrations(conn)
                 conn.commit()
             finally:
                 conn.close()
         logger.info("Request database initialized")
+
+    def _run_migrations(self, conn: sqlite3.Connection) -> None:
+        """Run numbered schema migrations."""
+        # Ensure schema_version table exists
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+        )
+        row = conn.execute("SELECT version FROM schema_version").fetchone()
+        current_version = row["version"] if row else 0
+        if not row:
+            conn.execute("INSERT INTO schema_version (version) VALUES (0)")
+
+        if current_version < 1:
+            # Migration 1: add hidden_from_admin column
+            cursor = conn.execute("PRAGMA table_info(requests)")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "hidden_from_admin" not in columns:
+                logger.info("Migration 1: Adding hidden_from_admin column")
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN hidden_from_admin INTEGER DEFAULT 0"
+                )
+            conn.execute("UPDATE schema_version SET version = 1")
+
+        if current_version < 2:
+            # Migration 2: add 'cancelled' to CHECK constraint
+            # SQLite can't ALTER CHECK constraints, so recreate the table
+            table_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='requests'"
+            ).fetchone()
+            if table_sql and "'cancelled'" not in table_sql["sql"]:
+                logger.info("Migration 2: Adding 'cancelled' to status CHECK constraint")
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS requests_new (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        status          TEXT NOT NULL DEFAULT 'pending'
+                                        CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled')),
+                        content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
+                        title           TEXT NOT NULL,
+                        author          TEXT,
+                        year            TEXT,
+                        cover_url       TEXT,
+                        description     TEXT,
+                        isbn_10         TEXT,
+                        isbn_13         TEXT,
+                        provider        TEXT,
+                        provider_id     TEXT,
+                        series_name     TEXT,
+                        series_position REAL,
+                        admin_note      TEXT,
+                        approved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        download_task_id TEXT,
+                        created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        hidden_from_admin INTEGER DEFAULT 0
+                    );
+                    INSERT INTO requests_new SELECT
+                        id, user_id, status, content_type, title, author, year,
+                        cover_url, description, isbn_10, isbn_13, provider, provider_id,
+                        series_name, series_position, admin_note, approved_by,
+                        download_task_id, created_at, updated_at, hidden_from_admin
+                    FROM requests;
+                    DROP TABLE requests;
+                    ALTER TABLE requests_new RENAME TO requests;
+                """)
+            conn.execute("UPDATE schema_version SET version = 2")
 
     def create_request(
         self,
@@ -90,12 +159,13 @@ class RequestDB:
         with self._lock:
             conn = self._connect()
             try:
+                safe_cover_url = _sanitize_url(cover_url)
                 cursor = conn.execute(
                     """INSERT INTO requests
                        (user_id, title, content_type, author, year, cover_url, description,
                         isbn_10, isbn_13, provider, provider_id, series_name, series_position)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (user_id, title, content_type, author, year, cover_url, description,
+                    (user_id, title, content_type, author, year, safe_cover_url, description,
                      isbn_10, isbn_13, provider, provider_id, series_name, series_position),
                 )
                 conn.commit()

@@ -8,6 +8,7 @@ import {
   denyRequest,
   retryRequest,
   deleteBookRequest,
+  updateRequestStatus,
 } from '../services/api';
 import { useSocket } from '../contexts/SocketContext';
 
@@ -64,7 +65,7 @@ export const useRequests = ({
     if (!enabled) return;
     try {
       const [reqsResult, countsResult] = await Promise.all([
-        getRequests(),
+        getRequests(undefined, 1000),
         getRequestCounts(),
       ]);
       setRequests(reqsResult.requests);
@@ -203,10 +204,7 @@ export const useRequests = ({
 
   const handleMarkCompleted = useCallback(async (requestId: number) => {
     try {
-      // Use the manual status update endpoint to mark as fulfilled
-      const { updateRequestStatus } = await import('../services/api');
       await updateRequestStatus(requestId, 'fulfilled');
-      // Force immediate refresh to show the updated status
       await fetchAll();
     } catch (error) {
       console.error('Failed to mark request as completed:', error);

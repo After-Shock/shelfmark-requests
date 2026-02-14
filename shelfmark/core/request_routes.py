@@ -97,8 +97,35 @@ def _send_status_notification(
         logger.warning(f"Failed to send notification for request #{req.get('id')}: {e}")
 
 
+def _requests_enabled() -> bool:
+    """Check if the request system should be active (requires auth)."""
+    return _get_auth_mode() != "none"
+
+
+# Module-level guard against concurrent auto-downloads for the same request
+_in_flight_downloads: set = set()
+_in_flight_lock = threading.Lock()
+
+
+def _acquire_download_slot(request_id: int) -> bool:
+    with _in_flight_lock:
+        if request_id in _in_flight_downloads:
+            return False
+        _in_flight_downloads.add(request_id)
+        return True
+
+
+def _release_download_slot(request_id: int) -> None:
+    with _in_flight_lock:
+        _in_flight_downloads.discard(request_id)
+
+
 def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) -> None:
     """Register request management routes on the Flask app."""
+
+    if not _requests_enabled():
+        logger.info("Request routes disabled (auth_mode=none)")
+        return
 
     @app.route("/api/requests", methods=["POST"])
     @_require_auth
@@ -116,6 +143,20 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         content_type = data.get("content_type", "ebook")
         if content_type not in ("ebook", "audiobook"):
             return jsonify({"error": "content_type must be 'ebook' or 'audiobook'"}), 400
+
+        # Duplicate detection: check for active requests by the same user
+        provider = data.get("provider")
+        provider_id_val = data.get("provider_id")
+        existing = request_db.list_requests(user_id=db_user_id, limit=200)
+        active_statuses = {"pending", "approved", "downloading"}
+        for ex in existing:
+            if ex["status"] not in active_statuses:
+                continue
+            if provider and provider_id_val:
+                if ex.get("provider") == provider and ex.get("provider_id") == provider_id_val and ex.get("content_type") == content_type:
+                    return jsonify({"error": "You already have an active request for this book"}), 409
+            elif ex.get("title", "").lower() == title.lower() and ex.get("content_type") == content_type:
+                return jsonify({"error": "You already have an active request for this book"}), 409
 
         try:
             req = request_db.create_request(
@@ -146,7 +187,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         """List requests. Admins see all, users see own."""
         status_filter = request.args.get("status")
         try:
-            limit = min(int(request.args.get("limit", 100)), 200)
+            limit = min(int(request.args.get("limit", 100)), 1000)
         except ValueError:
             limit = 100
         try:
@@ -264,12 +305,15 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         # Capture session data before spawning thread (session unavailable outside request context)
         admin_username = session.get("user_id")
 
-        thread = threading.Thread(
-            target=_auto_download_request,
-            args=(request_db, user_db, request_id, req, admin_user_id, admin_username),
-            daemon=True,
-        )
-        thread.start()
+        if _acquire_download_slot(request_id):
+            thread = threading.Thread(
+                target=_auto_download_request,
+                args=(request_db, user_db, request_id, req, admin_user_id, admin_username),
+                daemon=True,
+            )
+            thread.start()
+        else:
+            logger.info(f"Request #{request_id} already being auto-downloaded, skipping")
 
         return jsonify(updated)
 
@@ -397,12 +441,15 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         # Capture session data before spawning thread
         admin_username = session.get("user_id")
 
-        thread = threading.Thread(
-            target=_auto_download_request,
-            args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),
-            daemon=True,
-        )
-        thread.start()
+        if _acquire_download_slot(request_id):
+            thread = threading.Thread(
+                target=_auto_download_request,
+                args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),
+                daemon=True,
+            )
+            thread.start()
+        else:
+            logger.info(f"Request #{request_id} already being auto-downloaded, skipping")
 
         return jsonify(updated)
 
@@ -420,6 +467,12 @@ def _auto_download_request(
     Runs in a background thread. Updates the request status to
     'downloading' or 'failed' depending on the outcome.
     """
+    def _safe_update_status(status: str, **kwargs) -> None:
+        """Update status only if the request still exists."""
+        if request_db.get_request(request_id) is not None:
+            request_db.update_request_status(request_id, status, **kwargs)
+            _broadcast_request_update(request_db.get_request(request_id))
+
     try:
         from shelfmark.download import orchestrator as backend
         from shelfmark.release_sources import get_source, list_available_sources
@@ -434,8 +487,7 @@ def _auto_download_request(
         provider_id = req.get("provider_id")
 
         if not provider_name or not provider_id or not is_provider_registered(provider_name):
-            request_db.update_request_status(request_id, "failed", admin_note="No metadata provider info")
-            _broadcast_request_update(request_db.get_request(request_id))
+            _safe_update_status("failed", admin_note="No metadata provider info")
             return
 
         # Get book metadata from provider
@@ -443,16 +495,14 @@ def _auto_download_request(
         prov = get_provider(provider_name, **kwargs)
         book = prov.get_book(provider_id)
         if not book:
-            request_db.update_request_status(request_id, "failed", admin_note="Book not found in provider")
-            _broadcast_request_update(request_db.get_request(request_id))
+            _safe_update_status("failed", admin_note="Book not found in provider")
             return
 
         # Search for releases
         content_type = req.get("content_type", "ebook")
         sources_to_search = [src["name"] for src in list_available_sources() if src["enabled"]]
         if not sources_to_search:
-            request_db.update_request_status(request_id, "failed", admin_note="No release sources available")
-            _broadcast_request_update(request_db.get_request(request_id))
+            _safe_update_status("failed", admin_note="No release sources available")
             return
 
         all_releases = []
@@ -466,8 +516,7 @@ def _auto_download_request(
                 logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
 
         if not all_releases:
-            request_db.update_request_status(request_id, "failed", admin_note="No releases found")
-            _broadcast_request_update(request_db.get_request(request_id))
+            _safe_update_status("failed", admin_note="No releases found")
             return
 
         # Pick the first (best) release
@@ -494,22 +543,17 @@ def _auto_download_request(
 
         if success:
             task_id = release_data.get("source_id", "")
-            request_db.update_request_status(
-                request_id, "downloading", download_task_id=task_id
-            )
+            _safe_update_status("downloading", download_task_id=task_id)
             logger.info(f"Request #{request_id}: download queued (task={task_id})")
         else:
-            request_db.update_request_status(
-                request_id, "failed", admin_note=error_msg or "Failed to queue download"
-            )
+            _safe_update_status("failed", admin_note=error_msg or "Failed to queue download")
             logger.warning(f"Request #{request_id}: failed to queue download: {error_msg}")
-
-        _broadcast_request_update(request_db.get_request(request_id))
 
     except Exception as e:
         logger.error(f"Auto-download error for request #{request_id}: {e}")
         try:
-            request_db.update_request_status(request_id, "failed", admin_note=f"Error: {e}")
-            _broadcast_request_update(request_db.get_request(request_id))
+            _safe_update_status("failed", admin_note=f"Error: {e}")
         except Exception:
             pass
+    finally:
+        _release_download_slot(request_id)

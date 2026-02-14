@@ -954,6 +954,7 @@ function App() {
           onRetry={handleRetryWithToast}
           onDelete={handleRequestDelete}
           onMarkCompleted={handleMarkCompletedWithToast}
+          onRefresh={refreshRequests}
         />
       )}
 

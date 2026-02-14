@@ -1,0 +1,31 @@
+# Tor variant - routes all traffic through Tor
+# Usage: docker compose -f docker-compose.tor.yml up -d
+
+services:
+  shelfmark-tor:
+    image: shelfmark-tor-dev
+    container_name: shelfmark-tor
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: shelfmark
+    environment:
+      DEBUG: true
+      USING_TOR: true
+      FLASK_PORT: 8084
+      PUID: 1000
+      PGID: 1000
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_PTRACE
+    ports:
+      - 8084:8084
+    restart: unless-stopped
+    volumes:
+      - ./.local/config:/config
+      - ./.local/books:/books
+      - ./.local/log:/var/log/shelfmark
+      - ./.local/tmp:/tmp/shelfmark
+      # Required for torrent / usenet - path must match your download client's volume exactly
+      # - /path/to/downloads:/path/to/downloads

@@ -1,0 +1,27 @@
+# Default local build - standard version with built-in bypasser
+# Usage: docker compose up -d
+
+services:
+  shelfmark:
+    image: shelfmark-dev
+    container_name: shelfmark
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: shelfmark
+    cap_add:
+      - SYS_PTRACE
+    environment:
+      DEBUG: true
+      PUID: 1000
+      PGID: 1000
+    ports:
+      - 8084:8084
+    restart: unless-stopped
+    volumes:
+      - ./.local/config:/config
+      - ./.local/books:/books
+      - ./.local/log:/var/log/shelfmark
+      - ./.local/tmp:/tmp/shelfmark
+      # Required for torrent / usenet - path must match your download client's volume exactly
+      # - /path/to/downloads:/path/to/downloads
