@@ -23,6 +23,7 @@ Shelfmark is a unified web interface for searching and aggregating books and aud
   - **Direct** - Search popular web sources
   - **Universal** - Search metadata providers (Hardcover, Open Library) for richer book and audiobook discovery, with multi-source downloads
 - **Cloudflare Bypass** - Built-in bypasser for reliable access to protected sources
+- **Request System** - Users can request books that aren't immediately available, with admin approval workflow
 
 ## 🖼️ Screenshots
 
@@ -37,6 +38,45 @@ Shelfmark is a unified web interface for searching and aggregating books and aud
 
 **Download queue**
 ![Download queue](README_images/downloads.png 'Download queue')
+
+**Request panel**
+![Request panel](README_images/request-panel.png 'Request panel')
+
+**Request form**
+![Request form](README_images/request-form.png 'Request form')
+
+**Admin request management**
+![Admin request view](README_images/request-admin.png 'Admin request view')
+
+## 📝 Request System
+
+**New Feature:** Building on inspiration from the original Shelfmark project and community feedback, we've added a comprehensive request system that allows users to request books that aren't immediately available.
+
+### How It Works
+
+**For Users:**
+- Browse or search for books and click the "Request" button on any title
+- Submit requests with optional notes about preferred format, edition, etc.
+- Track your requests in the "My Requests" sidebar panel
+- Receive notifications when requests are fulfilled or denied
+- Manage your own request list (delete completed requests)
+
+**For Admins:**
+- View all user requests in a centralized admin panel
+- Filter requests by status: Pending, Fulfilled, or Denied
+- Process requests with one-click fulfillment or denial
+- Add notes when processing requests
+- Independent request management - admin actions don't affect user request lists
+
+### Key Features
+
+- **Dual Request Lists** - Users and admins each have their own independent request views
+- **Status Tracking** - Requests move through pending → fulfilled/denied states
+- **Clear Completed** - Both users and admins can clear their completed requests
+- **User Isolation** - Each user's requests are private and independently managed
+- **Admin Oversight** - Admins can view and process all user requests while maintaining separate tracking
+
+This feature was inspired by the original [Shelfmark](https://github.com/calibrain/shelfmark) project's community-driven approach and implements a frequently requested workflow for managing book acquisition requests in shared library environments.
 
 ## 🚀 Quick Start
 
