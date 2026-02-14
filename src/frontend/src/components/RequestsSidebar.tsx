@@ -480,25 +480,26 @@ export const RequestsSidebar = ({
           )}
         </div>
 
-        {/* Footer */}
-        <div
-          className="p-3 border-t flex items-center justify-center"
-          style={{
-            borderColor: 'var(--border-muted)',
-            paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',
-          }}
-        >
-          {/* Clear Completed button - only show for non-admin users */}
-          {!isAdmin && hasClearable && (
+        {/* Footer - always show for non-admin users */}
+        {!isAdmin && (
+          <div
+            className="p-3 border-t flex items-center justify-center"
+            style={{
+              borderColor: 'var(--border-muted)',
+              paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',
+            }}
+          >
+            {/* Clear Completed button - disabled if no completed requests */}
             <button
               type="button"
               onClick={handleClearFulfilled}
-              className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+              disabled={!hasClearable}
+              className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Clear Completed
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </>
   );
