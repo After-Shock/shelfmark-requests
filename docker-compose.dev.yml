@@ -1,10 +1,29 @@
 # Local development - builds from source with debug enabled
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d                    (standard)
+#   docker compose -f docker-compose.dev.yml --profile tor up -d      (tor)
+#   docker compose -f docker-compose.dev.yml --profile extbp up -d    (external bypasser)
+
+x-dev-common: &dev-common
+  environment: &dev-env
+    DEBUG: true
+    PUID: 1000
+    PGID: 1000
+  volumes: &dev-volumes
+    - ./.local/config:/config
+    - ./.local/books:/books
+    - ./.local/log:/var/log/shelfmark
+    - ./.local/tmp:/tmp/shelfmark
+    # Required for torrent / usenet - path must match your download client's volume exactly
+    # - /path/to/downloads:/path/to/downloads
+
 services:
+  # Standard dev build
   shelfmark-dev:
     extends:
       file: ./compose/docker-compose.yml
       service: shelfmark
-    image: shelfmark-dev  # Override inherited image to use locally built image
+    image: shelfmark-dev
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,12 +31,44 @@ services:
     cap_add:
       - SYS_PTRACE
     environment:
-      DEBUG: true
-    volumes:
-      - ./.local/config:/config
-      - ./.local/books:/books
-      - ./.local/log:/var/log/shelfmark
-      - ./.local/tmp:/tmp/shelfmark
-      - ./shelfmark:/app/shelfmark:ro
-      # Required for torrent / usenet - path must match your download client's volume exactly
-      # - /path/to/downloads:/path/to/downloads
+      <<: *dev-env
+    volumes: *dev-volumes
+
+  # Tor variant - routes all traffic through Tor
+  shelfmark-tor-dev:
+    extends:
+      file: ./compose/docker-compose.tor.yml
+      service: shelfmark-tor
+    profiles:
+      - tor
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: shelfmark
+    environment:
+      <<: *dev-env
+      USING_TOR: true
+    volumes: *dev-volumes
+
+  # External bypasser variant (lite image + flaresolverr)
+  shelfmark-lite-dev:
+    extends:
+      file: ./compose/docker-compose.lite.yml
+      service: shelfmark-lite
+    profiles:
+      - extbp
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: shelfmark-lite
+    environment:
+      <<: *dev-env
+      EXT_BYPASSER_URL: http://flaresolverr:8191
+      EXT_BYPASSER_PATH: /v1
+      EXT_BYPASSER_TIMEOUT: 60000
+    volumes: *dev-volumes
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    profiles:
+      - extbp

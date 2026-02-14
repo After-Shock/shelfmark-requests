@@ -1,4 +1,5 @@
-.PHONY: help install dev build preview typecheck clean up down docker-build refresh restart
+.PHONY: help install dev build preview typecheck clean up down docker-build refresh restart \
+       up-tor down-tor refresh-tor up-extbp down-extbp refresh-extbp
 
 # Frontend directory
 FRONTEND_DIR := src/frontend
@@ -24,6 +25,14 @@ help:
 	@echo "  restart    - Restart backend services (no rebuild)"
 	@echo "  docker-build - Build Docker image"
 	@echo "  refresh    - Rebuild and restart backend services"
+	@echo ""
+	@echo "Backend variants:"
+	@echo "  up-tor     - Start Tor variant"
+	@echo "  down-tor   - Stop Tor variant"
+	@echo "  refresh-tor - Rebuild and restart Tor variant"
+	@echo "  up-extbp   - Start external bypasser variant (lite + flaresolverr)"
+	@echo "  down-extbp - Stop external bypasser variant"
+	@echo "  refresh-extbp - Rebuild and restart external bypasser variant"
 
 # Install dependencies
 install:
@@ -82,3 +91,35 @@ refresh:
 	docker compose -f $(COMPOSE_FILE) down
 	docker compose -f $(COMPOSE_FILE) build
 	docker compose -f $(COMPOSE_FILE) up -d
+
+# --- Tor variant ---
+
+up-tor:
+	@echo "Starting Tor backend services..."
+	docker compose -f $(COMPOSE_FILE) --profile tor up -d
+
+down-tor:
+	@echo "Stopping Tor backend services..."
+	docker compose -f $(COMPOSE_FILE) --profile tor down
+
+refresh-tor:
+	@echo "Rebuilding and restarting Tor backend services..."
+	docker compose -f $(COMPOSE_FILE) --profile tor down
+	docker compose -f $(COMPOSE_FILE) --profile tor build
+	docker compose -f $(COMPOSE_FILE) --profile tor up -d
+
+# --- External bypasser variant ---
+
+up-extbp:
+	@echo "Starting external bypasser backend services..."
+	docker compose -f $(COMPOSE_FILE) --profile extbp up -d
+
+down-extbp:
+	@echo "Stopping external bypasser backend services..."
+	docker compose -f $(COMPOSE_FILE) --profile extbp down
+
+refresh-extbp:
+	@echo "Rebuilding and restarting external bypasser backend services..."
+	docker compose -f $(COMPOSE_FILE) --profile extbp down
+	docker compose -f $(COMPOSE_FILE) --profile extbp build
+	docker compose -f $(COMPOSE_FILE) --profile extbp up -d
