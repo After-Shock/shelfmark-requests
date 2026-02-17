@@ -543,7 +543,7 @@ def openlibrary_settings():
             key="OPENLIBRARY_ENABLED",
             label="Enable Open Library",
             description="Enable Open Library as a metadata provider for book searches",
-            default=False,
+            default=True,
         ),
         ActionButton(
             key="test_connection",

@@ -187,19 +187,23 @@ _AUDIOBOOK_FORMAT_OPTIONS = [
 
 
 def _get_metadata_provider_options():
-    """Build metadata provider options dynamically from enabled providers only."""
-    from shelfmark.metadata_providers import list_providers, is_provider_enabled
+    """Build metadata provider options dynamically from all available providers.
+
+    Shows all providers regardless of enabled status to avoid chicken-and-egg problem
+    where users can't select a provider because none are enabled yet.
+    """
+    from shelfmark.metadata_providers import list_providers
 
     options = []
     for provider in list_providers():
-        # Only show providers that are enabled
-        if is_provider_enabled(provider["name"]):
-            options.append({"value": provider["name"], "label": provider["display_name"]})
+        # Show ALL providers, not just enabled ones
+        # This allows users to select a provider even if it's not enabled yet
+        options.append({"value": provider["name"], "label": provider["display_name"]})
 
-    # If no providers enabled, show a placeholder option
+    # Fallback in case no providers are registered (shouldn't happen in normal operation)
     if not options:
         options = [
-            {"value": "", "label": "No providers enabled"},
+            {"value": "", "label": "No providers available"},
         ]
 
     return options
@@ -470,6 +474,31 @@ def search_mode_settings():
             show_when={"field": "SEARCH_MODE", "value": "universal"},
         ),
     ]
+
+
+def _on_save_search_mode(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Auto-enable the selected metadata provider when search mode settings are saved."""
+    metadata_provider = values.get("METADATA_PROVIDER")
+
+    # If a metadata provider is selected, ensure it's enabled
+    if metadata_provider:
+        # Map provider name to its enabled key
+        enabled_key_map = {
+            "hardcover": "HARDCOVER_ENABLED",
+            "openlibrary": "OPENLIBRARY_ENABLED",
+            "googlebooks": "GOOGLEBOOKS_ENABLED",
+        }
+        enabled_key = enabled_key_map.get(metadata_provider, f"{metadata_provider.upper()}_ENABLED")
+
+        # Save the enabled flag to the provider's config
+        from shelfmark.core.settings_registry import save_config_file
+        provider_config = {enabled_key: True}
+        save_config_file(metadata_provider, provider_config)
+
+    return {"values": values}
+
+
+register_on_save("search_mode", _on_save_search_mode)
 
 
 @register_settings("network", "Network", icon="globe", order=10)
