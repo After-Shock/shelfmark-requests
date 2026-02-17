@@ -271,14 +271,34 @@ werkzeug_logger.setLevel(logger.level)
 werkzeug_logger.addFilter(LogNoiseFilter())
 
 # Set up authentication defaults
-# The secret key will reset every time we restart, which will
-# require users to authenticate again
 from shelfmark.config.env import SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE_ENV, string_to_bool
+from shelfmark.core.settings_registry import load_config_file, save_config_file
+import secrets
+import base64
 
 SESSION_COOKIE_SECURE = string_to_bool(SESSION_COOKIE_SECURE_ENV)
 
+# Load or generate persistent SECRET_KEY for session encryption
+# This ensures "remember me" sessions persist across server restarts
+try:
+    security_config = load_config_file("security")
+    session_secret = security_config.get("SESSION_SECRET_KEY")
+
+    if not session_secret:
+        # Generate a new persistent secret key
+        session_secret = base64.b64encode(os.urandom(64)).decode('utf-8')
+        save_config_file("security", {"SESSION_SECRET_KEY": session_secret})
+        logger.info("Generated new persistent SESSION_SECRET_KEY")
+
+    # Decode the base64-encoded key for Flask
+    SECRET_KEY = base64.b64decode(session_secret)
+except Exception as e:
+    # Fallback to random key if config fails (maintains backward compatibility)
+    logger.warning(f"Failed to load persistent SESSION_SECRET_KEY: {e}. Using temporary key.")
+    SECRET_KEY = os.urandom(64)
+
 app.config.update(
-    SECRET_KEY = os.urandom(64),
+    SECRET_KEY = SECRET_KEY,
     SESSION_COOKIE_HTTPONLY = True,
     SESSION_COOKIE_SAMESITE = 'Lax',
     SESSION_COOKIE_SECURE = SESSION_COOKIE_SECURE,
@@ -939,6 +959,107 @@ def api_cancel_download(book_id: str) -> Union[Response, Tuple[Response, int]]:
     except Exception as e:
         logger.error_trace(f"Cancel download error: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/download/<path:book_id>/retry', methods=['POST'])
+@login_required
+def api_retry_download(book_id: str) -> Union[Response, Tuple[Response, int]]:
+    """
+    Retry a failed download by re-queuing it with the same parameters.
+
+    Path Parameters:
+        book_id (str): Book identifier to retry
+
+    Returns:
+        flask.Response: JSON status indicating success or failure.
+    """
+    try:
+        # Get the failed task from the queue
+        task = backend.book_queue.get_task(book_id)
+        if not task:
+            return jsonify({"error": "Download not found"}), 404
+
+        # Only allow retry for error, cancelled, or done status
+        task_status = backend.book_queue._status.get(book_id)
+        if task_status not in ['error', 'cancelled', 'done']:
+            return jsonify({"error": f"Cannot retry download with status: {task_status}"}), 400
+
+        # Reconstruct release_data from the task
+        release_data = {
+            'source_id': task.task_id,
+            'title': task.title,
+            'author': task.author,
+            'year': task.year,
+            'format': task.format,
+            'size': task.size,
+            'content_type': task.content_type,
+            'extra': {
+                'preview': task.preview,
+                'series_name': task.series_name,
+                'series_position': task.series_position,
+                'subtitle': task.subtitle,
+            }
+        }
+
+        # Extract email recipient from output_args if present
+        email_recipient = None
+        if task.output_mode == 'email' and task.output_args:
+            email_recipient = task.output_args.get('label')  # Use label as the recipient identifier
+
+        # Re-queue with the same parameters
+        success, error_msg = backend.queue_release(
+            release_data=release_data,
+            priority=task.priority,
+            email_recipient=email_recipient,
+            user_id=task.user_id,
+            username=task.username,
+            user_overrides={},  # User overrides are already baked into task.output_args
+        )
+
+        if success:
+            return jsonify({"status": "queued", "book_id": book_id})
+        return jsonify({"error": error_msg or "Failed to re-queue download"}), 500
+
+    except Exception as e:
+        logger.error_trace(f"Retry download error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/download/<path:book_id>/mark-complete', methods=['POST'])
+@login_required
+def api_mark_download_complete(book_id: str) -> Union[Response, Tuple[Response, int]]:
+    """
+    Mark a download as complete manually.
+
+    This is useful when a download was handled outside the app
+    (e.g., manually downloaded and placed in the library).
+
+    Path Parameters:
+        book_id (str): Book identifier to mark as complete
+
+    Returns:
+        flask.Response: JSON status indicating success or failure.
+    """
+    try:
+        from shelfmark.core.models import QueueStatus
+
+        # Check if task exists
+        task = backend.book_queue.get_task(book_id)
+        if not task:
+            return jsonify({"error": "Download not found"}), 404
+
+        # Update status to complete
+        backend.book_queue.update_status(book_id, QueueStatus.COMPLETE)
+
+        # Broadcast status update via WebSocket
+        if backend.ws_manager:
+            backend.ws_manager.broadcast_status_update(backend.queue_status())
+
+        return jsonify({"status": "complete", "book_id": book_id})
+
+    except Exception as e:
+        logger.error_trace(f"Mark complete error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/queue/<path:book_id>/priority', methods=['PUT'])
 @login_required

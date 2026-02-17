@@ -235,6 +235,14 @@ export const cancelDownload = async (id: string): Promise<void> => {
   await fetchJSON(`${API.cancelDownload}/${encodeURIComponent(id)}/cancel`, { method: 'DELETE' });
 };
 
+export const retryDownload = async (id: string): Promise<void> => {
+  await fetchJSON(`${API.cancelDownload}/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+};
+
+export const markDownloadComplete = async (id: string): Promise<void> => {
+  await fetchJSON(`${API.cancelDownload}/${encodeURIComponent(id)}/mark-complete`, { method: 'POST' });
+};
+
 export const clearCompleted = async (): Promise<void> => {
   await fetchJSON(`${API_BASE}/queue/clear`, { method: 'DELETE' });
 };

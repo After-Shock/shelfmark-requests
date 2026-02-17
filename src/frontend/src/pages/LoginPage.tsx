@@ -22,7 +22,7 @@ export const LoginPage = ({ onLogin, error, isLoading, authMode, registrationEna
     >
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <img src={logoUrl} alt="Logo" className="mx-auto mb-6 w-72 h-72" />
+          <img src={logoUrl} alt="Logo" className="mx-auto mb-6 w-56 h-56" />
           <h1 className="text-2xl font-semibold">Sign in to continue</h1>
         </div>
         <div

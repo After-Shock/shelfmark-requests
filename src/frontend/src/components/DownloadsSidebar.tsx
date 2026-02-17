@@ -8,6 +8,8 @@ interface DownloadsSidebarProps {
   status: StatusData;
   onClearCompleted: () => void;
   onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
+  onMarkComplete: (id: string) => void;
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string; waveColor: string }> = {
@@ -106,6 +108,8 @@ export const DownloadsSidebar = ({
   status,
   onClearCompleted,
   onCancel,
+  onRetry,
+  onMarkComplete,
 }: DownloadsSidebarProps) => {
   // Handle ESC key to close sidebar
   useEffect(() => {
@@ -249,8 +253,51 @@ export const DownloadsSidebar = ({
               )}
             </div>
 
-            {/* Status Badge */}
-            <div className="flex justify-end mt-auto pt-1">
+            {/* Status Badge and Action Buttons */}
+            <div className="flex items-center justify-end gap-1 mt-auto pt-1">
+              {/* Retry button for failed downloads */}
+              {hasError && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRetry(book.id);
+                  }}
+                  className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors"
+                  style={{
+                    backgroundColor: 'rgba(0, 188, 212, 0.2)',
+                    color: '#00BCD4'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.3)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.2)';
+                  }}
+                  title="Retry download"
+                  aria-label="Retry download"
+                >
+                  Retry
+                </button>
+              )}
+
+              {/* Mark Complete button for failed downloads */}
+              {hasError && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMarkComplete(book.id);
+                  }}
+                  className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors"
+                  title="Mark as complete (handled manually)"
+                  aria-label="Mark as complete"
+                >
+                  Mark Complete
+                </button>
+              )}
+
+              {/* Status badge */}
               <span
                 className={`relative px-2 py-0.5 rounded-lg text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}
               >

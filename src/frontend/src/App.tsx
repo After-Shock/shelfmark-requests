@@ -7,7 +7,7 @@ import {
   AppConfig,
   ContentType,
 } from './types';
-import { getBookInfo, getMetadataBookInfo, downloadBook, downloadRelease, cancelDownload, clearCompleted, getConfig } from './services/api';
+import { getBookInfo, getMetadataBookInfo, downloadBook, downloadRelease, cancelDownload, retryDownload, markDownloadComplete, clearCompleted, getConfig } from './services/api';
 import { useToast } from './hooks/useToast';
 import { useRealtimeStatus } from './hooks/useRealtimeStatus';
 import { useAuth } from './hooks/useAuth';
@@ -656,6 +656,30 @@ function App() {
     }
   };
 
+  // Retry failed download
+  const handleRetryDownload = async (id: string) => {
+    try {
+      await retryDownload(id);
+      await fetchStatus();
+      showToast('Download retrying...', 'success');
+    } catch (error) {
+      console.error('Retry failed:', error);
+      showToast(error instanceof Error ? error.message : 'Failed to retry download', 'error');
+    }
+  };
+
+  // Mark download as complete
+  const handleMarkDownloadComplete = async (id: string) => {
+    try {
+      await markDownloadComplete(id);
+      await fetchStatus();
+      showToast('Marked as complete', 'success');
+    } catch (error) {
+      console.error('Mark complete failed:', error);
+      showToast(error instanceof Error ? error.message : 'Failed to mark download as complete', 'error');
+    }
+  };
+
   // Open release modal
   const handleGetReleases = async (book: Book) => {
     if (book.provider && book.provider_id) {
@@ -941,6 +965,8 @@ function App() {
         status={currentStatus}
         onClearCompleted={handleClearCompleted}
         onCancel={handleCancel}
+        onRetry={handleRetryDownload}
+        onMarkComplete={handleMarkDownloadComplete}
       />
 
       {requestsEnabled && (
