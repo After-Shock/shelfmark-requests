@@ -229,6 +229,7 @@ def _hardlink_not_supported(error: OSError) -> bool:
         getattr(errno, "ENOTSUP", errno.EPERM),
         getattr(errno, "EOPNOTSUPP", errno.EPERM),
         errno.EINVAL,
+        errno.EIO,  # NFS and some network filesystems return EIO for unsupported hard links
     }
 
 
