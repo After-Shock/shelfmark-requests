@@ -113,14 +113,14 @@ export const EmailRecipientModal = ({ isOpen, recipients, onSelect, onCancel }: 
                       onClick={() => setSelectedNickname(isSelected ? null : r.nickname)}
                       className={`w-full text-left rounded-2xl border px-4 py-3 transition-colors hover-action ${
                         isSelected
-                          ? 'border-sky-500 bg-sky-500/10'
+                          ? 'border-[var(--primary-color)] bg-[var(--primary-muted)]'
                           : 'border-[var(--border-muted)] bg-[var(--bg-soft)]'
                       }`}
                     >
                       <div className="flex items-center gap-3">
                         <div
                           className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-                            isSelected ? 'border-sky-500 bg-sky-500' : 'border-gray-400 dark:border-gray-500'
+                            isSelected ? 'border-[var(--primary-color)] bg-[var(--primary-color)]' : 'border-gray-400 dark:border-gray-500'
                           }`}
                         >
                           {isSelected && (
@@ -157,7 +157,7 @@ export const EmailRecipientModal = ({ isOpen, recipients, onSelect, onCancel }: 
               onClick={handleSend}
               disabled={!selectedNickname}
               className="px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                         bg-sky-600 text-white hover:bg-sky-700
+                         bg-[var(--primary-color)] text-white hover:bg-[var(--primary-dark)]
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Send
@@ -174,7 +174,7 @@ export const EmailRecipientModal = ({ isOpen, recipients, onSelect, onCancel }: 
                 type="button"
                 onClick={handleSend}
                 className="w-full py-2.5 px-4 rounded-lg font-medium transition-colors
-                           bg-sky-600 text-white hover:bg-sky-700"
+                           bg-[var(--primary-color)] text-white hover:bg-[var(--primary-dark)]"
               >
                 Send
               </button>

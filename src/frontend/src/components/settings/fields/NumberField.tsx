@@ -22,7 +22,7 @@ export const NumberField = ({ field, value, onChange, disabled }: NumberFieldPro
       disabled={isDisabled}
       className="w-full px-3 py-2 rounded-lg border border-[var(--border-muted)]
                  bg-[var(--bg-soft)] text-sm
-                 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500
+                 focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)]/50 focus:border-[var(--primary-color)]
                  disabled:opacity-60 disabled:cursor-not-allowed
                  transition-colors"
     />

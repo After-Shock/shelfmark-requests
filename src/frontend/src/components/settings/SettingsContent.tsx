@@ -303,7 +303,7 @@ export const SettingsContent = ({
             onClick={onSave}
             disabled={isSaving}
             className="w-full py-2.5 px-4 rounded-lg font-medium transition-colors
-                       bg-sky-600 text-white hover:bg-sky-700
+                       bg-[var(--primary-color)] text-white hover:bg-[var(--primary-dark)]
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSaving ? (

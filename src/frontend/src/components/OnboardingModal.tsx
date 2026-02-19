@@ -422,7 +422,7 @@ export const OnboardingModal = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-muted)]">
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-sky-500/20 text-sky-500 text-sm font-medium">
+            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-[var(--primary-muted)] text-[var(--primary-color)] text-sm font-medium">
               {currentStepIndex + 1}
             </div>
             <div>
@@ -453,7 +453,7 @@ export const OnboardingModal = ({
         {/* Progress bar */}
         <div className="h-1 bg-[var(--bg-soft)]">
           <div
-            className="h-full bg-sky-500 transition-all duration-300"
+            className="h-full bg-[var(--primary-color)] transition-all duration-300"
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -508,8 +508,8 @@ export const OnboardingModal = ({
                 onClick={handleFinish}
                 disabled={isSaving}
                 className="px-5 py-2 rounded-lg text-sm font-medium
-                         bg-sky-600 text-white
-                         hover:bg-sky-700 transition-colors
+                         bg-[var(--primary-color)] text-white
+                         hover:bg-[var(--primary-dark)] transition-colors
                          disabled:opacity-50 disabled:cursor-not-allowed
                          flex items-center gap-2"
               >
@@ -542,8 +542,8 @@ export const OnboardingModal = ({
                 onClick={handleNext}
                 disabled={isSaving}
                 className="px-5 py-2 rounded-lg text-sm font-medium
-                         bg-sky-600 text-white
-                         hover:bg-sky-700 transition-colors
+                         bg-[var(--primary-color)] text-white
+                         hover:bg-[var(--primary-dark)] transition-colors
                          disabled:opacity-50 disabled:cursor-not-allowed
                          flex items-center gap-1"
               >

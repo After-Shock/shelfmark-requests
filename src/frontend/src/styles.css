@@ -40,8 +40,10 @@ input, select, textarea, button,
 
 :root {
     /* Light theme variables */
-    --primary-color: oklch(44.3% 0.11 240.79);
-    --primary-dark: oklch(39.1% 0.09 240.876);
+    --primary-color: #7B3FF2;
+    --primary-dark: #5E2AC4;
+    --primary-muted: rgba(123, 63, 242, 0.15);
+    --primary-text: #7B3FF2;
     --text-color: #333;
     --background-color: #f8f8f8;
     --border-color: #e5e5e5;

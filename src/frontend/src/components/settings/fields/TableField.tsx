@@ -120,7 +120,7 @@ export const TableField = ({ field, value, onChange, disabled }: TableFieldProps
                         checked={Boolean(cellValue)}
                         onChange={(e) => updateCell(rowIndex, col.key, e.target.checked)}
                         disabled={isDisabled}
-                        className="h-4 w-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500
+                        className="h-4 w-4 rounded border-gray-300 text-[var(--primary-color)] focus:ring-[var(--primary-color)]
                                    disabled:opacity-60 disabled:cursor-not-allowed"
                       />
                     </div>
@@ -167,7 +167,7 @@ export const TableField = ({ field, value, onChange, disabled }: TableFieldProps
                     disabled={isDisabled}
                     className="w-full px-3 py-2 rounded-lg border border-[var(--border-muted)]
                                bg-[var(--bg-soft)] text-sm
-                               focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500
+                               focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)]/50 focus:border-[var(--primary-color)]
                                disabled:opacity-60 disabled:cursor-not-allowed
                                transition-colors"
                   />

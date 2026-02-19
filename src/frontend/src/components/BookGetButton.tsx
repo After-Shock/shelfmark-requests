@@ -84,8 +84,8 @@ export const BookGetButton = ({
     if (isInProgress) {
       // Show progress state but keep it clickable
       return isIconVariant
-        ? 'bg-sky-600 text-white'
-        : 'bg-sky-600 hover:bg-sky-700';
+        ? 'bg-[var(--primary-color)] text-white'
+        : 'bg-[var(--primary-color)] hover:bg-[var(--primary-dark)]';
     }
     // Default state - icon variant has no background
     return isIconVariant

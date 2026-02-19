@@ -206,7 +206,7 @@ export const MultiSelectField = ({ field, value, onChange, disabled }: MultiSele
                             disabled:opacity-60 disabled:cursor-not-allowed
                             ${
                               isSelected
-                                ? 'bg-sky-600 text-white border-sky-600'
+                                ? 'bg-[var(--primary-color)] text-white border-[var(--primary-color)]'
                                 : 'bg-transparent border-[var(--border-muted)] hover:bg-[var(--hover-surface)]'
                             }`}
               >
@@ -232,7 +232,7 @@ export const MultiSelectField = ({ field, value, onChange, disabled }: MultiSele
         <button
           type="button"
           onClick={() => setIsExpanded(!isExpanded)}
-          className="mt-2 text-sm text-sky-500 hover:text-sky-400
+          className="mt-2 text-sm text-[var(--primary-color)] hover:text-[var(--primary-dark)]
                      transition-colors flex items-center gap-1"
         >
           {isExpanded ? (

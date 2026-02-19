@@ -218,7 +218,7 @@ export const OrderableListField = ({
           <div key={item.id} className="relative">
             {/* Drop indicator */}
             {showIndicatorBefore && (
-              <div className="absolute left-1 right-1 h-1 bg-sky-500 rounded-full z-10 -top-1 -translate-y-1/2" />
+              <div className="absolute left-1 right-1 h-1 bg-[var(--primary-color)] rounded-full z-10 -top-1 -translate-y-1/2" />
             )}
 
             <div
@@ -319,8 +319,8 @@ export const OrderableListField = ({
                 className={`
                   relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full
                   transition-colors duration-200 focus:outline-none focus:ring-2
-                  focus:ring-sky-500/50 disabled:opacity-60 disabled:cursor-not-allowed
-                  ${item.enabled && !item.isLocked ? 'bg-sky-600' : 'bg-gray-300 dark:bg-gray-600'}
+                  focus:ring-[var(--primary-color)]/50 disabled:opacity-60 disabled:cursor-not-allowed
+                  ${item.enabled && !item.isLocked ? 'bg-[var(--primary-color)]' : 'bg-gray-300 dark:bg-gray-600'}
                 `}
               >
                 <span
@@ -338,7 +338,7 @@ export const OrderableListField = ({
       {/* Drop indicator after last item */}
       {dropGapIndex === items.length && (
         <div className="relative h-0">
-          <div className="absolute left-1 right-1 h-1 bg-sky-500 rounded-full z-10 -top-0.5" />
+          <div className="absolute left-1 right-1 h-1 bg-[var(--primary-color)] rounded-full z-10 -top-0.5" />
         </div>
       )}
     </div>

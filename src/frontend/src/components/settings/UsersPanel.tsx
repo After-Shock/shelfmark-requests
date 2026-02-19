@@ -17,7 +17,7 @@ interface UsersPanelProps {
 }
 
 const inputClasses =
-  'w-full px-3 py-2 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 transition-colors';
+  'w-full px-3 py-2 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)]/50 focus:border-[var(--primary-color)] transition-colors';
 
 const disabledInputClasses =
   'w-full px-3 py-2 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-sm opacity-50 cursor-not-allowed';
@@ -252,14 +252,14 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
         <div className="space-y-5 max-w-lg">
           {editingUser.oidc_subject && (
             <div className="space-y-2">
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs bg-sky-500/10 text-sky-400">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs bg-[var(--primary-muted)] text-[var(--primary-color)]">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 shrink-0">
                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
                 </svg>
                 This user authenticates via SSO. Password is managed by the identity provider.
               </div>
               {downloadDefaults?.OIDC_USE_ADMIN_GROUP === true && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs bg-sky-500/10 text-sky-400">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs bg-[var(--primary-muted)] text-[var(--primary-color)]">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 shrink-0">
                     <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
                   </svg>
@@ -453,7 +453,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
           <div className="flex gap-2 pt-2">
             <button
               onClick={handleSaveEdit}
-              className="px-4 py-2.5 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 transition-colors"
+              className="px-4 py-2.5 rounded-lg text-sm font-medium text-white bg-[var(--primary-color)] hover:bg-[var(--primary-dark)] transition-colors"
             >
               Save Changes
             </button>
@@ -479,7 +479,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
         </p>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 transition-colors shrink-0"
+          className="px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-[var(--primary-color)] hover:bg-[var(--primary-dark)] transition-colors shrink-0"
         >
           {showCreateForm ? 'Cancel' : 'Create User'}
         </button>
@@ -546,7 +546,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
             <button
               onClick={handleCreate}
               disabled={creating}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-[var(--primary-color)] hover:bg-[var(--primary-dark)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {creating ? 'Creating...' : 'Create'}
             </button>
@@ -572,7 +572,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div
                   className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium shrink-0
-                    ${user.role === 'admin' ? 'bg-sky-500/20 text-sky-400' : 'bg-zinc-500/20'}`}
+                    ${user.role === 'admin' ? 'bg-[var(--primary-muted)] text-[var(--primary-color)]' : 'bg-zinc-500/20'}`}
                 >
                   {user.username.charAt(0).toUpperCase()}
                 </div>
@@ -587,7 +587,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded font-medium
                         ${user.oidc_subject
-                          ? 'bg-sky-500/15 text-sky-400'
+                          ? 'bg-[var(--primary-muted)] text-[var(--primary-color)]'
                           : 'bg-zinc-500/15 opacity-70'}`}
                     >
                       {user.oidc_subject ? 'OIDC' : 'Password'}
@@ -602,7 +602,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
               <div className="flex items-center gap-2 shrink-0">
                 <span
                   className={`text-xs px-2 py-0.5 rounded font-medium
-                    ${user.role === 'admin' ? 'bg-sky-500/15 text-sky-400' : 'bg-zinc-500/10 opacity-70'}`}
+                    ${user.role === 'admin' ? 'bg-[var(--primary-muted)] text-[var(--primary-color)]' : 'bg-zinc-500/10 opacity-70'}`}
                 >
                   {user.role}
                 </span>
@@ -670,7 +670,7 @@ const OverrideField = ({ label, enabled, onToggle, globalValue, children }: Over
         onClick={() => onToggle(!enabled)}
         className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors
           ${enabled
-            ? 'bg-sky-500/15 text-sky-400 hover:bg-sky-500/25'
+            ? 'bg-[var(--primary-muted)] text-[var(--primary-color)] hover:bg-[var(--primary-muted)]'
             : 'bg-zinc-500/10 opacity-60 hover:opacity-80'}`}
       >
         {enabled ? 'Custom' : 'Global'}
