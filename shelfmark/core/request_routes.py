@@ -75,6 +75,26 @@ def _broadcast_request_update(request_data: dict | None = None) -> None:
         logger.warning(f"Failed to broadcast request update: {e}")
 
 
+def _send_pushover_new_request(req: dict, user_db: UserDB) -> None:
+    """Send Pushover notification to admin when a new request is created (best-effort)."""
+    try:
+        from shelfmark.core.pushover_notifications import send_new_request_pushover
+        user_id = req.get("user_id")
+        requester = None
+        if user_id:
+            user = user_db.get_user(user_id=user_id)
+            if user:
+                requester = user.get("username")
+        send_new_request_pushover(
+            title=req.get("title", "Unknown"),
+            author=req.get("author"),
+            requester=requester,
+            content_type=req.get("content_type", "ebook"),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send Pushover notification for new request #{req.get('id')}: {e}")
+
+
 def _send_status_notification(
     user_db: UserDB, req: dict, new_status: str, admin_note: str | None = None
 ) -> None:
@@ -179,6 +199,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
         _broadcast_request_update(req)
+        _send_pushover_new_request(req, user_db)
         return jsonify(req), 201
 
     @app.route("/api/requests", methods=["GET"])

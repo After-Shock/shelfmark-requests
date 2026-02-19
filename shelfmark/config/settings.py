@@ -70,6 +70,7 @@ from shelfmark.config.booklore_settings import (
     test_booklore_connection,
 )
 from shelfmark.config.email_settings import test_email_connection
+from shelfmark.core.pushover_notifications import test_pushover_connection
 from shelfmark.core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -404,6 +405,32 @@ def general_settings():
             label="Email Request Notifications",
             description="Send email notifications to users when their book requests are approved, denied, fulfilled, or failed. Uses the SMTP settings from the Downloads tab.",
             default=False,
+        ),
+        CheckboxField(
+            key="PUSHOVER_ENABLED",
+            label="Pushover Admin Notifications",
+            description="Send a Pushover push notification to the admin when a new book request is submitted.",
+            default=False,
+        ),
+        TextField(
+            key="PUSHOVER_USER_KEY",
+            label="User Key",
+            description="Your Pushover user key from pushover.net/dashboard.",
+            show_when={"field": "PUSHOVER_ENABLED", "value": True},
+        ),
+        PasswordField(
+            key="PUSHOVER_API_TOKEN",
+            label="API Token",
+            description="Your Pushover application API token from pushover.net/apps.",
+            show_when={"field": "PUSHOVER_ENABLED", "value": True},
+        ),
+        ActionButton(
+            key="test_pushover",
+            label="Send Test Notification",
+            description="Send a test Pushover notification to verify your configuration.",
+            style="primary",
+            callback=test_pushover_connection,
+            show_when={"field": "PUSHOVER_ENABLED", "value": True},
         ),
     ]
 
