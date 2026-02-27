@@ -22,12 +22,14 @@ class FieldBase:
     required: bool = False                # Whether field must have a value
     env_var: Optional[str] = None         # Override env var name (defaults to key)
     env_supported: bool = True            # Whether this setting can be set via ENV var (False = UI-only)
+    user_overridable: bool = False        # Whether admins can set per-user overrides for this field
     disabled: bool = False                # Whether field is disabled/greyed out
     disabled_reason: str = ""             # Explanation shown when disabled
     show_when: Optional[Dict[str, Any] | List[Dict[str, Any]]] = None  # Conditional visibility: {"field": "key", "value": "expected"} or list of conditions
     disabled_when: Optional[Dict[str, Any]] = None  # Conditional disable: {"field": "key", "value": "expected", "reason": "..."}
     requires_restart: bool = False        # Whether changing this setting requires a container restart
     universal_only: bool = False          # Only show in Universal search mode (hide in Direct mode)
+    hidden_in_ui: bool = False            # Keep field in schema/save path but hide default renderer
 
     def get_env_var_name(self) -> str:
         """Get the environment variable name for this field."""
@@ -88,6 +90,7 @@ class TagListField(FieldBase):
     """Editable list of free-form string values (tag/chip input)."""
     placeholder: str = ""
     default: List[str] = field(default_factory=list)
+    normalize_urls: bool = True
 
 
 @dataclass
@@ -113,6 +116,31 @@ class TableField(FieldBase):
 
     add_label: str = "Add"
     empty_message: str = ""
+
+
+@dataclass
+class CustomComponentField:
+    """Render a custom frontend component inside settings content."""
+
+    key: str
+    component: str                        # Frontend component registry key
+    label: str = ""
+    description: str = ""
+    bind_keys: List[str] = field(default_factory=list)  # Related value keys this component edits
+    value_fields: List[Any] = field(default_factory=list)  # Backing value schema for this component
+    wrap_in_field_wrapper: bool = False   # Whether to render with standard FieldWrapper layout
+    disabled: bool = False
+    disabled_reason: str = ""
+    show_when: Optional[Dict[str, Any] | List[Dict[str, Any]]] = None
+    universal_only: bool = False
+
+    def get_field_type(self) -> str:
+        return "CustomComponentField"
+
+    def get_bind_keys(self) -> List[str]:
+        if self.bind_keys:
+            return self.bind_keys
+        return [getattr(f, "key") for f in self.value_fields if getattr(f, "key", None)]
 
 
 @dataclass
@@ -142,6 +170,7 @@ class HeadingField:
     key: str                              # Unique identifier
     title: str                            # Heading title
     description: str = ""                 # Description text (supports markdown-style links)
+    description_by_auth_mode: Optional[Dict[str, str]] = None  # Optional auth-mode specific description map
     link_url: str = ""                    # Optional URL for a link
     link_text: str = ""                   # Text for the link (defaults to URL if not provided)
     show_when: Optional[Dict[str, Any] | List[Dict[str, Any]]] = None  # Conditional visibility: {"field": "key", "value": "expected"} or list of conditions
@@ -162,6 +191,7 @@ SettingsField = Union[
     TagListField,
     OrderableListField,
     TableField,
+    CustomComponentField,
     ActionButton,
     HeadingField,
 ]
@@ -257,6 +287,48 @@ def get_settings_tab(name: str) -> Optional[SettingsTab]:
 def get_all_settings_tabs() -> List[SettingsTab]:
     """Get all registered settings tabs, sorted by order."""
     return sorted(_SETTINGS_REGISTRY.values(), key=lambda t: (t.order, t.name))
+
+
+def _iter_value_fields(tab: SettingsTab):
+    """Yield value-bearing fields for a tab."""
+    for field in tab.fields:
+        if isinstance(field, CustomComponentField):
+            for value_field in field.value_fields:
+                if isinstance(value_field, (ActionButton, HeadingField, CustomComponentField)):
+                    continue
+                yield value_field
+            continue
+        if isinstance(field, (ActionButton, HeadingField)):
+            continue
+        yield field
+
+
+def get_settings_field_map(tab_name: Optional[str] = None) -> Dict[str, tuple[SettingsField, str]]:
+    """Return key -> (field, tab_name) map for value-bearing settings fields."""
+    tabs: List[SettingsTab]
+    if tab_name:
+        tab = get_settings_tab(tab_name)
+        if not tab:
+            return {}
+        tabs = [tab]
+    else:
+        tabs = get_all_settings_tabs()
+
+    field_map: Dict[str, tuple[SettingsField, str]] = {}
+    for tab in tabs:
+        for field in _iter_value_fields(tab):
+            field_map[field.key] = (field, tab.name)
+    return field_map
+
+
+def get_user_overridable_fields(tab_name: Optional[str] = None) -> Dict[str, tuple[SettingsField, str]]:
+    """Return key -> (field, tab_name) map for fields marked user_overridable."""
+    field_map = get_settings_field_map(tab_name=tab_name)
+    return {
+        key: (field, tab)
+        for key, (field, tab) in field_map.items()
+        if getattr(field, "user_overridable", False)
+    }
 
 
 def list_registered_settings() -> List[str]:
@@ -357,11 +429,7 @@ def initialize_default_configs() -> bool:
 
             # Collect default values for all fields
             defaults = {}
-            for field in tab.fields:
-                # Skip non-value fields
-                if isinstance(field, (ActionButton, HeadingField)):
-                    continue
-
+            for field in _iter_value_fields(tab):
                 # Only include fields that have a non-None default
                 if field.default is not None:
                     defaults[field.key] = field.default
@@ -393,11 +461,7 @@ def sync_env_to_config() -> None:
     for tab in get_all_settings_tabs():
         values_to_sync = {}
 
-        for field in tab.fields:
-            # Skip non-value fields
-            if isinstance(field, (ActionButton, HeadingField)):
-                continue
-
+        for field in _iter_value_fields(tab):
             # Skip fields that don't support ENV vars
             if not getattr(field, 'env_supported', True):
                 continue
@@ -584,7 +648,7 @@ def migrate_legacy_settings() -> None:
 
 
 def get_setting_value(field: SettingsField, tab_name: str) -> Any:
-    if isinstance(field, (ActionButton, HeadingField)):
+    if isinstance(field, (ActionButton, HeadingField, CustomComponentField)):
         return None  # Actions and headings don't have values
 
     # 1. Check environment variable (if supported for this field)
@@ -639,7 +703,7 @@ def _parse_env_value(value: str, field: SettingsField) -> Any:
 
 def is_value_from_env(field: SettingsField) -> bool:
     """Check if a field's value comes from an environment variable."""
-    if isinstance(field, (ActionButton, HeadingField)):
+    if isinstance(field, (ActionButton, HeadingField, CustomComponentField)):
         return False
     # UI-only settings never come from ENV (env_supported=False)
     if not getattr(field, 'env_supported', True):
@@ -659,6 +723,36 @@ def serialize_field(field: SettingsField, tab_name: str, include_value: bool = T
     Returns:
         Dict representation of the field.
     """
+    # CustomComponentField has a custom structure - handle separately
+    if isinstance(field, CustomComponentField):
+        result: Dict[str, Any] = {
+            "key": field.key,
+            "label": field.label,
+            "type": field.get_field_type(),
+            "description": field.description,
+            "component": field.component,
+            "bindKeys": field.get_bind_keys(),
+            "wrapInFieldWrapper": field.wrap_in_field_wrapper,
+            "disabled": field.disabled,
+            "disabledReason": field.disabled_reason,
+        }
+        if field.value_fields:
+            bound_fields = []
+            for value_field in field.value_fields:
+                serialized_bound_field = serialize_field(
+                    value_field,
+                    tab_name,
+                    include_value=include_value,
+                )
+                serialized_bound_field["hiddenInUi"] = True
+                bound_fields.append(serialized_bound_field)
+            result["boundFields"] = bound_fields
+        if field.show_when:
+            result["showWhen"] = field.show_when
+        if field.universal_only:
+            result["universalOnly"] = True
+        return result
+
     # HeadingField has a different structure - handle separately
     if isinstance(field, HeadingField):
         result: Dict[str, Any] = {
@@ -667,6 +761,8 @@ def serialize_field(field: SettingsField, tab_name: str, include_value: bool = T
             "title": field.title,
             "description": field.description,
         }
+        if field.description_by_auth_mode:
+            result["descriptionByAuthMode"] = field.description_by_auth_mode
         if field.link_url:
             result["linkUrl"] = field.link_url
             result["linkText"] = field.link_text or field.link_url
@@ -685,6 +781,8 @@ def serialize_field(field: SettingsField, tab_name: str, include_value: bool = T
         "disabled": getattr(field, 'disabled', False),
         "disabledReason": getattr(field, 'disabled_reason', ''),
         "requiresRestart": getattr(field, 'requires_restart', False),
+        "userOverridable": getattr(field, 'user_overridable', False),
+        "hiddenInUi": getattr(field, 'hidden_in_ui', False),
     }
 
     # Add optional properties if set
@@ -721,6 +819,7 @@ def serialize_field(field: SettingsField, tab_name: str, include_value: bool = T
         result["variant"] = field.variant
     elif isinstance(field, TagListField):
         result["placeholder"] = field.placeholder
+        result["normalizeUrls"] = field.normalize_urls
     elif isinstance(field, OrderableListField):
         # Support callable options for lazy evaluation (avoids circular imports)
         options = field.options() if callable(field.options) else field.options
@@ -734,7 +833,7 @@ def serialize_field(field: SettingsField, tab_name: str, include_value: bool = T
         result["style"] = field.style
         result["description"] = field.description
 
-    if include_value and not isinstance(field, (ActionButton, HeadingField)):
+    if include_value and not isinstance(field, (ActionButton, HeadingField, CustomComponentField)):
         value = get_setting_value(field, tab_name)
 
         # Ensure select values are serialized as strings so the frontend can
@@ -913,7 +1012,10 @@ def update_settings(tab_name: str, values: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": False, "message": f"Unknown settings tab: {tab_name}", "updated": [], "requiresRestart": False}
 
     # Build a map of field keys to fields (exclude non-value fields)
-    field_map = {f.key: f for f in tab.fields if not isinstance(f, (ActionButton, HeadingField))}
+    field_map = {
+        key: field
+        for key, (field, _) in get_settings_field_map(tab_name=tab_name).items()
+    }
 
     # Filter out values that are set via env vars or unknown
     values_to_save = {}
@@ -989,6 +1091,18 @@ def update_settings(tab_name: str, values: Dict[str, Any]) -> Dict[str, Any]:
             and dns_keys.intersection(values_to_save.keys())
         ):
             _apply_dns_settings(config_obj)
+
+        # Apply certificate validation changes live (network tab)
+        if (
+            config_obj is not None
+            and tab_name == "network"
+            and "CERTIFICATE_VALIDATION" in values_to_save
+        ):
+            try:
+                from shelfmark.download.network import _apply_ssl_warning_suppression
+                _apply_ssl_warning_suppression()
+            except Exception as e:
+                logger.warning(f"Failed to apply certificate validation setting: {e}")
 
         # Apply AA mirror settings changes live (mirrors tab)
         aa_keys = {"AA_BASE_URL", "AA_MIRROR_URLS", "AA_ADDITIONAL_URLS"}
