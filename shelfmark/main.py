@@ -396,17 +396,8 @@ def _policy_block_response(mode: PolicyMode):
 
 if user_db is not None:
     try:
-        from shelfmark.core.request_routes import register_request_routes
         from shelfmark.core.activity_routes import register_activity_routes
 
-        register_request_routes(
-            app,
-            user_db,
-            resolve_auth_mode=lambda: get_auth_mode(),
-            queue_release=lambda *args, **kwargs: backend.queue_release(*args, **kwargs),
-            activity_service=activity_service,
-            ws_manager=ws_manager,
-        )
         if activity_service is not None:
             register_activity_routes(
                 app,
@@ -420,7 +411,7 @@ if user_db is not None:
                 ws_manager=ws_manager,
             )
     except Exception as e:
-        logger.warning(f"Failed to register request routes: {e}")
+        logger.warning(f"Failed to register activity routes: {e}")
 
 
 # Enable CORS in development mode for local frontend development
@@ -680,6 +671,13 @@ def logo() -> Response:
     Serve logo from built frontend assets.
     """
     return send_from_directory(FRONTEND_DIST, 'logo.png', mimetype='image/png')
+
+@app.route('/logo.svg')
+def logo_svg() -> Response:
+    """
+    Serve SVG logo from built frontend assets.
+    """
+    return send_from_directory(FRONTEND_DIST, 'logo.svg', mimetype='image/svg+xml')
 
 @app.route('/favicon.ico')
 @app.route('/favico<path:_>')
