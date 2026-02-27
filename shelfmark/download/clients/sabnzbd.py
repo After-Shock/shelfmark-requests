@@ -12,7 +12,8 @@ import requests
 from shelfmark.core.config import config
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.utils import normalize_http_url
-from shelfmark.release_sources.prowlarr.clients import (
+from shelfmark.download.network import get_ssl_verify
+from shelfmark.download.clients import (
     DownloadClient,
     DownloadStatus,
     register_client,
@@ -148,7 +149,7 @@ class SABnzbdClient(DownloadClient):
         if params:
             request_params.update(params)
 
-        response = requests.get(api_url, params=request_params, timeout=30)
+        response = requests.get(api_url, params=request_params, timeout=30, verify=get_ssl_verify(api_url))
         response.raise_for_status()
 
         result = response.json()
@@ -177,7 +178,7 @@ class SABnzbdClient(DownloadClient):
         }
         files = {"name": (filename, nzb_content, "application/x-nzb")}
 
-        response = requests.post(api_url, params=request_params, files=files, timeout=30)
+        response = requests.post(api_url, params=request_params, files=files, timeout=30, verify=get_ssl_verify(api_url))
         response.raise_for_status()
         result = response.json()
 
@@ -190,11 +191,12 @@ class SABnzbdClient(DownloadClient):
     def _fetch_nzb_content(self, url: str) -> bytes:
         """Fetch NZB content, including Prowlarr auth headers when appropriate."""
         headers = self._get_prowlarr_headers(url)
-        response = requests.get(url, timeout=30, headers=headers)
+        response = requests.get(url, timeout=30, headers=headers, verify=get_ssl_verify(url))
         response.raise_for_status()
         return response.content
 
     def _get_prowlarr_headers(self, url: str) -> dict:
+        # TODO: Move this source-specific Prowlarr auth handling into a source hook.
         api_key = str(config.get("PROWLARR_API_KEY", "") or "").strip()
         if not api_key:
             return {}

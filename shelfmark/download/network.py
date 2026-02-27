@@ -90,6 +90,32 @@ def get_proxies(url: str = "") -> dict:
 
     return {}
 
+
+def get_ssl_verify(url: str = "") -> bool:
+    """Return the ``verify`` value for outbound requests based on the
+    CERTIFICATE_VALIDATION setting.
+
+    - ``enabled``        → always ``True``
+    - ``disabled_local`` → ``False`` for local/private addresses, ``True`` otherwise
+    - ``disabled``       → always ``False``
+    """
+    mode = app_config.get("CERTIFICATE_VALIDATION", "enabled")
+
+    if mode == "disabled":
+        return False
+
+    if mode == "disabled_local" and url:
+        try:
+            parsed = urllib.parse.urlparse(url)
+            hostname = parsed.hostname or ""
+            if hostname and _is_local_address(hostname):
+                return False
+        except Exception:
+            pass
+
+    return True
+
+
 # DNS state - authoritative values managed by this module
 # Other modules should use get_dns_config() to read these
 CUSTOM_DNS: List[str] = []
