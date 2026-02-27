@@ -95,6 +95,35 @@ def _send_pushover_new_request(req: dict, user_db: UserDB) -> None:
         logger.warning(f"Failed to send Pushover notification for new request #{req.get('id')}: {e}")
 
 
+def _send_discord_new_request(req: dict) -> None:
+    """Send Discord embed notification on new request (best-effort)."""
+    try:
+        from shelfmark.core.discord_notifications import send_discord_new_request
+        send_discord_new_request(
+            title=req.get("title", "Unknown"),
+            author=req.get("author"),
+            requester=req.get("requester_username"),
+            content_type=req.get("content_type", "ebook"),
+            cover_url=req.get("cover_url"),
+        )
+    except Exception as e:
+        logger.warning(f"Discord new-request notification failed for #{req.get('id')}: {e}")
+
+
+def _send_discord_book_available(req: dict) -> None:
+    """Send Discord embed notification when a book is fulfilled (best-effort)."""
+    try:
+        from shelfmark.core.discord_notifications import send_discord_book_available
+        send_discord_book_available(
+            title=req.get("title", "Unknown"),
+            author=req.get("author"),
+            requester=req.get("requester_username"),
+            cover_url=req.get("cover_url"),
+        )
+    except Exception as e:
+        logger.warning(f"Discord book-available notification failed for #{req.get('id')}: {e}")
+
+
 def _send_status_notification(
     user_db: UserDB, req: dict, new_status: str, admin_note: str | None = None
 ) -> None:
@@ -200,6 +229,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
         _broadcast_request_update(req)
         _send_pushover_new_request(req, user_db)
+        _send_discord_new_request(req)   # <-- add this
         return jsonify(req), 201
 
     @app.route("/api/requests", methods=["GET"])
@@ -393,6 +423,10 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         # Send notification to requester if status changed significantly
         if new_status in ["approved", "denied", "fulfilled", "failed"]:
             _send_status_notification(user_db, req, new_status, admin_note=admin_note)
+        if new_status == "fulfilled":
+            updated_req = request_db.get_request(request_id)
+            if updated_req:
+                _send_discord_book_available(updated_req)
 
         return jsonify(updated)
 
@@ -493,6 +527,10 @@ def _auto_download_request(
         if request_db.get_request(request_id) is not None:
             request_db.update_request_status(request_id, status, **kwargs)
             _broadcast_request_update(request_db.get_request(request_id))
+            if status == "fulfilled":
+                updated_req = request_db.get_request(request_id)
+                if updated_req:
+                    _send_discord_book_available(updated_req)
 
     try:
         from shelfmark.download import orchestrator as backend
