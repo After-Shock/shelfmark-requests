@@ -9,6 +9,7 @@ import random
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from email.utils import parseaddr
 from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Dict, List, Optional, Tuple
@@ -75,63 +76,34 @@ def get_book_info(book_id: str) -> Optional[Dict[str, Any]]:
         logger.error_trace(f"Error getting book info: {e}")
         raise
 
-def _normalize_email_recipients(value: Any) -> List[Dict[str, str]]:
-    """Normalize EMAIL_RECIPIENTS config into a list of {nickname,email} dicts."""
-
-    if not isinstance(value, list):
-        return []
-
-    recipients: List[Dict[str, str]] = []
-    for entry in value:
-        if not isinstance(entry, dict):
-            continue
-        nickname = str(entry.get("nickname", "") or "").strip()
-        email = str(entry.get("email", "") or "").strip()
-        if not nickname or not email:
-            continue
-        recipients.append({"nickname": nickname, "email": email})
-    return recipients
+def _is_plain_email_address(value: str) -> bool:
+    parsed = parseaddr(value or "")[1]
+    return bool(parsed) and "@" in parsed and parsed == value
 
 
-def _resolve_email_recipient(
-    nickname: Optional[str],
-    user_recipients: Optional[List[Dict[str, str]]] = None,
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Resolve a configured email recipient nickname to an email address.
-
-    Checks user-specific recipients first, then global config.
+def _resolve_email_destination(
+    user_id: Optional[int] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve the destination email address for email output mode.
 
     Returns:
-      (email_to, label, error_message)
+      (email_to, error_message)
     """
+    configured_recipient = str(config.get("EMAIL_RECIPIENT", "", user_id=user_id) or "").strip()
+    if configured_recipient:
+        if _is_plain_email_address(configured_recipient):
+            return configured_recipient, None
+        return None, "Configured email recipient is invalid"
 
-    label = (nickname or "").strip()
-    if not label:
-        return None, None, None
-
-    # Check per-user recipients first
-    if user_recipients:
-        for entry in _normalize_email_recipients(user_recipients):
-            if entry["nickname"].strip().lower() == label.lower():
-                return entry["email"], entry["nickname"], None
-
-    # Fall back to global recipients
-    recipients = _normalize_email_recipients(config.get("EMAIL_RECIPIENTS", []))
-    for entry in recipients:
-        if entry["nickname"].strip().lower() == label.lower():
-            return entry["email"], entry["nickname"], None
-
-    return None, label, f"Unknown email recipient: {label}"
+    return None, None
 
 
 def queue_book(
     book_id: str,
     priority: int = 0,
     source: str = "direct_download",
-    email_recipient: Optional[str] = None,
     user_id: Optional[int] = None,
     username: Optional[str] = None,
-    user_overrides: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Optional[str]]:
     """Add a book to the download queue. Returns (success, error_message)."""
     try:
@@ -141,37 +113,21 @@ def queue_book(
             logger.warning(error_msg)
             return False, error_msg
 
-        books_output_mode = str(config.get("BOOKS_OUTPUT_MODE", "folder") or "folder").strip().lower()
+        books_output_mode = str(
+            config.get("BOOKS_OUTPUT_MODE", "folder", user_id=user_id) or "folder"
+        ).strip().lower()
         is_audiobook = check_audiobook(book_info.content)
 
         # Capture output mode at queue time so tasks aren't affected if settings change later.
         output_mode = "folder" if is_audiobook else books_output_mode
         output_args: Dict[str, Any] = {}
 
-        # Extract per-user email recipients for resolution (if any)
-        _user_email_recipients = (user_overrides or {}).get("email_recipients") if user_overrides else None
-
         if output_mode == "email" and not is_audiobook:
-            all_recipients = _user_email_recipients or config.get("EMAIL_RECIPIENTS", [])
-            if not _normalize_email_recipients(all_recipients):
-                return False, "No email recipients configured"
-
-            email_to, email_label, email_error = _resolve_email_recipient(
-                email_recipient, user_recipients=_user_email_recipients,
-            )
+            email_to, email_error = _resolve_email_destination(user_id=user_id)
             if email_error:
                 return False, email_error
-            if not email_to:
-                return False, "Email recipient is required"
-
-            output_args = {"to": email_to, "label": email_label}
-
-        # Merge per-user overrides into output_args (only known keys)
-        _ALLOWED_OVERRIDE_KEYS = {"destination", "booklore_library_id", "booklore_path_id"}
-        if user_overrides:
-            for k, v in user_overrides.items():
-                if k in _ALLOWED_OVERRIDE_KEYS and v is not None and k not in output_args:
-                    output_args[k] = v
+            if email_to:
+                output_args = {"to": email_to}
 
         # Create a source-agnostic download task
         task = DownloadTask(
@@ -215,57 +171,55 @@ def queue_book(
 def queue_release(
     release_data: dict,
     priority: int = 0,
-    email_recipient: Optional[str] = None,
     user_id: Optional[int] = None,
     username: Optional[str] = None,
-    user_overrides: Optional[Dict[str, Any]] = None,
+    user_overrides: Optional[Dict[str, Any]] = None,  # deprecated: kept for back-compat with request_routes
+    email_recipient: Optional[str] = None,  # deprecated: kept for back-compat
 ) -> Tuple[bool, Optional[str]]:
     """Add a release to the download queue. Returns (success, error_message)."""
     try:
         source = release_data.get('source', 'direct_download')
         extra = release_data.get('extra', {})
+        raw_request_id = release_data.get('_request_id')
+        request_id: Optional[int] = None
+        if isinstance(raw_request_id, int) and raw_request_id > 0:
+            request_id = raw_request_id
 
         # Get author, year, preview, and content_type from top-level (preferred) or extra (fallback)
         author = release_data.get('author') or extra.get('author')
         year = release_data.get('year') or extra.get('year')
         preview = release_data.get('preview') or extra.get('preview')
         content_type = release_data.get('content_type') or extra.get('content_type')
+        source_url_raw = (
+            release_data.get('download_url')
+            or release_data.get('source_url')
+            or release_data.get('info_url')
+            or extra.get('detail_url')
+            or extra.get('source_url')
+        )
+        source_url = source_url_raw.strip() if isinstance(source_url_raw, str) else None
+        if source_url == "":
+            source_url = None
 
         # Get series info for library naming templates
         series_name = release_data.get('series_name') or extra.get('series_name')
         series_position = release_data.get('series_position') or extra.get('series_position')
         subtitle = release_data.get('subtitle') or extra.get('subtitle')
 
-        books_output_mode = str(config.get("BOOKS_OUTPUT_MODE", "folder") or "folder").strip().lower()
+        books_output_mode = str(
+            config.get("BOOKS_OUTPUT_MODE", "folder", user_id=user_id) or "folder"
+        ).strip().lower()
         is_audiobook = check_audiobook(content_type)
 
         output_mode = "folder" if is_audiobook else books_output_mode
         output_args: Dict[str, Any] = {}
 
-        # Extract per-user email recipients for resolution (if any)
-        _user_email_recipients = (user_overrides or {}).get("email_recipients") if user_overrides else None
-
         if output_mode == "email" and not is_audiobook:
-            all_recipients = _user_email_recipients or config.get("EMAIL_RECIPIENTS", [])
-            if not _normalize_email_recipients(all_recipients):
-                return False, "No email recipients configured"
-
-            email_to, email_label, email_error = _resolve_email_recipient(
-                email_recipient, user_recipients=_user_email_recipients,
-            )
+            email_to, email_error = _resolve_email_destination(user_id=user_id)
             if email_error:
                 return False, email_error
-            if not email_to:
-                return False, "Email recipient is required"
-
-            output_args = {"to": email_to, "label": email_label}
-
-        # Merge per-user overrides into output_args (only known keys)
-        _ALLOWED_OVERRIDE_KEYS = {"destination", "booklore_library_id", "booklore_path_id"}
-        if user_overrides:
-            for k, v in user_overrides.items():
-                if k in _ALLOWED_OVERRIDE_KEYS and v is not None and k not in output_args:
-                    output_args[k] = v
+            if email_to:
+                output_args = {"to": email_to}
 
         # Create a source-agnostic download task from release data
         task = DownloadTask(
@@ -278,6 +232,7 @@ def queue_release(
             size=release_data.get('size'),
             preview=preview,
             content_type=content_type,
+            source_url=source_url,
             series_name=series_name,
             series_position=series_position,
             subtitle=subtitle,
@@ -287,6 +242,7 @@ def queue_release(
             priority=priority,
             user_id=user_id,
             username=username,
+            request_id=request_id,
         )
 
         if not book_queue.add(task):
@@ -387,7 +343,9 @@ def _task_to_dict(task: DownloadTask) -> Dict[str, Any]:
         'status': task.status,
         'status_message': task.status_message,
         'download_path': task.download_path,
+        'user_id': task.user_id,
         'username': task.username,
+        'request_id': task.request_id,
     }
 
 
@@ -554,11 +512,12 @@ def update_download_status(book_id: str, status: str, message: Optional[str] = N
             return
         _last_status_event[book_id] = status_event
 
-    book_queue.update_status(book_id, queue_status_enum)
-
-    # Update status message if provided (empty string clears the message)
+    # Update status message first so terminal snapshots capture the final message
+    # (for example, "Complete" or "Sent to ...") instead of a stale in-progress one.
     if message is not None:
         book_queue.update_status_message(book_id, message)
+
+    book_queue.update_status(book_id, queue_status_enum)
 
     # Broadcast status update via WebSocket
     if ws_manager:
@@ -590,9 +549,9 @@ def get_active_downloads() -> List[str]:
     """Get list of currently active downloads."""
     return book_queue.get_active_downloads()
 
-def clear_completed() -> int:
-    """Clear all completed downloads from tracking."""
-    return book_queue.clear_completed()
+def clear_completed(user_id: Optional[int] = None) -> int:
+    """Clear completed downloads from tracking (optionally user-scoped)."""
+    return book_queue.clear_completed(user_id=user_id)
 
 def _cleanup_progress_tracking(task_id: str) -> None:
     """Clean up progress tracking data for a completed/cancelled download."""
@@ -601,46 +560,6 @@ def _cleanup_progress_tracking(task_id: str) -> None:
         _progress_last_broadcast.pop(f"{task_id}_progress", None)
         _last_activity.pop(task_id, None)
         _last_status_event.pop(task_id, None)
-
-
-def _update_linked_requests(task_id: str, success: bool) -> None:
-    """Update any book requests linked to this download task."""
-    try:
-        import os as _os
-        from shelfmark.core.request_db import RequestDB
-        db_path = _os.path.join(_os.environ.get("CONFIG_DIR", "/config"), "users.db")
-        rdb = RequestDB(db_path)
-        linked = rdb.get_requests_by_download_task(task_id)
-        if not linked:
-            return
-        new_status = "fulfilled" if success else "failed"
-        for req in linked:
-            if req["status"] in ("downloading", "approved"):
-                rdb.update_request_status(req["id"], new_status)
-                logger.info(f"Request #{req['id']} updated to '{new_status}' (task={task_id})")
-                # Send notification to requester
-                try:
-                    from shelfmark.core.user_db import UserDB
-                    udb = UserDB(db_path)
-                    user = udb.get_user(user_id=req.get("user_id"))
-                    if user and user.get("email"):
-                        from shelfmark.core.request_notifications import send_request_notification
-                        send_request_notification(
-                            user_email=user["email"],
-                            request_title=req.get("title", "Unknown"),
-                            new_status=new_status,
-                        )
-                except Exception as ne:
-                    logger.debug(f"Could not send notification for request #{req['id']}: {ne}")
-        # Broadcast request update
-        try:
-            from shelfmark.api.websocket import ws_manager
-            if ws_manager and ws_manager.is_enabled():
-                ws_manager.socketio.emit("request_update", {})
-        except Exception:
-            pass
-    except Exception as e:
-        logger.warning(f"Failed to update linked requests for task {task_id}: {e}")
 
 
 def _process_single_download(task_id: str, cancel_flag: Event) -> None:
@@ -666,10 +585,8 @@ def _process_single_download(task_id: str, cancel_flag: Event) -> None:
             task = book_queue.get_task(task_id)
             if not task or task.status != QueueStatus.COMPLETE:
                 book_queue.update_status(task_id, QueueStatus.COMPLETE)
-            _update_linked_requests(task_id, success=True)
         else:
             book_queue.update_status(task_id, QueueStatus.ERROR)
-            _update_linked_requests(task_id, success=False)
 
         # Broadcast final status (completed or error)
         if ws_manager:
@@ -686,7 +603,6 @@ def _process_single_download(task_id: str, cancel_flag: Event) -> None:
             task = book_queue.get_task(task_id)
             if task and not task.status_message:
                 book_queue.update_status_message(task_id, f"Download failed: {type(e).__name__}: {str(e)}")
-            _update_linked_requests(task_id, success=False)
         else:
             logger.info(f"Download cancelled: {task_id}")
             book_queue.update_status(task_id, QueueStatus.CANCELLED)
