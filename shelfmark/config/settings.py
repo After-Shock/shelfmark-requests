@@ -71,6 +71,7 @@ from shelfmark.config.booklore_settings import (
 )
 from shelfmark.config.email_settings import test_email_connection
 from shelfmark.core.pushover_notifications import test_pushover_connection
+from shelfmark.core.discord_notifications import test_discord_connection
 from shelfmark.core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -431,6 +432,41 @@ def general_settings():
             style="primary",
             callback=test_pushover_connection,
             show_when={"field": "PUSHOVER_ENABLED", "value": True},
+        ),
+        CheckboxField(
+            key="DISCORD_WEBHOOK_ENABLED",
+            label="Enable Discord Notifications",
+            description="Send Discord notifications via webhook when book requests are submitted.",
+            default=False,
+        ),
+        TextField(
+            key="DISCORD_WEBHOOK_URL",
+            label="Discord Webhook URL",
+            description="The Discord webhook URL to send notifications to.",
+            placeholder="https://discord.com/api/webhooks/...",
+            show_when={"field": "DISCORD_WEBHOOK_ENABLED", "value": True},
+        ),
+        CheckboxField(
+            key="DISCORD_NOTIFY_NEW_REQUEST",
+            label="Notify on New Requests",
+            description="Send a Discord notification when a new book request is submitted.",
+            default=True,
+            show_when={"field": "DISCORD_WEBHOOK_ENABLED", "value": True},
+        ),
+        CheckboxField(
+            key="DISCORD_NOTIFY_BOOK_AVAILABLE",
+            label="Notify when Book Available",
+            description="Send a Discord notification when a requested book becomes available.",
+            default=True,
+            show_when={"field": "DISCORD_WEBHOOK_ENABLED", "value": True},
+        ),
+        ActionButton(
+            key="test_discord",
+            label="Send Test Notification",
+            description="Send a test Discord notification to verify your webhook configuration.",
+            style="primary",
+            callback=test_discord_connection,
+            show_when={"field": "DISCORD_WEBHOOK_ENABLED", "value": True},
         ),
     ]
 
