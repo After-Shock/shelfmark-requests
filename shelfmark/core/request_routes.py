@@ -95,14 +95,21 @@ def _send_pushover_new_request(req: dict, user_db: UserDB) -> None:
         logger.warning(f"Failed to send Pushover notification for new request #{req.get('id')}: {e}")
 
 
-def _send_discord_new_request(req: dict) -> None:
+def _send_discord_new_request(req: dict, user_db: UserDB) -> None:
     """Send Discord embed notification on new request (best-effort)."""
     try:
         from shelfmark.core.discord_notifications import send_discord_new_request
+        requester = req.get("requester_username")
+        if not requester:
+            user_id = req.get("user_id")
+            if user_id:
+                user = user_db.get_user(user_id=user_id)
+                if user:
+                    requester = user.get("username")
         send_discord_new_request(
             title=req.get("title", "Unknown"),
             author=req.get("author"),
-            requester=req.get("requester_username"),
+            requester=requester,
             content_type=req.get("content_type", "ebook"),
             cover_url=req.get("cover_url"),
         )
@@ -229,7 +236,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
         _broadcast_request_update(req)
         _send_pushover_new_request(req, user_db)
-        _send_discord_new_request(req)   # <-- add this
+        _send_discord_new_request(req, user_db)
         return jsonify(req), 201
 
     @app.route("/api/requests", methods=["GET"])
