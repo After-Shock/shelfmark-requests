@@ -139,6 +139,10 @@ try:
     request_db = RequestDB(_user_db_path)
     request_db.initialize()
     register_request_routes(app, request_db, user_db)
+    from shelfmark.core.abs_routes import register_abs_routes
+    from shelfmark.core.audiobookshelf import abs_client
+    register_abs_routes(app)
+    abs_client.start_background_refresh()
 except (sqlite3.OperationalError, OSError) as e:
     logger.warning(
         f"User database initialization failed: {e}. "
