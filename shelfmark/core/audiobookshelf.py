@@ -60,7 +60,7 @@ class ABSClient:
                 resp = http_requests.get(
                     f'{url}/api/libraries/{lib_id}/items',
                     headers=headers,
-                    params={'minified': 1, 'limit': 0},
+                    params={'minified': 1, 'limit': 0},  # limit=0 disables pagination in the ABS API
                     timeout=30,
                 )
                 resp.raise_for_status()
@@ -85,7 +85,14 @@ class ABSClient:
             return 0
 
     def find_match(self, title: str, author: str) -> Optional[dict[str, Any]]:
-        """Return first ABS item fuzzy-matching title+author, or None (fail open)."""
+        """Return first ABS item fuzzy-matching title+author, or None (fail open).
+
+        Note: if ABS was previously configured and the cache was populated, then
+        the API token is later removed, this method will continue returning matches
+        from the stale in-memory cache until the process restarts. This is intentional
+        fail-open behavior — it is preferable to allow a duplicate request through
+        than to block all requests because credentials are temporarily missing.
+        """
         with self._cache_lock:
             cache = list(self._cache)
 

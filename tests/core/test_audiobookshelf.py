@@ -1,6 +1,5 @@
 """Tests for the Audiobookshelf library client."""
 from unittest.mock import MagicMock, patch
-import pytest
 from shelfmark.core.audiobookshelf import ABSClient, _normalize
 
 
@@ -35,11 +34,20 @@ class TestABSClientFindMatch:
         ])
         assert client.find_match("The Hobbit", "Tolkien") is not None
 
-    def test_fuzzy_title_match(self):
+    def test_prefix_title_match(self):
+        """Query title is a prefix of the stored title (e.g. subtitle in library)."""
         client = self._client_with_cache([
             {"id": "1", "title": "The Hobbit A Novel", "author": "Tolkien"},
         ])
         assert client.find_match("The Hobbit", "Tolkien") is not None
+
+    def test_ratio_fuzzy_title_match(self):
+        """Fuzzy match via ratio (not prefix) — e.g. minor typo in title."""
+        client = self._client_with_cache([
+            {"id": "1", "title": "The Hobbit", "author": "Tolkien"},
+        ])
+        # "The Hobbitt" vs "The Hobbit": ratio ~0.941, not a prefix match
+        assert client.find_match("The Hobbitt", "Tolkien") is not None
 
     def test_no_match_different_book(self):
         client = self._client_with_cache([
