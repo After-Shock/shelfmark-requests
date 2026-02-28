@@ -370,6 +370,12 @@ def general_settings():
             description="Adds a separate navigation button for your audiobook library (Audiobookshelf, Plex, etc). When both URLs are set, icons are shown instead of text.",
             placeholder="http://audiobookshelf:8080",
         ),
+        PasswordField(
+            key="ABS_API_TOKEN",
+            label="Audiobookshelf API Token",
+            description="API token for duplicate detection. Find it in ABS Settings → Users → your user → API Token.",
+            placeholder="",
+        ),
         HeadingField(
             key="search_defaults_heading",
             title="Default Search Filters",
