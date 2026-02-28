@@ -1,6 +1,5 @@
 """ABS duplicate-check and cache-refresh API routes."""
 
-import logging
 from functools import wraps
 
 from flask import Flask, jsonify, request, session

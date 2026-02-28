@@ -54,3 +54,9 @@ class TestAbsRefresh:
         data = json.loads(resp.data)
         assert data['ok'] is True
         assert data['count'] == 42
+
+    def test_refresh_requires_admin(self, client):
+        with patch('shelfmark.core.abs_routes._get_auth_mode', return_value='none'), \
+             patch('shelfmark.core.abs_routes.abs_client.refresh', return_value=0):
+            resp = client.post('/api/abs/refresh')
+        assert resp.status_code == 200
