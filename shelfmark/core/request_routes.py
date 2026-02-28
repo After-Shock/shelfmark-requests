@@ -9,6 +9,7 @@ from functools import wraps
 
 from flask import Flask, jsonify, request, session
 
+from shelfmark.core.audiobookshelf import abs_client
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.request_db import RequestDB
 from shelfmark.core.user_db import UserDB
@@ -200,6 +201,23 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         if content_type not in ("ebook", "audiobook"):
             return jsonify({"error": "content_type must be 'ebook' or 'audiobook'"}), 400
 
+        author = (data.get("author") or "").strip()
+
+        # ABS duplicate check for audiobooks (fail open if ABS unreachable)
+        if content_type == "audiobook":
+            try:
+                abs_match = abs_client.find_match(title, author or "")
+                if abs_match:
+                    return jsonify({
+                        "error": "Already in your Audiobookshelf library",
+                        "abs_match": {
+                            "title": abs_match["title"],
+                            "author": abs_match["author"],
+                        },
+                    }), 409
+            except Exception as e:
+                logger.warning("ABS duplicate check failed (skipping): %s", e)
+
         # Duplicate detection: check for active requests by the same user
         provider = data.get("provider")
         provider_id_val = data.get("provider_id")
@@ -219,7 +237,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                 user_id=db_user_id,
                 title=title,
                 content_type=content_type,
-                author=(data.get("author") or "").strip() or None,
+                author=author or None,
                 year=(data.get("year") or "").strip() or None,
                 cover_url=data.get("cover_url"),
                 description=data.get("description"),
