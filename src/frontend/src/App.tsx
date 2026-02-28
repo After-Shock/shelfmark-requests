@@ -630,7 +630,11 @@ function App() {
       handleOpenRequestsSidebar();
     } catch (error) {
       console.error('Request failed:', error);
-      showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
+      if (error instanceof Error && error.message.includes('Already in your Audiobookshelf')) {
+        showToast('This audiobook is already in your Audiobookshelf library', 'error');
+      } else {
+        showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
+      }
     }
   }, [submitRequest, contentType, showToast]);
 

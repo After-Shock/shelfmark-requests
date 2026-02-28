@@ -43,6 +43,19 @@ export function BookActionButton({
   // Non-admin users with requests enabled see Request button only
   if (showRequestButton && !isAdmin && onRequest) {
     const sizeClasses = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
+
+    if (book.abs_owned) {
+      return (
+        <span
+          className={`${sizeClasses} rounded font-medium text-white inline-block`}
+          style={{ backgroundColor: '#6B7280' }}
+          title="Already in your Audiobookshelf library"
+        >
+          In Library
+        </span>
+      );
+    }
+
     const sulleyBlue = '#00BCD4'; // Sulley from Monsters Inc - teal/turquoise
     const sulleyBlueHover = '#00ACC1';
     return (

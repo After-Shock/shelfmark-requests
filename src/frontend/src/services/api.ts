@@ -20,6 +20,7 @@ const API = {
   logout: `${API_BASE}/auth/logout`,
   authCheck: `${API_BASE}/auth/check`,
   settings: `${API_BASE}/settings`,
+  absCheck: `${API_BASE}/abs/check`,
 };
 
 // Custom error class for authentication failures
@@ -498,6 +499,15 @@ export const changePassword = async (data: {
     method: 'POST',
     body: JSON.stringify(data),
   });
+};
+
+// Audiobookshelf library ownership check
+export const checkAbsOwned = async (
+  title: string,
+  author: string
+): Promise<{ owned: boolean; match: { title: string; author: string } | null }> => {
+  const params = new URLSearchParams({ title, author });
+  return fetchJSON(`${API.absCheck}?${params.toString()}`);
 };
 
 // Book request API functions

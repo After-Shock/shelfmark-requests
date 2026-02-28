@@ -46,6 +46,7 @@ export interface Book {
   series_position?: number;    // This book's position (e.g., 3, 1.5 for novellas)
   series_count?: number;       // Total books in the series
   subtitle?: string;
+  abs_owned?: boolean;      // True if this audiobook is already in ABS library
   search_title?: string;
   search_author?: string;
   username?: string;

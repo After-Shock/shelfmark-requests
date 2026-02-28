@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Book, AppConfig, AdvancedFilterState, ContentType } from '../types';
-import { searchBooks, searchMetadata, AuthenticationError } from '../services/api';
+import { searchBooks, searchMetadata, checkAbsOwned, AuthenticationError } from '../services/api';
 import { LANGUAGE_OPTION_DEFAULT } from '../utils/languageFilters';
 import { DEFAULT_SUPPORTED_FORMATS } from '../data/languages';
 
@@ -106,6 +106,24 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
     showToast(message, 'error');
   }, [setIsAuthenticated, authRequired, navigate, showToast]);
 
+  // Fire parallel ABS ownership checks for audiobook results (best-effort, fail silently)
+  const _checkAbsOwnership = useCallback(async (books: Book[]) => {
+    if (contentType !== 'audiobook') return;
+    const checks = books.map(async (book) => {
+      try {
+        const result = await checkAbsOwned(book.title, book.author || '');
+        if (result.owned) {
+          setBooks(prev =>
+            prev.map(b => b.id === book.id ? { ...b, abs_owned: true } : b)
+          );
+        }
+      } catch {
+        // Fail silently — ABS check is best-effort
+      }
+    });
+    await Promise.allSettled(checks);
+  }, [contentType, setBooks]);
+
   const handleSearch = useCallback(async (
     query: string,
     config: AppConfig | null,
@@ -152,6 +170,7 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
         const result = await searchMetadata(searchQuery, 40, sort, effectiveFieldValues, 1, contentType);
         if (result.books.length > 0) {
           setBooks(result.books);
+          _checkAbsOwnership(result.books);  // fire-and-forget
           setHasMore(result.hasMore);
           setTotalFound(result.totalFound);
           // Store params for loadMore
@@ -184,6 +203,7 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
 
       if (results.length > 0) {
         setBooks(results);
+        _checkAbsOwnership(results);  // fire-and-forget
       } else {
         showToast('No results found', 'error');
       }
@@ -201,7 +221,7 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
     } finally {
       setIsSearching(false);
     }
-  }, [showToast, setIsAuthenticated, authRequired, navigate, searchFieldValues, handleSearchError, contentType]);
+  }, [showToast, setIsAuthenticated, authRequired, navigate, searchFieldValues, handleSearchError, contentType, _checkAbsOwnership]);
 
   const handleResetSearch = useCallback((config: AppConfig | null) => {
     setBooks([]);
@@ -247,6 +267,7 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
       const result = await searchMetadata(query, 40, sort, fieldValues, nextPage, contentType);
       if (result.books.length > 0) {
         setBooks(prev => [...prev, ...result.books]);
+        _checkAbsOwnership(result.books);  // fire-and-forget
         setHasMore(result.hasMore);
         setCurrentPage(nextPage);
       } else {
@@ -257,7 +278,7 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [currentPage, hasMore, isLoadingMore, handleSearchError, contentType]);
+  }, [currentPage, hasMore, isLoadingMore, handleSearchError, contentType, _checkAbsOwnership]);
 
   const handleSortChange = useCallback((value: string, config: AppConfig | null) => {
     updateAdvancedFilters({ sort: value });
