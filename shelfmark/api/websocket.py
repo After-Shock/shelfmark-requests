@@ -23,6 +23,7 @@ class WebSocketManager:
         self._user_rooms: Dict[str, int] = {}  # room_name -> ref count
         self._rooms_lock = threading.Lock()
         self._queue_status_fn: Optional[Callable] = None  # Reference to queue_status()
+        self._sid_rooms: Dict[str, str] = {}  # sid -> room_name (for leave by sid only)
 
     def init_app(self, app, socketio: SocketIO):
         """Initialize the WebSocket manager with Flask-SocketIO instance."""
@@ -110,26 +111,52 @@ class WebSocketManager:
     def join_user_room(self, sid: str, is_admin: bool, db_user_id: Optional[int] = None):
         """Join the appropriate room based on user role."""
         if is_admin or db_user_id is None:
-            join_room("admins", sid=sid)
+            room = "admins"
+            join_room(room, sid=sid)
         else:
             room = f"user_{db_user_id}"
             join_room(room, sid=sid)
             with self._rooms_lock:
                 self._user_rooms[room] = self._user_rooms.get(room, 0) + 1
+        with self._rooms_lock:
+            self._sid_rooms[sid] = room
 
-    def leave_user_room(self, sid: str, is_admin: bool, db_user_id: Optional[int] = None):
-        """Leave the user's room on disconnect."""
-        if is_admin or db_user_id is None:
-            leave_room("admins", sid=sid)
-        else:
-            room = f"user_{db_user_id}"
-            leave_room(room, sid=sid)
+    def leave_user_room(self, sid: str, is_admin: Optional[bool] = None, db_user_id: Optional[int] = None):
+        """Leave the user's room on disconnect.
+
+        Can be called with just ``sid`` (looks up the tracked room) or with
+        ``is_admin``/``db_user_id`` for backwards compatibility.
+        """
+        with self._rooms_lock:
+            if is_admin is None:
+                # Look up the room from the sid tracking dict
+                room = self._sid_rooms.pop(sid, None)
+            else:
+                # Legacy call with explicit args
+                room = "admins" if (is_admin or db_user_id is None) else f"user_{db_user_id}"
+                self._sid_rooms.pop(sid, None)
+
+        if room is None:
+            return
+        leave_room(room, sid=sid)
+        if room != "admins":
             with self._rooms_lock:
                 count = self._user_rooms.get(room, 1) - 1
                 if count <= 0:
                     self._user_rooms.pop(room, None)
                 else:
                     self._user_rooms[room] = count
+
+    def sync_user_room(self, sid: str, is_admin: bool, db_user_id: Optional[int] = None):
+        """Re-sync a client's room membership (leave old room, join new room).
+
+        Called when a client re-requests status so that room membership stays
+        in sync with the current session (e.g. after a login/logout mid-session).
+        """
+        # Leave whatever room this sid was previously in
+        self.leave_user_room(sid)
+        # Re-join based on current session state
+        self.join_user_room(sid, is_admin, db_user_id)
 
     def broadcast_status_update(self, status_data: Dict[str, Any]):
         """Broadcast status update to all connected clients, filtered by user room."""

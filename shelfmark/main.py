@@ -121,6 +121,7 @@ from shelfmark.core.user_db import UserDB
 _user_db_path = _os.path.join(_os.environ.get("CONFIG_DIR", "/config"), "users.db")
 user_db: UserDB | None = None
 activity_service: ActivityService | None = None
+request_db = None  # Custom request layer (our fork addition)
 try:
     user_db = UserDB(_user_db_path)
     user_db.initialize()
@@ -1085,6 +1086,7 @@ def _notify_admin_for_terminal_download_status(*, task_id: str, status: QueueSta
 
 def _record_download_terminal_snapshot(task_id: str, status: QueueStatus, task: Any) -> None:
     _notify_admin_for_terminal_download_status(task_id=task_id, status=status, task=task)
+    _sync_request_db_on_terminal(task_id, status)
 
     final_status = _queue_status_to_final_activity_status(status)
     if final_status is None:
@@ -1171,6 +1173,26 @@ def _record_download_terminal_snapshot(task_id: str, status: QueueStatus, task: 
             task_id,
             exc,
         )
+
+
+def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
+    """Update our custom request_db when a download task reaches a terminal state."""
+    if request_db is None:
+        return
+    try:
+        reqs = request_db.get_requests_by_download_task(task_id)
+        if not reqs:
+            return
+        for req in reqs:
+            req_id = req["id"]
+            if status == QueueStatus.COMPLETE:
+                request_db.update_request_status(req_id, status="fulfilled")
+                logger.info("Request #%s marked fulfilled after download %s completed", req_id, task_id)
+            elif status == QueueStatus.ERROR:
+                request_db.update_request_status(req_id, status="failed")
+                logger.info("Request #%s marked failed after download %s errored", req_id, task_id)
+    except Exception as exc:
+        logger.warning("Failed to sync request_db for task %s: %s", task_id, exc)
 
 
 def _task_owned_by_actor(task: Any, *, actor_user_id: int | None, actor_username: str | None) -> bool:

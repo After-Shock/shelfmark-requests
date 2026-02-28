@@ -76,6 +76,7 @@ class DownloadTask:
     size: Optional[str] = None
     preview: Optional[str] = None
     content_type: Optional[str] = None  # "book (fiction)", "audiobook", "magazine", etc.
+    source_url: Optional[str] = None  # Original release URL used by source-specific handlers
 
     # Series info (for library naming templates)
     series_name: Optional[str] = None
@@ -97,6 +98,7 @@ class DownloadTask:
     # User association (multi-user support)
     user_id: Optional[int] = None  # DB user ID who queued this download
     username: Optional[str] = None  # Username for {User} template variable
+    request_id: Optional[int] = None  # Origin request ID when queued from request fulfilment
 
     # Runtime state
     priority: int = 0
