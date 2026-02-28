@@ -267,7 +267,6 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
       const result = await searchMetadata(query, 40, sort, fieldValues, nextPage, contentType);
       if (result.books.length > 0) {
         setBooks(prev => [...prev, ...result.books]);
-        _checkAbsOwnership(result.books);  // fire-and-forget
         setHasMore(result.hasMore);
         setCurrentPage(nextPage);
       } else {
@@ -278,7 +277,7 @@ export function useSearch(options: UseSearchOptions): UseSearchReturn {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [currentPage, hasMore, isLoadingMore, handleSearchError, contentType, _checkAbsOwnership]);
+  }, [currentPage, hasMore, isLoadingMore, handleSearchError, contentType]);
 
   const handleSortChange = useCallback((value: string, config: AppConfig | null) => {
     updateAdvancedFilters({ sort: value });
