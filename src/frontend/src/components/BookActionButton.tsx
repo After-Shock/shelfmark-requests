@@ -40,8 +40,8 @@ export function BookActionButton({
 }: BookActionButtonProps) {
   const { searchMode } = useSearchMode();
 
-  // Non-admin users with requests enabled see Request button only
-  if (showRequestButton && !isAdmin && onRequest) {
+  // All users with requests enabled see Request button / In Library badge
+  if (showRequestButton && onRequest) {
     const sizeClasses = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
 
     if (book.abs_owned) {
