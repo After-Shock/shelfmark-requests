@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Book, ButtonStateInfo, isMetadataBook } from '../types';
-import { isUserCancelledError } from '../utils/errors';
 
 interface DetailsModalProps {
   book: Book | null;
@@ -14,7 +13,7 @@ interface DetailsModalProps {
   showRequestButton?: boolean;
 }
 
-export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSearchSeries, buttonState, onRequest, isAdmin, showRequestButton }: DetailsModalProps) => {
+export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDownloads: _onFindDownloads, onSearchSeries, buttonState, onRequest, isAdmin: _isAdmin, showRequestButton }: DetailsModalProps) => {
   const [isQueuing, setIsQueuing] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
@@ -62,21 +61,6 @@ export const DetailsModal = ({ book, onClose, onDownload, onFindDownloads, onSea
   if (!book) return null;
 
   const titleId = `book-details-title-${book.id}`;
-
-  const handleDownload = async () => {
-    setIsQueuing(true);
-    try {
-      await onDownload(book);
-      // Don't close here - wait for button state to change
-    } catch (error) {
-      setIsQueuing(false);
-      if (isUserCancelledError(error)) {
-        return;
-      }
-      // Close on error
-      setTimeout(handleClose, 300);
-    }
-  };
 
   // Determine if this is a metadata book (Universal mode) vs a release (Direct Download)
   const isMetadata = isMetadataBook(book);

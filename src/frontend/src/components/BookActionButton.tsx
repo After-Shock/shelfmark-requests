@@ -34,7 +34,6 @@ export function BookActionButton({
   fullWidth,
   className,
   style,
-  isAdmin,
   showRequestButton,
   onRequest,
 }: BookActionButtonProps) {
