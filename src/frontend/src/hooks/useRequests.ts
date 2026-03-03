@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BookRequest, RequestCounts } from '../types';
+import { BookRequest, CreateBookRequestResponse, RequestCounts } from '../types';
 import {
   createBookRequest,
   getRequests,
@@ -20,20 +20,7 @@ interface UseRequestsReturn {
   requests: BookRequest[];
   counts: RequestCounts;
   isLoading: boolean;
-  submitRequest: (data: {
-    title: string;
-    content_type?: string;
-    author?: string;
-    year?: string;
-    cover_url?: string;
-    description?: string;
-    isbn_10?: string;
-    isbn_13?: string;
-    provider?: string;
-    provider_id?: string;
-    series_name?: string;
-    series_position?: number;
-  }) => Promise<BookRequest>;
+  submitRequest: (data: Parameters<typeof createBookRequest>[0]) => Promise<CreateBookRequestResponse>;
   handleApprove: (requestId: number) => Promise<void>;
   handleDeny: (requestId: number, adminNote?: string) => Promise<void>;
   handleRetry: (requestId: number) => Promise<void>;
