@@ -204,17 +204,23 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         author = (data.get("author") or "").strip()
 
         # ABS duplicate check for audiobooks (fail open if ABS unreachable)
+        prefer_alternate_version = bool(data.get("prefer_alternate_version", False))
+        abs_warning = False
         if content_type == "audiobook":
             try:
                 abs_match = abs_client.find_match(title, author or "")
                 if abs_match:
-                    return jsonify({
-                        "error": "Already in your Audiobookshelf library",
-                        "abs_match": {
-                            "title": abs_match["title"],
-                            "author": abs_match["author"],
-                        },
-                    }), 409
+                    if prefer_alternate_version:
+                        # User wants graphic/dramatized — warn but allow
+                        abs_warning = True
+                    else:
+                        return jsonify({
+                            "error": "Already in your Audiobookshelf library",
+                            "abs_match": {
+                                "title": abs_match["title"],
+                                "author": abs_match["author"],
+                            },
+                        }), 409
             except Exception as e:
                 logger.warning("ABS duplicate check failed (skipping): %s", e)
 
@@ -247,6 +253,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                 provider_id=data.get("provider_id"),
                 series_name=data.get("series_name"),
                 series_position=data.get("series_position"),
+                prefer_alternate_version=prefer_alternate_version,
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
@@ -255,7 +262,10 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         _broadcast_request_update(req)
         _send_pushover_new_request(req, user_db)
         _send_discord_new_request(req, user_db)
-        return jsonify(req), 201
+        response_data = dict(req)
+        if abs_warning:
+            response_data["warning"] = "Standard version already in library — request submitted for graphic/dramatized version"
+        return jsonify(response_data), 201
 
     @app.route("/api/requests", methods=["GET"])
     @_require_auth

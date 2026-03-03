@@ -79,3 +79,66 @@ class TestAbsSubmissionGuard:
                     'content_type': 'ebook',
                 })
         mock_find.assert_not_called()
+
+
+class TestAlternateVersionFlag:
+    """Tests for prefer_alternate_version flag behavior with ABS check."""
+
+    def test_alternate_version_flag_bypasses_abs_block(self, app):
+        """When prefer_alternate_version=True and ABS has a match, request is created with a warning."""
+        match = {"id": "abs1", "title": "The Hobbit", "author": "Tolkien"}
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess['user_id'] = 'testuser'
+                sess['db_user_id'] = 1
+                sess['is_admin'] = False
+            with patch('shelfmark.core.request_routes._get_auth_mode', return_value='builtin'), \
+                 patch('shelfmark.core.request_routes.abs_client.find_match', return_value=match):
+                resp = client.post('/api/requests', json={
+                    'title': 'The Hobbit',
+                    'author': 'Tolkien',
+                    'content_type': 'audiobook',
+                    'prefer_alternate_version': True,
+                })
+        assert resp.status_code == 201
+        data = json.loads(resp.data)
+        assert 'warning' in data
+        assert 'already in library' in data['warning'].lower()
+
+    def test_alternate_version_flag_false_still_blocks(self, app):
+        """When prefer_alternate_version=False (default), ABS match still returns 409."""
+        match = {"id": "abs1", "title": "The Hobbit", "author": "Tolkien"}
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess['user_id'] = 'testuser'
+                sess['db_user_id'] = 1
+                sess['is_admin'] = False
+            with patch('shelfmark.core.request_routes._get_auth_mode', return_value='builtin'), \
+                 patch('shelfmark.core.request_routes.abs_client.find_match', return_value=match):
+                resp = client.post('/api/requests', json={
+                    'title': 'The Hobbit',
+                    'author': 'Tolkien',
+                    'content_type': 'audiobook',
+                    'prefer_alternate_version': False,
+                })
+        assert resp.status_code == 409
+
+    def test_prefer_alternate_version_stored_on_request(self, app):
+        """prefer_alternate_version=True is passed through without ABS match."""
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess['user_id'] = 'testuser'
+                sess['db_user_id'] = 1
+                sess['is_admin'] = False
+            with patch('shelfmark.core.request_routes._get_auth_mode', return_value='builtin'), \
+                 patch('shelfmark.core.request_routes.abs_client.find_match', return_value=None):
+                resp = client.post('/api/requests', json={
+                    'title': 'The Hobbit',
+                    'author': 'Tolkien',
+                    'content_type': 'audiobook',
+                    'prefer_alternate_version': True,
+                })
+        assert resp.status_code == 201
+        # No warning when ABS has no match
+        data = json.loads(resp.data)
+        assert 'warning' not in data
