@@ -1,4 +1,4 @@
-import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, RequestsListResponse, RequestCounts } from '../types';
+import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, CreateBookRequestResponse, RequestsListResponse, RequestCounts } from '../types';
 import { SettingsResponse, ActionResult, UpdateResult } from '../types/settings';
 import { MetadataBookData, transformMetadataToBook } from '../utils/bookTransformers';
 import { getApiBase } from '../utils/basePath';
@@ -526,9 +526,10 @@ export const createBookRequest = async (
     provider_id?: string;
     series_name?: string;
     series_position?: number;
+    prefer_alternate_version?: boolean;
   }
-): Promise<BookRequest> => {
-  return fetchJSON<BookRequest>(`${API_BASE}/requests`, {
+): Promise<CreateBookRequestResponse> => {
+  return fetchJSON<CreateBookRequestResponse>(`${API_BASE}/requests`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
