@@ -146,3 +146,30 @@ def test_test_discord_connection_invalid_url():
     from shelfmark.core.discord_notifications import test_discord_connection
     result = test_discord_connection({"DISCORD_WEBHOOK_URL": "https://notdiscord.com/webhook"})
     assert result["success"] is False
+
+
+def test_build_new_request_embed_prefer_alternate_version():
+    from shelfmark.core.discord_notifications import build_new_request_embed
+    embed = build_new_request_embed(
+        title="Dune",
+        author="Frank Herbert",
+        requester="alice",
+        content_type="audiobook",
+        prefer_alternate_version=True,
+    )
+    fields = {f["name"]: f["value"] for f in embed["fields"]}
+    assert "Version" in fields
+    assert "graphic" in fields["Version"].lower() or "dramatized" in fields["Version"].lower()
+
+
+def test_build_new_request_embed_no_version_field_when_false():
+    from shelfmark.core.discord_notifications import build_new_request_embed
+    embed = build_new_request_embed(
+        title="Dune",
+        author="Frank Herbert",
+        requester="alice",
+        content_type="audiobook",
+        prefer_alternate_version=False,
+    )
+    fields = {f["name"]: f["value"] for f in embed["fields"]}
+    assert "Version" not in fields

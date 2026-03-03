@@ -66,6 +66,7 @@ def build_new_request_embed(
     requester: Optional[str],
     content_type: str = "ebook",
     cover_url: Optional[str] = None,
+    prefer_alternate_version: bool = False,
 ) -> dict:
     """Build a Discord embed dict for a new book request."""
     fields = [{"name": "Title", "value": title, "inline": True}]
@@ -74,6 +75,8 @@ def build_new_request_embed(
     fields.append({"name": "Type", "value": content_type, "inline": True})
     if requester:
         fields.append({"name": "Requested by", "value": requester, "inline": True})
+    if prefer_alternate_version:
+        fields.append({"name": "Version", "value": "Prefers graphic/dramatized", "inline": True})
 
     embed: dict = {
         "title": "🔖 New Book Request",
@@ -135,6 +138,7 @@ def send_discord_new_request(
     requester: Optional[str] = None,
     content_type: str = "ebook",
     cover_url: Optional[str] = None,
+    prefer_alternate_version: bool = False,
 ) -> bool:
     """Send a Discord embed when a new book request is created. Best-effort; never raises."""
     try:
@@ -148,6 +152,7 @@ def send_discord_new_request(
         embed = build_new_request_embed(
             title=title, author=author, requester=requester,
             content_type=content_type, cover_url=cover_url,
+            prefer_alternate_version=prefer_alternate_version,
         )
         result = _post_embed(webhook_url, embed)
         if result:

@@ -113,6 +113,7 @@ def _send_discord_new_request(req: dict, user_db: UserDB) -> None:
             requester=requester,
             content_type=req.get("content_type", "ebook"),
             cover_url=req.get("cover_url"),
+            prefer_alternate_version=bool(req.get("prefer_alternate_version", False)),
         )
     except Exception as e:
         logger.warning(f"Discord new-request notification failed for #{req.get('id')}: {e}")
