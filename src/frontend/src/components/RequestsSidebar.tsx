@@ -273,6 +273,13 @@ export const RequestsSidebar = ({
               </p>
             )}
 
+            {/* Alternate version preference */}
+            {req.prefer_alternate_version && (
+              <p className="text-xs mt-1 italic" style={{ color: '#00BCD4' }}>
+                Prefers graphic/dramatized version
+              </p>
+            )}
+
             {/* Status badge + admin actions */}
             <div className="flex items-center justify-between mt-auto pt-1 gap-2">
               {/* Admin approve/deny/complete buttons for pending items */}
