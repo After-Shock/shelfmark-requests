@@ -205,7 +205,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         author = (data.get("author") or "").strip()
 
         # ABS duplicate check for audiobooks (fail open if ABS unreachable)
-        prefer_alternate_version = bool(data.get("prefer_alternate_version", False))
+        prefer_alternate_version = bool(data.get("prefer_alternate_version", False)) and content_type == "audiobook"
         abs_warning = False
         if content_type == "audiobook":
             try:

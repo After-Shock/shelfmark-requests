@@ -142,3 +142,24 @@ class TestAlternateVersionFlag:
         # No warning when ABS has no match
         data = json.loads(resp.data)
         assert 'warning' not in data
+
+    def test_prefer_alternate_version_ignored_for_ebooks(self, app):
+        """prefer_alternate_version=True has no effect for ebook requests."""
+        with app.test_client() as client:
+            with client.session_transaction() as sess:
+                sess['user_id'] = 'testuser'
+                sess['db_user_id'] = 1
+                sess['is_admin'] = False
+            with patch('shelfmark.core.request_routes._get_auth_mode', return_value='builtin'), \
+                 patch('shelfmark.core.request_routes.abs_client.find_match') as mock_find:
+                resp = client.post('/api/requests', json={
+                    'title': 'Some Ebook',
+                    'author': 'Author',
+                    'content_type': 'ebook',
+                    'prefer_alternate_version': True,
+                })
+        assert resp.status_code == 201
+        mock_find.assert_not_called()
+        # Flag is coerced to False for ebooks — no warning
+        data = json.loads(resp.data)
+        assert 'warning' not in data
