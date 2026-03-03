@@ -8,14 +8,16 @@ interface DetailsModalProps {
   onFindDownloads?: (book: Book) => void;  // For Universal mode
   onSearchSeries?: (seriesName: string) => void;  // Callback to search for series
   buttonState: ButtonStateInfo;
-  onRequest?: (book: Book) => void;  // Request workflow
+  onRequest?: (book: Book, preferAlternateVersion?: boolean) => void;  // Request workflow
   isAdmin?: boolean;
   showRequestButton?: boolean;
+  contentType?: 'ebook' | 'audiobook';
 }
 
-export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDownloads: _onFindDownloads, onSearchSeries, buttonState, onRequest, isAdmin: _isAdmin, showRequestButton }: DetailsModalProps) => {
+export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDownloads: _onFindDownloads, onSearchSeries, buttonState, onRequest, isAdmin: _isAdmin, showRequestButton, contentType }: DetailsModalProps) => {
   const [isQueuing, setIsQueuing] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [preferAlternateVersion, setPreferAlternateVersion] = useState(false);
 
   const handleClose = useCallback(() => {
     setIsClosing(true);
@@ -56,6 +58,11 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
       };
     }
   }, [book]);
+
+  // Reset alternate version preference when a different book is opened
+  useEffect(() => {
+    setPreferAlternateVersion(false);
+  }, [book?.id]);
 
   if (!book && !isClosing) return null;
   if (!book) return null;
@@ -299,11 +306,23 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
             className="border-t border-[var(--border-muted)] bg-[var(--bg)] sm:bg-[var(--bg-soft)] px-5 py-4"
             style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
           >
-            <div className="flex items-center justify-center gap-4">
-              {/* Request button - shown for all users when requests are enabled */}
+            <div className="flex flex-col items-center gap-3">
+              {/* Alternate version checkbox — audiobook requests only */}
+              {showRequestButton && onRequest && contentType === 'audiobook' && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer select-none opacity-80 hover:opacity-100">
+                  <input
+                    type="checkbox"
+                    checked={preferAlternateVersion}
+                    onChange={(e) => setPreferAlternateVersion(e.target.checked)}
+                    className="w-4 h-4 rounded accent-[#00BCD4] cursor-pointer"
+                  />
+                  Request graphic or dramatized version if available
+                </label>
+              )}
+              {/* Request button */}
               {showRequestButton && onRequest && (
                 <button
-                  onClick={() => onRequest(book)}
+                  onClick={() => onRequest(book, preferAlternateVersion)}
                   className="rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
                   style={{ backgroundColor: '#00BCD4', boxShadow: '0 2px 8px rgba(0, 188, 212, 0.3)' }}
                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#00ACC1'}
