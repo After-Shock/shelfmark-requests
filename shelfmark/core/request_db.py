@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS requests (
     approved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
     download_task_id TEXT,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    prefer_alternate_version INTEGER DEFAULT 0
 );
 """
 
@@ -137,6 +138,17 @@ class RequestDB:
                 """)
             conn.execute("UPDATE schema_version SET version = 2")
 
+        if current_version < 3:
+            # Migration 3: add prefer_alternate_version column
+            cursor = conn.execute("PRAGMA table_info(requests)")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "prefer_alternate_version" not in columns:
+                logger.info("Migration 3: Adding prefer_alternate_version column")
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN prefer_alternate_version INTEGER DEFAULT 0"
+                )
+            conn.execute("UPDATE schema_version SET version = 3")
+
     def create_request(
         self,
         user_id: int,
@@ -152,6 +164,7 @@ class RequestDB:
         provider_id: Optional[str] = None,
         series_name: Optional[str] = None,
         series_position: Optional[float] = None,
+        prefer_alternate_version: bool = False,
     ) -> Dict[str, Any]:
         """Create a new request. Returns the created request dict."""
         if content_type not in _VALID_CONTENT_TYPES:
@@ -163,10 +176,12 @@ class RequestDB:
                 cursor = conn.execute(
                     """INSERT INTO requests
                        (user_id, title, content_type, author, year, cover_url, description,
-                        isbn_10, isbn_13, provider, provider_id, series_name, series_position)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        isbn_10, isbn_13, provider, provider_id, series_name, series_position,
+                        prefer_alternate_version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (user_id, title, content_type, author, year, safe_cover_url, description,
-                     isbn_10, isbn_13, provider, provider_id, series_name, series_position),
+                     isbn_10, isbn_13, provider, provider_id, series_name, series_position,
+                     1 if prefer_alternate_version else 0),
                 )
                 conn.commit()
                 request_id = cursor.lastrowid
