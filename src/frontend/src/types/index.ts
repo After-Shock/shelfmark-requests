@@ -347,10 +347,16 @@ export interface BookRequest {
   admin_note?: string;
   approved_by?: number;
   download_task_id?: string;
+  prefer_alternate_version?: boolean;
   created_at: string;
   updated_at: string;
   requester_username: string;
   requester_display_name?: string;
+}
+
+/** Response from POST /api/requests — extends BookRequest with optional creation-time warning. */
+export interface CreateBookRequestResponse extends BookRequest {
+  warning?: string;
 }
 
 export interface RequestsListResponse {
