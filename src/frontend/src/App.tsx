@@ -609,9 +609,9 @@ function App() {
   };
 
   // Handle book request (non-admin users)
-  const handleRequest = useCallback(async (book: Book) => {
+  const handleRequest = useCallback(async (book: Book, preferAlternateVersion?: boolean) => {
     try {
-      await submitRequest({
+      const result = await submitRequest({
         title: book.title,
         content_type: contentType,
         author: book.author,
@@ -624,8 +624,13 @@ function App() {
         provider_id: book.provider_id,
         series_name: book.series_name,
         series_position: book.series_position,
+        prefer_alternate_version: preferAlternateVersion || false,
       });
-      showToast(`Requested: ${book.title}`, 'success');
+      if (result?.warning) {
+        showToast('Standard version already in library — request submitted for graphic/dramatized version.', 'info');
+      } else {
+        showToast(`Requested: ${book.title}`, 'success');
+      }
       setSelectedBook(null);
       handleOpenRequestsSidebar();
     } catch (error) {
@@ -636,7 +641,7 @@ function App() {
         showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
       }
     }
-  }, [submitRequest, contentType, showToast]);
+  }, [submitRequest, contentType, showToast, setSelectedBook, handleOpenRequestsSidebar]);
 
   // Cancel download
   const handleCancel = async (id: string) => {
@@ -929,6 +934,7 @@ function App() {
             onRequest={handleRequest}
             isAdmin={isAdmin}
             showRequestButton={requestsEnabled}
+            contentType={contentType}
           />
         )}
 
