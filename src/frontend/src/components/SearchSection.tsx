@@ -24,6 +24,7 @@ interface SearchSectionProps {
   onSearchFieldChange?: (key: string, value: string | number | boolean) => void;
   contentType?: ContentType;
   onContentTypeChange?: (type: ContentType) => void;
+  onManualRequest?: () => void;
 }
 
 export const SearchSection = ({
@@ -45,6 +46,7 @@ export const SearchSection = ({
   onSearchFieldChange,
   contentType = 'ebook',
   onContentTypeChange,
+  onManualRequest,
 }: SearchSectionProps) => {
   const { searchMode } = useSearchMode();
 
@@ -101,6 +103,18 @@ export const SearchSection = ({
           onSearchFieldChange={onSearchFieldChange}
           onSubmit={handleSearch}
         />
+        {onManualRequest && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={onManualRequest}
+              className="text-xs font-medium transition-colors hover:underline"
+              style={{ color: '#00BCD4' }}
+            >
+              Can't find it? Request manually
+            </button>
+          </div>
+        )}
       </div>
     </section>
   );
