@@ -279,6 +279,16 @@ export const RequestsSidebar = ({
                 Prefers graphic/dramatized version
               </p>
             )}
+            {req.is_manual_request && (
+              <p className="text-xs mt-1 font-medium" style={{ color: '#00BCD4' }}>
+                Manual request
+              </p>
+            )}
+            {req.is_manual_request && req.is_released === false && (
+              <p className="text-xs mt-0.5 opacity-60">
+                Not yet released
+              </p>
+            )}
 
             {/* Status badge + admin actions */}
             <div className="flex items-center justify-between mt-auto pt-1 gap-2">
