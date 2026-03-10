@@ -206,6 +206,9 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         # ABS duplicate check for audiobooks (fail open if ABS unreachable)
         prefer_alternate_version = bool(data.get("prefer_alternate_version", False)) and content_type == "audiobook"
+        is_manual_request = bool(data.get("is_manual_request", False))
+        raw_is_released = data.get("is_released")
+        is_released = None if raw_is_released is None else bool(raw_is_released)
         abs_warning = False
         if content_type == "audiobook":
             try:
@@ -255,6 +258,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                 series_name=data.get("series_name"),
                 series_position=data.get("series_position"),
                 prefer_alternate_version=prefer_alternate_version,
+                is_manual_request=is_manual_request,
+                is_released=is_released,
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
