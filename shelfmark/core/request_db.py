@@ -149,6 +149,22 @@ class RequestDB:
                 )
             conn.execute("UPDATE schema_version SET version = 3")
 
+        if current_version < 4:
+            # Migration 4: add is_manual_request and is_released columns
+            cursor = conn.execute("PRAGMA table_info(requests)")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "is_manual_request" not in columns:
+                logger.info("Migration 4: Adding is_manual_request column")
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN is_manual_request INTEGER DEFAULT 0"
+                )
+            if "is_released" not in columns:
+                logger.info("Migration 4: Adding is_released column")
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN is_released INTEGER DEFAULT NULL"
+                )
+            conn.execute("UPDATE schema_version SET version = 4")
+
     def create_request(
         self,
         user_id: int,
@@ -165,6 +181,8 @@ class RequestDB:
         series_name: Optional[str] = None,
         series_position: Optional[float] = None,
         prefer_alternate_version: bool = False,
+        is_manual_request: bool = False,
+        is_released: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Create a new request. Returns the created request dict."""
         if content_type not in _VALID_CONTENT_TYPES:
@@ -177,11 +195,13 @@ class RequestDB:
                     """INSERT INTO requests
                        (user_id, title, content_type, author, year, cover_url, description,
                         isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                        prefer_alternate_version)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        prefer_alternate_version, is_manual_request, is_released)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (user_id, title, content_type, author, year, safe_cover_url, description,
                      isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                     1 if prefer_alternate_version else 0),
+                     1 if prefer_alternate_version else 0,
+                     1 if is_manual_request else 0,
+                     None if is_released is None else (1 if is_released else 0)),
                 )
                 conn.commit()
                 request_id = cursor.lastrowid
