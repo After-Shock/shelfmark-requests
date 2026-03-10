@@ -527,6 +527,8 @@ export const createBookRequest = async (
     series_name?: string;
     series_position?: number;
     prefer_alternate_version?: boolean;
+    is_manual_request?: boolean;
+    is_released?: boolean | null;
   }
 ): Promise<CreateBookRequestResponse> => {
   return fetchJSON<CreateBookRequestResponse>(`${API_BASE}/requests`, {

@@ -348,6 +348,8 @@ export interface BookRequest {
   approved_by?: number;
   download_task_id?: string;
   prefer_alternate_version?: boolean;
+  is_manual_request?: boolean;
+  is_released?: boolean | null;
   created_at: string;
   updated_at: string;
   requester_username: string;
