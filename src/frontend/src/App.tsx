@@ -35,6 +35,7 @@ import { SettingsModal } from './components/settings';
 import { AccountModal } from './components/AccountModal';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
 import { OnboardingModal } from './components/OnboardingModal';
+import { ManualRequestModal } from './components/ManualRequestModal';
 import { DEFAULT_LANGUAGES, DEFAULT_SUPPORTED_FORMATS } from './data/languages';
 import { buildSearchQuery } from './utils/buildSearchQuery';
 import { UserCancelledError, isUserCancelledError } from './utils/errors';
@@ -221,6 +222,7 @@ function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [configBannerOpen, setConfigBannerOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [showManualRequestModal, setShowManualRequestModal] = useState(false);
   const [emailRecipientModalOpen, setEmailRecipientModalOpen] = useState(false);
   const emailRecipientPromiseRef = useRef<{
     resolve: (nickname: string) => void;
@@ -643,6 +645,33 @@ function App() {
     }
   }, [submitRequest, contentType, showToast, setSelectedBook, handleOpenRequestsSidebar]);
 
+  const handleManualRequest = useCallback(async (data: {
+    title: string;
+    author: string;
+    is_released: boolean;
+    prefer_alternate_version: boolean;
+  }) => {
+    try {
+      const result = await submitRequest({
+        title: data.title,
+        author: data.author,
+        content_type: contentType,
+        prefer_alternate_version: data.prefer_alternate_version,
+        is_manual_request: true,
+        is_released: data.is_released,
+      });
+      setShowManualRequestModal(false);
+      if (result?.warning) {
+        showToast('Standard version already in library — request submitted for graphic/dramatized version.', 'info');
+      } else {
+        showToast(`Requested: ${data.title}`, 'success');
+      }
+      handleOpenRequestsSidebar();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
+    }
+  }, [submitRequest, contentType, showToast, handleOpenRequestsSidebar]);
+
   // Cancel download
   const handleCancel = async (id: string) => {
     try {
@@ -900,6 +929,7 @@ function App() {
             onSearchFieldChange={updateSearchFieldValue}
             contentType={contentType}
             onContentTypeChange={setContentType}
+            onManualRequest={requestsEnabled ? () => setShowManualRequestModal(true) : undefined}
           />
         )}
 
@@ -960,6 +990,14 @@ function App() {
           onSelect={handleEmailRecipientSelect}
           onCancel={handleEmailRecipientCancel}
         />
+
+        {showManualRequestModal && (
+          <ManualRequestModal
+            contentType={contentType}
+            onSubmit={handleManualRequest}
+            onClose={() => setShowManualRequestModal(false)}
+          />
+        )}
 
       </main>
 
