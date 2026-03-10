@@ -1744,6 +1744,65 @@ def api_login() -> Union[Response, Tuple[Response, int]]:
         logger.error_trace(f"Login error: {e}")
         return jsonify({"error": "Login failed"}), 500
 
+@app.route('/api/auth/register', methods=['POST'])
+def api_register() -> Union[Response, Tuple[Response, int]]:
+    """Self-service user registration. Creates a user with 'user' role."""
+    if user_db is None:
+        return jsonify({"error": "Registration not available"}), 503
+
+    if not user_db.list_users():
+        return jsonify({"error": "Admin setup required first"}), 403
+
+    auth_mode = get_auth_mode()
+    if auth_mode != "builtin":
+        return jsonify({"error": "Registration not available for this auth mode"}), 403
+
+    from shelfmark.core.settings_registry import load_config_file
+    try:
+        security_config = load_config_file("security")
+        if not security_config.get("ALLOW_SELF_REGISTRATION", True):
+            return jsonify({"error": "Registration is disabled"}), 403
+    except Exception:
+        pass
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    email = (data.get("email") or "").strip() or None
+
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    if not password or len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+    if user_db.get_user(username=username):
+        return jsonify({"error": "Username already taken"}), 409
+
+    from werkzeug.security import generate_password_hash
+    password_hash = generate_password_hash(password)
+
+    try:
+        new_user = user_db.create_user(
+            username=username,
+            password_hash=password_hash,
+            email=email,
+            role="user",
+        )
+    except ValueError:
+        return jsonify({"error": "Username already taken"}), 409
+
+    # Auto-login the new user
+    session['user_id'] = username
+    session['db_user_id'] = new_user["id"]
+    session['is_admin'] = False
+    session.permanent = True
+
+    logger.info(f"New user registered: '{username}'")
+    return jsonify({"success": True}), 201
+
+
 @app.route('/api/auth/logout', methods=['POST'])
 def api_logout() -> Union[Response, Tuple[Response, int]]:
     """
@@ -1790,6 +1849,14 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
         users_config = load_config_file("users")
         auth_mode = get_auth_mode()
 
+        # Check if first-run setup is needed (no users exist)
+        needs_setup = user_db is not None and not user_db.list_users()
+
+        # Check if self-registration is available
+        registration_enabled = False
+        if auth_mode == "builtin" and not needs_setup:
+            registration_enabled = security_config.get("ALLOW_SELF_REGISTRATION", True)
+
         # If no authentication is configured, access is allowed (full admin)
         if auth_mode == "none":
             return jsonify({
@@ -1820,6 +1887,8 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
             "is_admin": is_admin if is_authenticated else False,
             "username": session.get('user_id') if is_authenticated else None,
             "display_name": display_name,
+            "needs_setup": needs_setup,
+            "registration_enabled": registration_enabled,
         }
         
         # Add logout URL for proxy auth if configured
