@@ -354,6 +354,8 @@ export interface BookRequest {
   updated_at: string;
   requester_username: string;
   requester_display_name?: string;
+  handled_by_username?: string;
+  handled_by_display_name?: string;
 }
 
 /** Response from POST /api/requests — extends BookRequest with optional creation-time warning. */

@@ -267,26 +267,33 @@ export const RequestsSidebar = ({
             </div>
 
             {/* Admin note */}
-            {req.admin_note && (
+            {!!req.admin_note && (
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 italic truncate" title={req.admin_note}>
                 {req.admin_note}
               </p>
             )}
 
             {/* Alternate version preference */}
-            {req.prefer_alternate_version && (
+            {!!req.prefer_alternate_version && (
               <p className="text-xs mt-1 italic" style={{ color: '#00BCD4' }}>
                 Prefers graphic/dramatized version
               </p>
             )}
-            {req.is_manual_request && (
+            {!!req.is_manual_request && (
               <p className="text-xs mt-1 font-medium" style={{ color: '#00BCD4' }}>
                 Manual request
               </p>
             )}
-            {req.is_manual_request && req.is_released === false && (
+            {!!req.is_manual_request && req.is_released === false && (
               <p className="text-xs mt-0.5 opacity-60">
                 Not yet released
+              </p>
+            )}
+
+            {/* Handled by (non-pending requests) */}
+            {req.status !== 'pending' && !!(req.handled_by_display_name || req.handled_by_username) && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Handled by: {req.handled_by_display_name || req.handled_by_username}
               </p>
             )}
 

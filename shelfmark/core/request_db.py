@@ -219,9 +219,11 @@ class RequestDB:
 
     def _get_request(self, conn: sqlite3.Connection, request_id: int) -> Optional[Dict[str, Any]]:
         row = conn.execute(
-            """SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name
+            """SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name,
+                      a.username AS handled_by_username, a.display_name AS handled_by_display_name
                FROM requests r
                JOIN users u ON r.user_id = u.id
+               LEFT JOIN users a ON r.approved_by = a.id
                WHERE r.id = ?""",
             (request_id,),
         ).fetchone()
@@ -262,9 +264,11 @@ class RequestDB:
             where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             params.extend([limit, offset])
             rows = conn.execute(
-                f"""SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name
+                f"""SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name,
+                           a.username AS handled_by_username, a.display_name AS handled_by_display_name
                     FROM requests r
                     JOIN users u ON r.user_id = u.id
+                    LEFT JOIN users a ON r.approved_by = a.id
                     {where}
                     ORDER BY r.created_at DESC
                     LIMIT ? OFFSET ?""",
