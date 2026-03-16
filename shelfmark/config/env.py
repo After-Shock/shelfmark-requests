@@ -112,6 +112,38 @@ FLASK_PORT = int(os.getenv("FLASK_PORT", "8084"))
 # Authentication
 # =============================================================================
 
+
+def _get_or_create_secret_key() -> bytes:
+    """Return a stable Flask secret key that persists across restarts.
+
+    Resolution order:
+    1. FLASK_SECRET_KEY environment variable (explicit override).
+    2. Persisted key file at <CONFIG_DIR>/secret_key (auto-created on first run).
+    3. Ephemeral random key (fallback when config dir is not writable — sessions
+       will not survive restarts, same behaviour as before this change).
+    """
+    env_key = os.getenv("FLASK_SECRET_KEY", "").strip()
+    if env_key:
+        return env_key.encode()
+
+    key_file = CONFIG_DIR / "secret_key"
+    try:
+        if key_file.exists():
+            key = key_file.read_bytes().strip()
+            if len(key) >= 32:
+                return key
+        # Generate and persist a new key
+        key = os.urandom(64).hex().encode()  # 128 hex chars, all printable
+        key_file.write_bytes(key)
+        key_file.chmod(0o600)
+        return key
+    except (OSError, PermissionError):
+        # Config dir not writable — fall back to ephemeral key
+        return os.urandom(64)
+
+
+FLASK_SECRET_KEY: bytes = _get_or_create_secret_key()
+
 SESSION_COOKIE_SECURE_ENV = os.getenv("SESSION_COOKIE_SECURE", "false")
 SESSION_COOKIE_NAME = "shelfmark_session"
 CWA_DB_PATH = _resolve_cwa_db_path()

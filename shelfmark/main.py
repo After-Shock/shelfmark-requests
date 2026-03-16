@@ -472,14 +472,12 @@ werkzeug_logger.setLevel(logger.level)
 werkzeug_logger.addFilter(LogNoiseFilter())
 
 # Set up authentication defaults
-# The secret key will reset every time we restart, which will
-# require users to authenticate again
-from shelfmark.config.env import SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE_ENV, string_to_bool
+from shelfmark.config.env import FLASK_SECRET_KEY, SESSION_COOKIE_NAME, SESSION_COOKIE_SECURE_ENV, string_to_bool
 
 SESSION_COOKIE_SECURE = string_to_bool(SESSION_COOKIE_SECURE_ENV)
 
 app.config.update(
-    SECRET_KEY = os.urandom(64),
+    SECRET_KEY = FLASK_SECRET_KEY,
     SESSION_COOKIE_HTTPONLY = True,
     SESSION_COOKIE_SAMESITE = 'Lax',
     SESSION_COOKIE_SECURE = SESSION_COOKIE_SECURE,
@@ -1192,6 +1190,18 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
             if status == QueueStatus.COMPLETE:
                 request_db.update_request_status(req_id, status="fulfilled")
                 logger.info("Request #%s marked fulfilled after download %s completed", req_id, task_id)
+                try:
+                    from shelfmark.core.discord_notifications import send_discord_book_available
+                    fulfilled_req = request_db.get_request(req_id)
+                    if fulfilled_req:
+                        send_discord_book_available(
+                            title=fulfilled_req.get("title", "Unknown"),
+                            author=fulfilled_req.get("author"),
+                            requester=fulfilled_req.get("requester_username"),
+                            cover_url=fulfilled_req.get("cover_url"),
+                        )
+                except Exception as _discord_exc:
+                    logger.warning("Discord book-available notification failed for request #%s: %s", req_id, _discord_exc)
             elif status == QueueStatus.ERROR:
                 request_db.update_request_status(req_id, status="failed")
                 logger.info("Request #%s marked failed after download %s errored", req_id, task_id)
