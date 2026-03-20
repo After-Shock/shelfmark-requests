@@ -11,6 +11,28 @@ import pytest
 from .conftest import APIClient, DownloadTracker
 
 
+def _skip_if_protected(api_client: APIClient, resp, *, allow_admin_only: bool = False) -> None:
+    """Skip smoke tests when the environment correctly protects the endpoint."""
+    if resp.status_code not in {401, 403}:
+        return
+
+    auth_check = api_client.get("/api/auth/check")
+    if auth_check.status_code != 200:
+        return
+
+    auth_data = auth_check.json()
+    if resp.status_code == 401 and auth_data.get("auth_required") and not auth_data.get("authenticated"):
+        pytest.skip("Endpoint requires authentication in this environment")
+    if (
+        allow_admin_only
+        and resp.status_code == 403
+        and auth_data.get("auth_required")
+        and auth_data.get("authenticated")
+        and not auth_data.get("is_admin")
+    ):
+        pytest.skip("Endpoint requires admin access in this environment")
+
+
 @pytest.mark.e2e
 class TestHealthEndpoint:
     """Tests for the health check endpoint."""
@@ -39,6 +61,7 @@ class TestConfigEndpoint:
     def test_config_returns_expected_fields(self, api_client: APIClient):
         """Test that config includes expected configuration fields."""
         resp = api_client.get("/api/config")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -50,6 +73,7 @@ class TestConfigEndpoint:
     def test_config_returns_supported_formats(self, api_client: APIClient):
         """Test that config includes supported formats."""
         resp = api_client.get("/api/config")
+        _skip_if_protected(api_client, resp)
 
         data = resp.json()
         assert "supported_formats" in data
@@ -66,6 +90,7 @@ class TestReleaseSourcesEndpoint:
     def test_release_sources_returns_list(self, api_client: APIClient):
         """Test that release sources endpoint returns available sources."""
         resp = api_client.get("/api/release-sources")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -74,6 +99,7 @@ class TestReleaseSourcesEndpoint:
     def test_release_sources_have_required_fields(self, api_client: APIClient):
         """Test that each release source has required fields."""
         resp = api_client.get("/api/release-sources")
+        _skip_if_protected(api_client, resp)
 
         data = resp.json()
         for source in data:
@@ -88,6 +114,7 @@ class TestMetadataProvidersEndpoint:
     def test_providers_returns_data(self, api_client: APIClient):
         """Test that providers endpoint returns provider data."""
         resp = api_client.get("/api/metadata/providers")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -118,6 +145,7 @@ class TestMetadataSearch:
     def test_search_requires_query(self, api_client: APIClient):
         """Test that search requires a query parameter."""
         resp = api_client.get("/api/metadata/search")
+        _skip_if_protected(api_client, resp)
 
         # Should return error for missing query
         assert resp.status_code in [400, 422]
@@ -175,6 +203,7 @@ class TestStatusEndpoint:
     def test_status_returns_categories(self, api_client: APIClient):
         """Test that status endpoint returns expected categories."""
         resp = api_client.get("/api/status")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -184,6 +213,7 @@ class TestStatusEndpoint:
     def test_active_downloads_endpoint(self, api_client: APIClient):
         """Test the active downloads endpoint."""
         resp = api_client.get("/api/downloads/active")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -197,6 +227,7 @@ class TestQueueEndpoint:
     def test_queue_order_returns_data(self, api_client: APIClient):
         """Test that queue order endpoint returns queue data."""
         resp = api_client.get("/api/queue/order")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 200
         data = resp.json()
@@ -210,6 +241,7 @@ class TestQueueEndpoint:
     def test_clear_queue(self, api_client: APIClient, download_tracker: DownloadTracker):
         """Test clearing the queue."""
         resp = api_client.delete("/api/queue/clear")
+        _skip_if_protected(api_client, resp)
 
         # Should succeed (may be 200 or 204)
         assert resp.status_code in [200, 204]
@@ -222,6 +254,7 @@ class TestSettingsEndpoint:
     def test_settings_returns_tabs(self, api_client: APIClient):
         """Test that settings endpoint returns tab structure."""
         resp = api_client.get("/api/settings")
+        _skip_if_protected(api_client, resp, allow_admin_only=True)
 
         # Settings may be disabled if config dir not writable
         if resp.status_code == 403:
@@ -235,6 +268,7 @@ class TestSettingsEndpoint:
         """Test getting a specific settings tab."""
         # First get available tabs
         resp = api_client.get("/api/settings")
+        _skip_if_protected(api_client, resp, allow_admin_only=True)
         if resp.status_code == 403:
             pytest.skip("Settings disabled")
 
@@ -262,12 +296,14 @@ class TestDownloadFlow:
     def test_download_requires_id(self, api_client: APIClient):
         """Test that download endpoint requires an ID."""
         resp = api_client.get("/api/download")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code in [400, 422]
 
     def test_download_invalid_id_returns_error(self, api_client: APIClient):
         """Test that invalid ID returns appropriate error."""
         resp = api_client.get("/api/download", params={"id": "nonexistent-id-12345"})
+        _skip_if_protected(api_client, resp)
 
         # Should return 404 or error status
         assert resp.status_code in [400, 404, 500]
@@ -275,6 +311,7 @@ class TestDownloadFlow:
     def test_cancel_nonexistent_download(self, api_client: APIClient):
         """Test cancelling a download that doesn't exist."""
         resp = api_client.delete("/api/download/nonexistent-id-xyz/cancel")
+        _skip_if_protected(api_client, resp)
 
         # Should handle gracefully (may return 200, 204, or 404)
         assert resp.status_code in [200, 204, 404]
@@ -287,6 +324,7 @@ class TestReleaseDownloadFlow:
     def test_release_download_requires_source_id(self, api_client: APIClient):
         """Test that release download requires source_id."""
         resp = api_client.post("/api/releases/download", json={})
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 400
         data = resp.json()
@@ -343,6 +381,7 @@ class TestReleasesSearch:
     def test_releases_requires_params(self, api_client: APIClient):
         """Test that releases endpoint requires provider and book_id."""
         resp = api_client.get("/api/releases")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 400
         data = resp.json()
@@ -354,6 +393,7 @@ class TestReleasesSearch:
             "/api/releases",
             params={"provider": "nonexistent_provider", "book_id": "123"},
         )
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code == 400
         data = resp.json()
@@ -367,6 +407,7 @@ class TestCoverProxy:
     def test_cover_without_url_returns_error(self, api_client: APIClient):
         """Test that cover endpoint without URL returns error."""
         resp = api_client.get("/api/covers/test-id")
+        _skip_if_protected(api_client, resp)
 
         # Should return error for missing URL
         assert resp.status_code in [400, 404]
@@ -379,6 +420,7 @@ class TestLegacySearchEndpoint:
     def test_legacy_search_without_query(self, api_client: APIClient):
         """Test legacy search behavior without query parameter."""
         resp = api_client.get("/api/search")
+        _skip_if_protected(api_client, resp)
 
         # May return 400 (error) or 200 with empty results depending on implementation
         assert resp.status_code in [200, 400, 422]
@@ -400,12 +442,14 @@ class TestLegacyInfoEndpoint:
     def test_legacy_info_requires_id(self, api_client: APIClient):
         """Test that legacy info requires ID parameter."""
         resp = api_client.get("/api/info")
+        _skip_if_protected(api_client, resp)
 
         assert resp.status_code in [400, 422]
 
     def test_legacy_info_invalid_id(self, api_client: APIClient):
         """Test legacy info with invalid ID."""
         resp = api_client.get("/api/info", params={"id": "invalid-id-xyz"})
+        _skip_if_protected(api_client, resp)
 
         # Should return 404 or error
         assert resp.status_code in [400, 404, 500]

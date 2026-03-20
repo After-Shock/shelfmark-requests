@@ -52,7 +52,7 @@ from shelfmark.core.requests_service import (
 )
 from shelfmark.core.activity_service import ActivityService, build_download_item_key
 from shelfmark.core.notifications import NotificationContext, NotificationEvent, notify_admin, notify_user
-from shelfmark.core.utils import normalize_base_path
+from shelfmark.core.utils import is_safe_remote_http_url, normalize_base_path
 from shelfmark.api.websocket import ws_manager
 
 logger = setup_logger(__name__)
@@ -541,11 +541,11 @@ def proxy_auth_middleware():
         
         # Resolve admin role for proxy sessions.
         # If an admin group is configured, derive from groups header.
-        # Otherwise preserve existing DB role for known users and default
-        # first-time users to admin (to avoid lockouts).
+        # Otherwise preserve an existing DB role and default new users to
+        # non-admin until the operator explicitly grants access.
         admin_group_header = security_config.get("PROXY_AUTH_ADMIN_GROUP_HEADER", "X-Auth-Groups")
         admin_group_name = str(security_config.get("PROXY_AUTH_ADMIN_GROUP_NAME", "") or "").strip()
-        is_admin = True
+        is_admin = False
 
         if admin_group_name:
             groups_header = get_proxy_header(admin_group_header) or ""
@@ -1226,6 +1226,20 @@ def _task_owned_by_actor(task: Any, *, actor_user_id: int | None, actor_username
     return False
 
 
+def _visible_task_ids_for_actor(*, is_admin: bool, db_user_id: int | None) -> set[str]:
+    if is_admin:
+        return set(str(task_id) for task_id in backend.get_active_downloads())
+    if db_user_id is None:
+        return set()
+
+    visible_status = backend.queue_status(user_id=db_user_id)
+    visible_ids: set[str] = set()
+    for bucket in visible_status.values():
+        if isinstance(bucket, dict):
+            visible_ids.update(str(task_id) for task_id in bucket.keys())
+    return visible_ids
+
+
 def _is_graduated_request_download(task_id: str, *, user_id: int) -> bool:
     if user_db is None:
         return False
@@ -1328,6 +1342,7 @@ def api_local_download() -> Union[Response, Tuple[Response, int]]:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/covers/<cover_id>', methods=['GET'])
+@login_required
 def api_cover(cover_id: str) -> Union[Response, Tuple[Response, int]]:
     """
     Serve a cached book cover image.
@@ -1378,6 +1393,9 @@ def api_cover(cover_id: str) -> Union[Response, Tuple[Response, int]]:
         except Exception as e:
             logger.warning(f"Failed to decode cover URL: {e}")
             return jsonify({"error": "Invalid cover URL encoding"}), 400
+
+        if not is_safe_remote_http_url(original_url):
+            return jsonify({"error": "Invalid cover URL"}), 400
 
         # Fetch and cache the image
         result = cache.fetch_and_cache(cover_id, original_url)
@@ -1460,10 +1478,28 @@ def api_set_priority(book_id: str) -> Union[Response, Tuple[Response, int]]:
         data = request.get_json()
         if not data or 'priority' not in data:
             return jsonify({"error": "Priority not provided"}), 400
-            
+
+        is_admin, db_user_id, can_access_status = _resolve_status_scope()
+        if not is_admin:
+            if not can_access_status or db_user_id is None:
+                return jsonify({"error": "User identity unavailable", "code": "user_identity_unavailable"}), 403
+
+            task = backend.book_queue.get_task(book_id)
+            if task is None:
+                return jsonify({"error": "Failed to update priority or book not found"}), 404
+
+            actor_username = session.get("user_id")
+            normalized_actor_username = actor_username if isinstance(actor_username, str) else None
+            if not _task_owned_by_actor(
+                task,
+                actor_user_id=db_user_id,
+                actor_username=normalized_actor_username,
+            ):
+                return jsonify({"error": "Forbidden", "code": "download_not_owned"}), 403
+
         priority = int(data['priority'])
         success = backend.set_book_priority(book_id, priority)
-        
+
         if success:
             return jsonify({"status": "updated", "book_id": book_id, "priority": priority})
         return jsonify({"error": "Failed to update priority or book not found"}), 404
@@ -1498,9 +1534,27 @@ def api_reorder_queue() -> Union[Response, Tuple[Response, int]]:
         for book_id, priority in book_priorities.items():
             if not isinstance(priority, int):
                 return jsonify({"error": f"Invalid priority for book {book_id}"}), 400
-                
+
+        is_admin, db_user_id, can_access_status = _resolve_status_scope()
+        if not is_admin:
+            if not can_access_status or db_user_id is None:
+                return jsonify({"error": "User identity unavailable", "code": "user_identity_unavailable"}), 403
+
+            actor_username = session.get("user_id")
+            normalized_actor_username = actor_username if isinstance(actor_username, str) else None
+            for book_id in book_priorities:
+                task = backend.book_queue.get_task(book_id)
+                if task is None:
+                    return jsonify({"error": f"Book not found: {book_id}"}), 404
+                if not _task_owned_by_actor(
+                    task,
+                    actor_user_id=db_user_id,
+                    actor_username=normalized_actor_username,
+                ):
+                    return jsonify({"error": "Forbidden", "code": "download_not_owned"}), 403
+
         success = backend.reorder_queue(book_priorities)
-        
+
         if success:
             return jsonify({"status": "reordered", "updated_count": len(book_priorities)})
         return jsonify({"error": "Failed to reorder queue"}), 500
@@ -1518,7 +1572,17 @@ def api_queue_order() -> Union[Response, Tuple[Response, int]]:
         flask.Response: JSON array of queued books with their order and priorities.
     """
     try:
+        is_admin, db_user_id, can_access_status = _resolve_status_scope()
+        if not can_access_status:
+            return jsonify({"error": "User identity unavailable", "code": "user_identity_unavailable"}), 403
+
         queue_order = backend.get_queue_order()
+        if not is_admin:
+            visible_ids = _visible_task_ids_for_actor(is_admin=is_admin, db_user_id=db_user_id)
+            queue_order = [
+                item for item in queue_order
+                if str(item.get("id") or item.get("book_id") or "") in visible_ids
+            ]
         return jsonify({"queue": queue_order})
     except Exception as e:
         logger.error_trace(f"Queue order error: {e}")
@@ -1534,7 +1598,17 @@ def api_active_downloads() -> Union[Response, Tuple[Response, int]]:
         flask.Response: JSON array of active download book IDs.
     """
     try:
+        is_admin, db_user_id, can_access_status = _resolve_status_scope()
+        if not can_access_status:
+            return jsonify({"error": "User identity unavailable", "code": "user_identity_unavailable"}), 403
+
         active_downloads = backend.get_active_downloads()
+        if not is_admin:
+            visible_ids = _visible_task_ids_for_actor(is_admin=is_admin, db_user_id=db_user_id)
+            active_downloads = [
+                task_id for task_id in active_downloads
+                if str(task_id) in visible_ids
+            ]
         return jsonify({"active_downloads": active_downloads})
     except Exception as e:
         logger.error_trace(f"Active downloads error: {e}")

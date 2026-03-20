@@ -1,6 +1,7 @@
 """Shared utility functions for the Shelfmark."""
 
 import base64
+import ipaddress
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -72,6 +73,43 @@ def normalize_base_path(value: Optional[str]) -> str:
         path = "/" + path
 
     return path.rstrip("/")
+
+
+def is_safe_remote_http_url(value: Optional[str]) -> bool:
+    """Return True when a URL is an acceptable remote HTTP(S) target.
+
+    This blocks obvious SSRF targets such as localhost, private IPs,
+    simple internal hostnames, and common internal-only TLDs.
+    """
+    if not isinstance(value, str):
+        return False
+
+    parsed = urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if not parsed.hostname:
+        return False
+    if parsed.username or parsed.password:
+        return False
+
+    host = parsed.hostname.strip().lower()
+    if not host:
+        return False
+    if host == "localhost":
+        return False
+    if "." not in host:
+        return False
+
+    internal_tlds = (".local", ".internal", ".lan", ".home", ".docker", ".localdomain")
+    if any(host.endswith(tld) for tld in internal_tlds):
+        return False
+
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+
+    return not (addr.is_private or addr.is_loopback or addr.is_link_local)
 
 
 def is_audiobook(content_type: Optional[str]) -> bool:

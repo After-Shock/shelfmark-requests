@@ -19,7 +19,9 @@ def _as_response(result: Any):
 
 @pytest.fixture(scope="module")
 def main_module():
-    with patch("shelfmark.download.orchestrator.start"):
+    import shelfmark.download.orchestrator as orchestrator
+
+    with patch.object(orchestrator, "start"):
         import shelfmark.main as main
 
         importlib.reload(main)
@@ -67,7 +69,7 @@ class TestProxyAuthMiddleware:
                     result = main_module.proxy_auth_middleware()
                     assert result is None
                     assert main_module.session.get("user_id") == "proxyuser"
-                    assert main_module.session.get("is_admin") is True
+                    assert main_module.session.get("is_admin") is False
                     assert main_module.session.permanent is False
 
     def test_returns_401_when_header_missing_on_protected_path(self, main_module):
@@ -148,9 +150,9 @@ class TestLoginRequiredDecorator:
                 with main_module.app.test_request_context("/api/settings/general"):
                     main_module.session["user_id"] = "admin"
                     decorated = main_module.login_required(view)
-                    resp = decorated()
+                    resp = _as_response(decorated())
 
-        assert resp[0]["success"] is True
+        assert resp.status_code == 403
 
     def test_proxy_admin_restriction_blocks_non_admin(self, main_module, view):
         with patch.object(main_module, "get_auth_mode", return_value="proxy"):

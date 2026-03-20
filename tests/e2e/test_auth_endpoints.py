@@ -26,7 +26,9 @@ def _as_response(result: Any):
 @pytest.fixture(scope="module")
 def main_module():
     """Import `shelfmark.main` with background thread startup disabled."""
-    with patch("shelfmark.download.orchestrator.start"):
+    import shelfmark.download.orchestrator as orchestrator
+
+    with patch.object(orchestrator, "start"):
         import shelfmark.main as main
 
         # Reload to ensure patched orchestrator.start is used even if imported elsewhere.
@@ -40,15 +42,14 @@ class TestGetAuthMode:
             assert main_module.get_auth_mode() == "none"
 
     def test_get_auth_mode_builtin(self, main_module):
-        with patch(
-            "shelfmark.core.settings_registry.load_config_file",
-            return_value={
-                "AUTH_METHOD": "builtin",
-                "BUILTIN_USERNAME": "admin",
-                "BUILTIN_PASSWORD_HASH": "hashed_password",
-            },
-        ):
-            assert main_module.get_auth_mode() == "builtin"
+        with patch("shelfmark.core.settings_registry.load_config_file", return_value={"AUTH_METHOD": "builtin"}):
+            with patch.object(main_module, "has_local_password_admin", return_value=True):
+                assert main_module.get_auth_mode() == "builtin"
+
+    def test_get_auth_mode_builtin_without_local_admin_falls_back_to_none(self, main_module):
+        with patch("shelfmark.core.settings_registry.load_config_file", return_value={"AUTH_METHOD": "builtin"}):
+            with patch.object(main_module, "has_local_password_admin", return_value=False):
+                assert main_module.get_auth_mode() == "none"
 
     def test_get_auth_mode_proxy(self, main_module):
         with patch(
@@ -102,6 +103,7 @@ class TestAuthCheckEndpoint:
             with patch("shelfmark.core.settings_registry.load_config_file", return_value={}):
                 with main_module.app.test_request_context("/api/auth/check"):
                     main_module.session["user_id"] = "admin"
+                    main_module.session["is_admin"] = True
                     resp = _as_response(main_module.api_auth_check())
                     data = resp.get_json()
 
@@ -168,12 +170,10 @@ class TestLoginEndpoint:
     def test_login_builtin_success(self, main_module):
         with patch.object(main_module, "get_auth_mode", return_value="builtin"):
             with patch.object(main_module, "is_account_locked", return_value=False):
-                with patch(
-                    "shelfmark.core.settings_registry.load_config_file",
-                    return_value={
-                        "BUILTIN_USERNAME": "admin",
-                        "BUILTIN_PASSWORD_HASH": "hash",
-                    },
+                with patch.object(
+                    main_module.user_db,
+                    "get_user",
+                    return_value={"id": 1, "username": "admin", "password_hash": "hash", "role": "admin"},
                 ):
                     with patch.object(main_module, "check_password_hash", return_value=True):
                         with main_module.app.test_request_context(
@@ -184,6 +184,8 @@ class TestLoginEndpoint:
                             resp = _as_response(main_module.api_login())
                             data = resp.get_json()
                             assert main_module.session.get("user_id") == "admin"
+                            assert main_module.session.get("db_user_id") == 1
+                            assert main_module.session.get("is_admin") is True
 
         assert resp.status_code == 200
         assert data.get("success") is True
