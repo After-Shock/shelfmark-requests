@@ -494,13 +494,10 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         if not updated.get("provider") or not updated.get("provider_id"):
             logger.info(f"Request #{request_id} missing metadata, searching...")
             try:
-                from shelfmark.metadata_providers import get_configured_provider
-                from shelfmark.config.settings import get_config
+                from shelfmark.metadata_providers import get_configured_provider, _get_configured_provider_name
 
-                # Get current metadata provider
-                settings_config = get_config("settings")
-                provider_name = settings_config.get("METADATA_PROVIDER", "openlibrary")
-                provider = get_configured_provider(provider_name)
+                provider_name = _get_configured_provider_name() or "openlibrary"
+                provider = get_configured_provider(content_type=updated.get("content_type", "ebook"))
 
                 if provider:
                     # Search using title and author from the request
