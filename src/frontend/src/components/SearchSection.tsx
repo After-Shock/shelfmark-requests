@@ -111,7 +111,7 @@ export const SearchSection = ({
               className="text-xs font-medium transition-colors hover:underline"
               style={{ color: '#00BCD4' }}
             >
-              Can't find it? Request manually
+              Can't find it? Request manually — Click Here
             </button>
           </div>
         )}
