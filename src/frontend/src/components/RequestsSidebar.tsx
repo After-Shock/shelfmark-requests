@@ -284,9 +284,14 @@ export const RequestsSidebar = ({
                 Manual request
               </p>
             )}
-            {!!req.is_manual_request && req.is_released === false && (
-              <p className="text-xs mt-0.5 opacity-60">
+            {req.is_released === false && (
+              <p className="text-xs mt-0.5 font-medium text-amber-600 dark:text-amber-400">
                 Not yet released
+              </p>
+            )}
+            {req.is_released === true && (
+              <p className="text-xs mt-0.5 text-green-600 dark:text-green-400">
+                Released
               </p>
             )}
 
