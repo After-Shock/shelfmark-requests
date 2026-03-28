@@ -10,6 +10,7 @@ interface UserDashboardProps {
   onSearch: (query: string) => void;
   contentType: 'ebook' | 'audiobook';
   onContentTypeChange: (type: 'ebook' | 'audiobook') => void;
+  onManualRequest?: () => void;
 }
 
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string }> = {
@@ -46,6 +47,7 @@ export const UserDashboard = ({
   onSearch,
   contentType,
   onContentTypeChange,
+  onManualRequest,
 }: UserDashboardProps) => {
   const pendingCount = counts.pending || 0;
   const inProgressCount = (counts.approved || 0) + (counts.downloading || 0);
@@ -109,6 +111,17 @@ export const UserDashboard = ({
             </button>
           ))}
         </div>
+
+        {onManualRequest && (
+          <button
+            type="button"
+            onClick={onManualRequest}
+            className="text-xs font-medium transition-colors hover:underline mt-2"
+            style={{ color: '#00BCD4' }}
+          >
+            Can't find it? Request manually — Click Here
+          </button>
+        )}
       </div>
 
       {/* Summary cards */}

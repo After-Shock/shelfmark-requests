@@ -908,6 +908,7 @@ function App() {
             }}
             contentType={contentType}
             onContentTypeChange={setContentType}
+            onManualRequest={requestsEnabled ? () => setShowManualRequestModal(true) : undefined}
           />
         ) : (
           <SearchSection
