@@ -289,7 +289,7 @@ export const RequestsSidebar = ({
             )}
             {req.is_released != null && !req.is_released && (
               <p className="text-xs mt-0.5 font-medium text-amber-600 dark:text-amber-400">
-                Not yet released
+                Not yet released{req.expected_release_date ? ` — expected ${req.expected_release_date}` : ''}
               </p>
             )}
             {req.is_released != null && !!req.is_released && (

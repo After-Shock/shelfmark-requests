@@ -514,10 +514,12 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                     if results:
                         # Use the first result and update the request with metadata
                         best_match = results[0]
+                        expected_release_date = best_match.publish_date if not updated.get("is_released") else None
                         request_db.update_request_metadata(
                             request_id,
                             provider=provider_name,
-                            provider_id=best_match.provider_id
+                            provider_id=best_match.provider_id,
+                            expected_release_date=expected_release_date,
                         )
                         # Re-fetch the updated request
                         updated = request_db.get_request(request_id)

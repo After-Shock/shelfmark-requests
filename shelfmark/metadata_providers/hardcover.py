@@ -721,6 +721,8 @@ class HardcoverProvider(MetadataProvider):
             # Extract subtitle if available in search results
             subtitle = item.get("subtitle")
 
+            publish_date = str(item["release_date"]) if item.get("release_date") else None
+
             return BookMetadata(
                 provider="hardcover",
                 provider_id=str(book_id),
@@ -733,6 +735,7 @@ class HardcoverProvider(MetadataProvider):
                 cover_url=cover_url,
                 description=full_description,
                 publish_year=publish_year,
+                publish_date=publish_date,
                 source_url=source_url,
                 display_fields=display_fields,
             )
@@ -851,6 +854,8 @@ class HardcoverProvider(MetadataProvider):
                 if code3 and code3 not in titles_by_language:
                     titles_by_language[code3] = edition_title
 
+        publish_date = str(book["release_date"]) if book.get("release_date") else None
+
         return BookMetadata(
              provider="hardcover",
              provider_id=str(book["id"]),
@@ -865,6 +870,7 @@ class HardcoverProvider(MetadataProvider):
              cover_url=cover_url,
              description=full_description,
              publish_year=publish_year,
+             publish_date=publish_date,
              genres=genres,
              source_url=source_url,
              series_name=series_name,

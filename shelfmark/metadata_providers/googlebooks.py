@@ -348,6 +348,7 @@ class GoogleBooksProvider(MetadataProvider):
                 description=description,
                 publisher=publisher,
                 publish_year=publish_year,
+                publish_date=published_date or None,
                 language=language,
                 genres=genres,
                 source_url=source_url,

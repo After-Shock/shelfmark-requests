@@ -350,6 +350,7 @@ export interface BookRequest {
   prefer_alternate_version?: boolean;
   is_manual_request?: boolean;
   is_released?: boolean | null;
+  expected_release_date?: string | null;
   created_at: string;
   updated_at: string;
   requester_username: string;

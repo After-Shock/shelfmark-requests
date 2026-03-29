@@ -165,6 +165,16 @@ class RequestDB:
                 )
             conn.execute("UPDATE schema_version SET version = 4")
 
+        if current_version < 5:
+            cursor = conn.execute("PRAGMA table_info(requests)")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "expected_release_date" not in columns:
+                logger.info("Migration 5: Adding expected_release_date column")
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN expected_release_date TEXT DEFAULT NULL"
+                )
+            conn.execute("UPDATE schema_version SET version = 5")
+
     def create_request(
         self,
         user_id: int,
@@ -392,8 +402,9 @@ class RequestDB:
         request_id: int,
         provider: Optional[str] = None,
         provider_id: Optional[str] = None,
+        expected_release_date: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update request metadata (provider and provider_id). Returns updated request or None."""
+        """Update request metadata (provider, provider_id, expected_release_date). Returns updated request or None."""
         with self._lock:
             conn = self._connect()
             try:
@@ -405,6 +416,9 @@ class RequestDB:
                 if provider_id is not None:
                     sets.append("provider_id = ?")
                     params.append(provider_id)
+                if expected_release_date is not None:
+                    sets.append("expected_release_date = ?")
+                    params.append(expected_release_date)
                 params.append(request_id)
                 conn.execute(
                     f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params
