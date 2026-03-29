@@ -500,12 +500,17 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                 provider = get_configured_provider(content_type=updated.get("content_type", "ebook"))
 
                 if provider:
-                    # Search using title and author from the request
-                    search_query = updated.get("title", "")
-                    if updated.get("author"):
-                        search_query += f" {updated['author']}"
+                    title = updated.get("title", "")
+                    author = updated.get("author", "")
 
-                    results = provider.search(MetadataSearchOptions(query=search_query))
+                    # Try title+author first, then title-only as fallback
+                    search_attempts = [f"{title} {author}".strip(), title] if author else [title]
+                    results = []
+                    for attempt in search_attempts:
+                        results = provider.search(MetadataSearchOptions(query=attempt))
+                        if results:
+                            break
+
                     if results:
                         # Use the first result and update the request with metadata
                         best_match = results[0]
@@ -518,7 +523,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                         updated = request_db.get_request(request_id)
                         logger.info(f"Request #{request_id} metadata updated: {provider_name}:{best_match.provider_id}")
                     else:
-                        logger.warning(f"Request #{request_id} metadata search returned no results")
+                        logger.warning(f"Request #{request_id} metadata search returned no results for '{title}'")
             except Exception as e:
                 logger.error(f"Failed to fetch metadata for request #{request_id}: {e}")
 
