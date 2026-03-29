@@ -589,7 +589,7 @@ def _auto_download_request(
         provider_id = req.get("provider_id")
 
         if not provider_name or not provider_id or not is_provider_registered(provider_name):
-            _safe_update_status("failed", admin_note="No metadata provider info")
+            _safe_update_status("failed", admin_note="Metadata lookup failed — could not identify book. Try searching manually and re-requesting.")
             return
 
         # Get book metadata from provider
@@ -597,17 +597,18 @@ def _auto_download_request(
         prov = get_provider(provider_name, **kwargs)
         book = prov.get_book(provider_id)
         if not book:
-            _safe_update_status("failed", admin_note="Book not found in provider")
+            _safe_update_status("failed", admin_note=f"Book not found in {provider_name} — metadata provider returned no data.")
             return
 
         # Search for releases
         content_type = req.get("content_type", "ebook")
         sources_to_search = [src["name"] for src in list_available_sources() if src["enabled"]]
         if not sources_to_search:
-            _safe_update_status("failed", admin_note="No release sources available")
+            _safe_update_status("failed", admin_note="No download sources are enabled. Check settings.")
             return
 
         all_releases = []
+        source_errors = []
         for source_name in sources_to_search:
             try:
                 source = get_source(source_name)
@@ -616,9 +617,11 @@ def _auto_download_request(
                 all_releases.extend(releases)
             except Exception as e:
                 logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
+                source_errors.append(source_name)
 
         if not all_releases:
-            _safe_update_status("failed", admin_note="No releases found")
+            searched = ", ".join(s for s in sources_to_search if s not in source_errors) or "all sources"
+            _safe_update_status("failed", admin_note=f"Not found on {searched}. Book may not be available for download yet.")
             return
 
         # Pick the first (best) release

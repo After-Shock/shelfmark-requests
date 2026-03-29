@@ -268,7 +268,10 @@ export const RequestsSidebar = ({
 
             {/* Admin note */}
             {!!req.admin_note && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 italic truncate" title={req.admin_note}>
+              <p
+                className={`text-xs mt-1 ${req.status === 'failed' ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400 italic'}`}
+                title={req.admin_note}
+              >
                 {req.admin_note}
               </p>
             )}
