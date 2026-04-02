@@ -292,7 +292,7 @@ class BookQueue:
             user_id: If provided, only clear tasks belonging to this user,
                      plus legacy tasks with no user_id. If None, clear all.
         """
-        terminal_statuses = {QueueStatus.COMPLETE, QueueStatus.DONE, QueueStatus.AVAILABLE, QueueStatus.ERROR, QueueStatus.CANCELLED}
+        terminal_statuses = {QueueStatus.COMPLETE, QueueStatus.DONE, QueueStatus.AVAILABLE, QueueStatus.CANCELLED}
         with self._lock:
             to_remove: list[str] = []
             for task_id, status in self._status.items():
