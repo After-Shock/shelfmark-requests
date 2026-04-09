@@ -464,6 +464,8 @@ class RequestDB:
         provider: Optional[str] = None,
         provider_id: Optional[str] = None,
         expected_release_date: Optional[str] = None,
+        is_released: Optional[bool] = None,
+        clear_expected_release_date: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Update request metadata (provider, provider_id, expected_release_date). Returns updated request or None."""
         with self._lock:
@@ -477,9 +479,12 @@ class RequestDB:
                 if provider_id is not None:
                     sets.append("provider_id = ?")
                     params.append(provider_id)
-                if expected_release_date is not None:
+                if expected_release_date is not None or clear_expected_release_date:
                     sets.append("expected_release_date = ?")
                     params.append(expected_release_date)
+                if is_released is not None:
+                    sets.append("is_released = ?")
+                    params.append(1 if is_released else 0)
                 params.append(request_id)
                 conn.execute(
                     f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params

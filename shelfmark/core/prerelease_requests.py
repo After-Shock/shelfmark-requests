@@ -71,6 +71,11 @@ def promote_due_prerelease_requests(
         if release_date > current_date:
             continue
 
+        request_db.update_request_metadata(
+            row["id"],
+            is_released=True,
+            clear_expected_release_date=True,
+        )
         updated = request_db.update_request_status(row["id"], "pending")
         if not updated:
             continue

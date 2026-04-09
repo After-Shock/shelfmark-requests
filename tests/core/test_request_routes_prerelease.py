@@ -158,8 +158,8 @@ class TestAdminPrereleaseTransitions:
             "content_type": "ebook",
             "author": "Future Author",
             "user_id": 1,
-            "expected_release_date": "2099-01-01",
-            "is_released": False,
+            "expected_release_date": None,
+            "is_released": True,
         }
 
         with app.test_client() as client:
@@ -171,6 +171,13 @@ class TestAdminPrereleaseTransitions:
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert data["status"] == "pending"
+        assert data["expected_release_date"] is None
+        assert data["is_released"] is True
+        request_db.update_request_metadata.assert_called_once_with(
+            1,
+            is_released=True,
+            clear_expected_release_date=True,
+        )
         request_db.update_request_status.assert_called_once_with(1, "pending", approved_by=1)
         mock_broadcast.assert_called_once()
         mock_notify.assert_called_once()
@@ -209,6 +216,57 @@ class TestAdminPrereleaseTransitions:
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert data["status"] == "prerelease_requested"
-        request_db.update_request_metadata.assert_called_once_with(1, expected_release_date="2099-01-01")
+        request_db.update_request_metadata.assert_called_once_with(
+            1,
+            expected_release_date="2099-01-01",
+            is_released=False,
+        )
         request_db.update_request_status.assert_called_once_with(1, "prerelease_requested", approved_by=1)
         mock_broadcast.assert_called_once()
+
+    def test_move_pending_request_to_prerelease_rejects_non_future_date(self, app):
+        request_db = app.request_db
+        request_db.get_request.return_value = {
+            "id": 1,
+            "title": "Future Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Future Author",
+            "user_id": 1,
+            "expected_release_date": None,
+            "is_released": False,
+        }
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            resp = client.post("/api/requests/1/move-to-prerelease", json={
+                "expected_release_date": "2000-01-01",
+            })
+
+        assert resp.status_code == 400
+        assert "future date" in json.loads(resp.data)["error"].lower()
+        request_db.update_request_metadata.assert_not_called()
+        request_db.update_request_status.assert_not_called()
+
+    def test_status_route_rejects_direct_prerelease_transition(self, app):
+        request_db = app.request_db
+        request_db.get_request.return_value = {
+            "id": 1,
+            "title": "Future Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Future Author",
+            "user_id": 1,
+            "expected_release_date": None,
+            "is_released": False,
+        }
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            resp = client.put("/api/requests/1/status", json={
+                "status": "prerelease_requested",
+            })
+
+        assert resp.status_code == 400
+        assert "move-to-prerelease" in json.loads(resp.data)["error"]
+        request_db.update_request_status.assert_not_called()

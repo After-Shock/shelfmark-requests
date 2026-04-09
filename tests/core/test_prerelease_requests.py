@@ -20,7 +20,8 @@ def test_promote_due_prerelease_requests_moves_due_rows_to_pending():
         "status": "pending",
         "title": "Due Book",
         "user_id": 3,
-        "expected_release_date": "2000-01-01",
+        "expected_release_date": None,
+        "is_released": True,
     }
     user_db.get_user.return_value = {"id": 3, "email": "reader@example.com"}
 
@@ -28,6 +29,11 @@ def test_promote_due_prerelease_requests_moves_due_rows_to_pending():
         promoted = promote_due_prerelease_requests(request_db, user_db)
 
     assert [row["id"] for row in promoted] == [10]
+    request_db.update_request_metadata.assert_called_once_with(
+        10,
+        is_released=True,
+        clear_expected_release_date=True,
+    )
     request_db.update_request_status.assert_called_once_with(10, "pending")
     mock_notify.assert_called_once()
 

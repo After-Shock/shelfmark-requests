@@ -47,6 +47,16 @@ def _should_start_as_prerelease(is_released: bool | None, expected_release_date:
         return False
 
 
+def _is_future_release_date(expected_release_date: str | None) -> bool:
+    """Return True when the supplied ISO date is strictly in the future."""
+    if not expected_release_date:
+        return False
+    try:
+        return date.fromisoformat(expected_release_date) > date.today()
+    except ValueError:
+        return False
+
+
 def _get_auth_mode():
     """Get current auth mode from config."""
     try:
@@ -492,6 +502,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         valid_statuses = ["pending", "prerelease_requested", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled"]
         if new_status not in valid_statuses:
             return jsonify({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}), 400
+        if new_status == "prerelease_requested":
+            return jsonify({"error": "Use /move-to-prerelease with a future expected_release_date"}), 400
 
         admin_note = (data.get("admin_note") or "").strip() or None
         admin_user_id = _get_db_user_id()
@@ -524,6 +536,11 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             return jsonify({"error": f"Cannot activate a request with status '{req['status']}'"}), 400
 
         admin_user_id = _get_db_user_id()
+        request_db.update_request_metadata(
+            request_id,
+            is_released=True,
+            clear_expected_release_date=True,
+        )
         updated = request_db.update_request_status(
             request_id, "pending", approved_by=admin_user_id
         )
@@ -546,10 +563,14 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         expected_release_date = _normalize_release_date(data.get("expected_release_date"))
         if not expected_release_date:
             return jsonify({"error": "expected_release_date must be an ISO date"}), 400
+        if not _is_future_release_date(expected_release_date):
+            return jsonify({"error": "expected_release_date must be a future date"}), 400
 
         admin_user_id = _get_db_user_id()
         request_db.update_request_metadata(
-            request_id, expected_release_date=expected_release_date
+            request_id,
+            expected_release_date=expected_release_date,
+            is_released=False,
         )
         updated = request_db.update_request_status(
             request_id, "prerelease_requested", approved_by=admin_user_id

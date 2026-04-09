@@ -671,6 +671,7 @@ function App() {
     title: string;
     author: string;
     is_released: boolean;
+    expected_release_date?: string;
     prefer_alternate_version: boolean;
   }) => {
     try {
@@ -681,6 +682,7 @@ function App() {
         prefer_alternate_version: data.prefer_alternate_version,
         is_manual_request: true,
         is_released: data.is_released,
+        expected_release_date: data.expected_release_date,
       });
       setShowManualRequestModal(false);
       if (result?.warning) {

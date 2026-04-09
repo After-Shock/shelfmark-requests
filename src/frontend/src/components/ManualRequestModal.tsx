@@ -8,6 +8,7 @@ interface ManualRequestModalProps {
     title: string;
     author: string;
     is_released: boolean;
+    expected_release_date?: string;
     prefer_alternate_version: boolean;
   }) => void;
   onClose: () => void;
@@ -17,9 +18,17 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [isReleased, setIsReleased] = useState<boolean | null>(null);
+  const [expectedReleaseDate, setExpectedReleaseDate] = useState('');
   const [preferAlternate, setPreferAlternate] = useState(false);
+  const minReleaseDate = new Date().toISOString().slice(0, 10);
 
-  const canSubmit = title.trim().length > 0 && author.trim().length > 0 && isReleased !== null;
+  const requiresReleaseDate = isReleased === false;
+  const canSubmit = (
+    title.trim().length > 0 &&
+    author.trim().length > 0 &&
+    isReleased !== null &&
+    (!requiresReleaseDate || expectedReleaseDate.trim().length > 0)
+  );
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -27,6 +36,7 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
       title: title.trim(),
       author: author.trim(),
       is_released: isReleased!,
+      expected_release_date: requiresReleaseDate ? expectedReleaseDate : undefined,
       prefer_alternate_version: preferAlternate,
     });
   };
@@ -109,7 +119,10 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsReleased(true)}
+                  onClick={() => {
+                    setIsReleased(true);
+                    setExpectedReleaseDate('');
+                  }}
                   className="flex-1 py-2 rounded-lg text-sm font-medium border transition-colors"
                   style={isReleased === true
                     ? { backgroundColor: theme.primary.turquoise, borderColor: theme.primary.turquoise, color: '#fff' }
@@ -131,6 +144,26 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
                 </button>
               </div>
             </div>
+
+            {requiresReleaseDate && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Expected Release Date <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={expectedReleaseDate}
+                  onChange={e => setExpectedReleaseDate(e.target.value)}
+                  min={minReleaseDate}
+                  className="w-full px-3 py-2 rounded-lg border text-sm outline-none focus:ring-2"
+                  style={{
+                    background: 'var(--bg-soft)',
+                    borderColor: 'var(--border-muted)',
+                    color: 'var(--text)',
+                  }}
+                />
+              </div>
+            )}
 
             {/* Audiobook-only: alternate version checkbox */}
             {contentType === 'audiobook' && (
