@@ -34,6 +34,19 @@ def test_validate_destination_write_probe_permission_error(tmp_path):
     assert "Destination not writable" in status_cb.call_args[0][1]
 
 
+def test_validate_destination_stale_file_handle_reports_storage_error(tmp_path):
+    destination = tmp_path / "dest"
+    status_cb = MagicMock()
+
+    with patch("pathlib.Path.exists", side_effect=OSError(errno.ESTALE, "Stale file handle", str(destination))):
+        assert validate_destination(destination, status_cb) is False
+
+    status_cb.assert_called_once()
+    assert status_cb.call_args[0][0] == "error"
+    assert "stale file handle" in status_cb.call_args[0][1].lower()
+    assert str(destination) in status_cb.call_args[0][1]
+
+
 def test_collect_directory_files_ignores_permission_errors(tmp_path):
     directory = tmp_path / "download"
     directory.mkdir()

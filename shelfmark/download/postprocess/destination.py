@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import uuid
 from pathlib import Path
 
@@ -16,6 +17,18 @@ from shelfmark.download.permissions_debug import log_path_permission_context
 logger = setup_logger("shelfmark.download.postprocess.pipeline")
 
 
+def _report_destination_error(destination: Path, status_callback, exc: Exception) -> bool:
+    if isinstance(exc, OSError) and exc.errno == errno.ESTALE:
+        message = f"Destination unavailable due to stale file handle: {destination} ({exc})"
+    else:
+        message = f"Destination unavailable: {destination} ({exc})"
+
+    log_path_permission_context("destination_validate", destination)
+    logger.warning(message)
+    status_callback("error", message)
+    return False
+
+
 def validate_destination(destination: Path, status_callback) -> bool:
     """Validate destination path is absolute, exists, and writable."""
 
@@ -24,20 +37,20 @@ def validate_destination(destination: Path, status_callback) -> bool:
         status_callback("error", f"Destination must be absolute: {destination}")
         return False
 
-    destination_exists = run_blocking_io(destination.exists)
-    if destination_exists and not run_blocking_io(destination.is_dir):
-        logger.warning(f"Destination is not a directory: {destination}")
-        status_callback("error", f"Destination is not a directory: {destination}")
-        return False
+    try:
+        destination_exists = run_blocking_io(destination.exists)
+        if destination_exists and not run_blocking_io(destination.is_dir):
+            logger.warning(f"Destination is not a directory: {destination}")
+            status_callback("error", f"Destination is not a directory: {destination}")
+            return False
+    except OSError as exc:
+        return _report_destination_error(destination, status_callback, exc)
 
     if not destination_exists:
         try:
             run_blocking_io(destination.mkdir, parents=True, exist_ok=True)
         except (OSError, PermissionError) as exc:
-            log_path_permission_context("destination_create", destination)
-            logger.warning(f"Cannot create destination: {destination} ({exc})")
-            status_callback("error", f"Cannot create destination: {destination} ({exc})")
-            return False
+            return _report_destination_error(destination, status_callback, exc)
 
     test_path = destination / f".shelfmark_write_test_{uuid.uuid4().hex}.tmp"
 

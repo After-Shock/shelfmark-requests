@@ -66,6 +66,27 @@ class TestProxyAuthDefaults:
 
 
 class TestQueueScoping:
+    def test_post_download_queues_same_as_get(self, main_module):
+        with patch.object(main_module, "get_auth_mode", return_value="builtin"):
+            with patch.object(main_module, "_resolve_policy_mode_for_current_user", return_value=None):
+                with patch.object(main_module.backend, "queue_book", return_value=(True, None)) as mock_queue_book:
+                    with main_module.app.test_client() as client:
+                        with client.session_transaction() as session:
+                            session["user_id"] = "alice"
+                            session["db_user_id"] = 5
+                            session["is_admin"] = False
+                        resp = client.post("/api/download?id=book-123&priority=2")
+                        data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data == {"status": "queued", "priority": 2}
+        mock_queue_book.assert_called_once_with(
+            "book-123",
+            2,
+            user_id=5,
+            username="alice",
+        )
+
     def test_non_admin_cannot_change_another_users_priority(self, main_module):
         with patch.object(main_module, "get_auth_mode", return_value="builtin"):
             with patch.object(main_module.backend, "book_queue") as mock_book_queue:

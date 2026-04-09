@@ -810,7 +810,7 @@ def api_info() -> Union[Response, Tuple[Response, int]]:
         logger.error_trace(f"Info error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/download', methods=['GET'])
+@app.route('/api/download', methods=['GET', 'POST'])
 @login_required
 def api_download() -> Union[Response, Tuple[Response, int]]:
     """
