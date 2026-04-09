@@ -150,6 +150,8 @@ function App() {
     handleApprove: handleRequestApprove,
     handleDeny: handleRequestDeny,
     handleRetry: handleRequestRetry,
+    handleActivatePrerelease: handleRequestActivatePrerelease,
+    handleMoveToPrerelease: handleRequestMoveToPrerelease,
     handleDelete: handleRequestDelete,
     handleMarkCompleted: handleRequestMarkCompleted,
     refreshRequests,
@@ -185,6 +187,26 @@ function App() {
       throw error;
     }
   }, [handleRequestRetry, showToast]);
+
+  const handleActivatePrereleaseWithToast = useCallback(async (requestId: number) => {
+    try {
+      await handleRequestActivatePrerelease(requestId);
+      showToast('Pre-release request activated', 'success');
+    } catch (error) {
+      showToast('Failed to activate pre-release request', 'error');
+      throw error;
+    }
+  }, [handleRequestActivatePrerelease, showToast]);
+
+  const handleMoveToPrereleaseWithToast = useCallback(async (requestId: number, expectedReleaseDate: string) => {
+    try {
+      await handleRequestMoveToPrerelease(requestId, expectedReleaseDate);
+      showToast('Request moved to pre-release', 'success');
+    } catch (error) {
+      showToast('Failed to move request to pre-release', 'error');
+      throw error;
+    }
+  }, [handleRequestMoveToPrerelease, showToast]);
 
   const handleMarkCompletedWithToast = useCallback(async (requestId: number) => {
     try {
@@ -1027,6 +1049,8 @@ function App() {
           onApprove={handleApproveWithToast}
           onDeny={handleDenyWithToast}
           onRetry={handleRetryWithToast}
+          onActivatePrerelease={handleActivatePrereleaseWithToast}
+          onMoveToPrerelease={handleMoveToPrereleaseWithToast}
           onDelete={handleRequestDelete}
           onMarkCompleted={handleMarkCompletedWithToast}
           onRefresh={refreshRequests}

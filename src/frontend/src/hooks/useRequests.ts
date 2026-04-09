@@ -7,7 +7,9 @@ import {
   approveRequest,
   denyRequest,
   retryRequest,
+  activatePrereleaseRequest,
   deleteBookRequest,
+  moveRequestToPrerelease,
   updateRequestStatus,
 } from '../services/api';
 import { useSocket } from '../contexts/SocketContext';
@@ -24,6 +26,8 @@ interface UseRequestsReturn {
   handleApprove: (requestId: number) => Promise<void>;
   handleDeny: (requestId: number, adminNote?: string) => Promise<void>;
   handleRetry: (requestId: number) => Promise<void>;
+  handleActivatePrerelease: (requestId: number) => Promise<void>;
+  handleMoveToPrerelease: (requestId: number, expectedReleaseDate: string) => Promise<void>;
   handleDelete: (requestId: number) => Promise<void>;
   handleMarkCompleted: (requestId: number) => Promise<void>;
   refreshRequests: () => Promise<void>;
@@ -31,6 +35,7 @@ interface UseRequestsReturn {
 
 const EMPTY_COUNTS: RequestCounts = {
   pending: 0,
+  prerelease_requested: 0,
   approved: 0,
   denied: 0,
   downloading: 0,
@@ -199,6 +204,26 @@ export const useRequests = ({
     }
   }, [fetchAll]);
 
+  const handleActivatePrerelease = useCallback(async (requestId: number) => {
+    try {
+      await activatePrereleaseRequest(requestId);
+      await fetchAll();
+    } catch (error) {
+      console.error('Failed to activate prerelease request:', error);
+      throw error;
+    }
+  }, [fetchAll]);
+
+  const handleMoveToPrerelease = useCallback(async (requestId: number, expectedReleaseDate: string) => {
+    try {
+      await moveRequestToPrerelease(requestId, expectedReleaseDate);
+      await fetchAll();
+    } catch (error) {
+      console.error('Failed to move request to prerelease:', error);
+      throw error;
+    }
+  }, [fetchAll]);
+
   return {
     requests,
     counts,
@@ -207,6 +232,8 @@ export const useRequests = ({
     handleApprove,
     handleDeny,
     handleRetry,
+    handleActivatePrerelease,
+    handleMoveToPrerelease,
     handleDelete,
     handleMarkCompleted,
     refreshRequests: fetchAll,

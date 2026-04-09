@@ -529,6 +529,7 @@ export const createBookRequest = async (
     prefer_alternate_version?: boolean;
     is_manual_request?: boolean;
     is_released?: boolean | null;
+    expected_release_date?: string | null;
   }
 ): Promise<CreateBookRequestResponse> => {
   return fetchJSON<CreateBookRequestResponse>(`${API_BASE}/requests`, {
@@ -572,6 +573,22 @@ export const denyRequest = async (
 export const retryRequest = async (requestId: number): Promise<BookRequest> => {
   return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/retry`, {
     method: 'POST',
+  });
+};
+
+export const activatePrereleaseRequest = async (requestId: number): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/activate`, {
+    method: 'POST',
+  });
+};
+
+export const moveRequestToPrerelease = async (
+  requestId: number,
+  expectedReleaseDate: string
+): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/move-to-prerelease`, {
+    method: 'POST',
+    body: JSON.stringify({ expected_release_date: expectedReleaseDate }),
   });
 };
 

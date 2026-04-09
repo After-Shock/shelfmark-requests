@@ -326,7 +326,7 @@ export interface SearchStatusData {
 }
 
 // Book request types (Overseerr-style request workflow)
-export type RequestStatus = 'pending' | 'approved' | 'denied' | 'downloading' | 'fulfilled' | 'failed' | 'cancelled';
+export type RequestStatus = 'pending' | 'prerelease_requested' | 'approved' | 'denied' | 'downloading' | 'fulfilled' | 'failed' | 'cancelled';
 
 export interface BookRequest {
   id: number;
@@ -373,6 +373,7 @@ export interface RequestsListResponse {
 
 export interface RequestCounts {
   pending: number;
+  prerelease_requested: number;
   approved: number;
   denied: number;
   downloading: number;

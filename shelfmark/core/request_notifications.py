@@ -16,6 +16,7 @@ logger = setup_logger(__name__)
 
 STATUS_MESSAGES = {
     "approved": "Your book request has been approved and is being processed.",
+    "activated": "Your prerelease request is now active and ready for processing.",
     "denied": "Your book request has been denied.",
     "fulfilled": "Your book request has been fulfilled! The book should now be available in your library.",
     "failed": "Your book request could not be fulfilled. An admin may retry or find an alternative.",

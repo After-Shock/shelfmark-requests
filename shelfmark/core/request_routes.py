@@ -4,6 +4,7 @@ Registers /api/requests endpoints for the book request workflow.
 Authenticated users can create requests; admins can approve/deny them.
 """
 
+from datetime import date, datetime
 import threading
 from functools import wraps
 
@@ -15,6 +16,35 @@ from shelfmark.core.request_db import RequestDB
 from shelfmark.core.user_db import UserDB
 
 logger = setup_logger(__name__)
+
+
+def _normalize_release_date(raw_value: object) -> str | None:
+    """Normalize user/provider release dates to YYYY-MM-DD when possible."""
+    if not isinstance(raw_value, str):
+        return None
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    for parser in (date.fromisoformat, datetime.fromisoformat):
+        try:
+            parsed = parser(value)
+        except ValueError:
+            continue
+        if isinstance(parsed, datetime):
+            return parsed.date().isoformat()
+        return parsed.isoformat()
+    return None
+
+
+def _should_start_as_prerelease(is_released: bool | None, expected_release_date: str | None) -> bool:
+    """Return True when a request should be held until its future release date."""
+    if is_released is not False or not expected_release_date:
+        return False
+    try:
+        return date.fromisoformat(expected_release_date) > date.today()
+    except ValueError:
+        return False
 
 
 def _get_auth_mode():
@@ -209,6 +239,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         is_manual_request = bool(data.get("is_manual_request", False))
         raw_is_released = data.get("is_released")
         is_released = None if raw_is_released is None else bool(raw_is_released)
+        expected_release_date = _normalize_release_date(data.get("expected_release_date"))
+        start_as_prerelease = _should_start_as_prerelease(is_released, expected_release_date)
         abs_warning = False
         if content_type == "audiobook":
             try:
@@ -232,7 +264,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         provider = data.get("provider")
         provider_id_val = data.get("provider_id")
         existing = request_db.list_requests(user_id=db_user_id, limit=200)
-        active_statuses = {"pending", "approved", "downloading"}
+        active_statuses = {"pending", "approved", "downloading", "prerelease_requested"}
         for ex in existing:
             if ex["status"] not in active_statuses:
                 continue
@@ -263,6 +295,16 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
+
+        if expected_release_date:
+            req = request_db.update_request_metadata(
+                req["id"], expected_release_date=expected_release_date
+            ) or req
+
+        if start_as_prerelease:
+            req = request_db.update_request_status(
+                req["id"], "prerelease_requested"
+            ) or req
 
         logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
         _broadcast_request_update(req)
@@ -447,7 +489,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         if not new_status:
             return jsonify({"error": "status is required"}), 400
 
-        valid_statuses = ["pending", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled"]
+        valid_statuses = ["pending", "prerelease_requested", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled"]
         if new_status not in valid_statuses:
             return jsonify({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}), 400
 
@@ -469,6 +511,51 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             if updated_req:
                 _send_discord_book_available(updated_req)
 
+        return jsonify(updated)
+
+    @app.route("/api/requests/<int:request_id>/activate", methods=["POST"])
+    @_require_admin
+    def activate_prerelease_request_route(request_id):
+        """Activate a prerelease request immediately, moving it into the normal pending queue."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+        if req["status"] != "prerelease_requested":
+            return jsonify({"error": f"Cannot activate a request with status '{req['status']}'"}), 400
+
+        admin_user_id = _get_db_user_id()
+        updated = request_db.update_request_status(
+            request_id, "pending", approved_by=admin_user_id
+        )
+        logger.info(f"Request #{request_id} activated from prerelease by admin {admin_user_id}")
+        _broadcast_request_update(updated)
+        _send_status_notification(user_db, req, "activated")
+        return jsonify(updated)
+
+    @app.route("/api/requests/<int:request_id>/move-to-prerelease", methods=["POST"])
+    @_require_admin
+    def move_request_to_prerelease_route(request_id):
+        """Move a request into prerelease hold until its release date arrives."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+        if req["status"] != "pending":
+            return jsonify({"error": f"Cannot move a request with status '{req['status']}' to prerelease"}), 400
+
+        data = request.get_json() or {}
+        expected_release_date = _normalize_release_date(data.get("expected_release_date"))
+        if not expected_release_date:
+            return jsonify({"error": "expected_release_date must be an ISO date"}), 400
+
+        admin_user_id = _get_db_user_id()
+        request_db.update_request_metadata(
+            request_id, expected_release_date=expected_release_date
+        )
+        updated = request_db.update_request_status(
+            request_id, "prerelease_requested", approved_by=admin_user_id
+        )
+        logger.info(f"Request #{request_id} moved to prerelease by admin {admin_user_id}")
+        _broadcast_request_update(updated)
         return jsonify(updated)
 
     @app.route("/api/requests/<int:request_id>/retry", methods=["POST"])

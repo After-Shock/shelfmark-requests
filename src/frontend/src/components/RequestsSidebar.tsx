@@ -11,15 +11,26 @@ interface RequestsSidebarProps {
   onApprove: (requestId: number) => Promise<void>;
   onDeny: (requestId: number, adminNote?: string) => Promise<void>;
   onRetry: (requestId: number) => Promise<void>;
+  onActivatePrerelease: (requestId: number) => Promise<void>;
+  onMoveToPrerelease: (requestId: number, expectedReleaseDate: string) => Promise<void>;
   onDelete: (requestId: number) => Promise<void>;
   onMarkCompleted: (requestId: number) => Promise<void>;
   onRefresh: () => Promise<void>;
 }
 
-type FilterTab = 'all' | 'pending' | 'fulfilled';
+type FilterTab = 'all' | 'prerelease' | 'pending' | 'fulfilled';
 
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string; customStyle?: React.CSSProperties }> = {
   pending: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
+  prerelease_requested: {
+    bg: '',
+    text: '',
+    label: 'Pre-release',
+    customStyle: {
+      backgroundColor: 'rgba(245, 158, 11, 0.2)',
+      color: '#d97706'
+    }
+  },
   approved: {
     bg: '',
     text: '',
@@ -92,6 +103,8 @@ export const RequestsSidebar = ({
   onApprove,
   onDeny,
   onRetry,
+  onActivatePrerelease,
+  onMoveToPrerelease,
   onDelete,
   onMarkCompleted,
   onRefresh,
@@ -120,6 +133,7 @@ export const RequestsSidebar = ({
 
   // Filter requests based on active tab
   const filteredRequests = requests.filter((req) => {
+    if (filter === 'prerelease') return req.status === 'prerelease_requested';
     if (filter === 'pending') return req.status === 'pending';
     if (filter === 'fulfilled') return req.status === 'fulfilled' || req.status === 'denied' || req.status === 'failed';
     return true;
@@ -180,6 +194,29 @@ export const RequestsSidebar = ({
     }
   };
 
+  const handleActivatePrereleaseClick = async (requestId: number) => {
+    addProcessing(requestId);
+    try {
+      await onActivatePrerelease(requestId);
+    } catch (error) {
+      console.error('Failed to activate prerelease request:', error);
+    } finally {
+      removeProcessing(requestId);
+    }
+  };
+
+  const handleMoveToPrereleaseClick = async (requestId: number, expectedReleaseDate?: string | null) => {
+    if (!expectedReleaseDate) return;
+    addProcessing(requestId);
+    try {
+      await onMoveToPrerelease(requestId, expectedReleaseDate);
+    } catch (error) {
+      console.error('Failed to move request to prerelease:', error);
+    } finally {
+      removeProcessing(requestId);
+    }
+  };
+
   const handleClearFulfilled = async () => {
     // Clear all completed requests (fulfilled, denied, failed, cancelled)
     const clearableRequests = requests.filter(
@@ -207,6 +244,7 @@ export const RequestsSidebar = ({
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
+    const isPrerelease = req.status === 'prerelease_requested';
     // Show retry for: failed, cancelled, denied, stuck downloading, or approved (audiobooks)
     const isRetryable = req.status === 'failed' || req.status === 'cancelled' || req.status === 'denied' || req.status === 'downloading' || req.status === 'approved';
     const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
@@ -299,7 +337,7 @@ export const RequestsSidebar = ({
             )}
 
             {/* Handled by (non-pending requests) */}
-            {req.status !== 'pending' && !!(req.handled_by_display_name || req.handled_by_username) && (
+            {req.status !== 'pending' && req.status !== 'prerelease_requested' && !!(req.handled_by_display_name || req.handled_by_username) && (
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Handled by: {req.handled_by_display_name || req.handled_by_username}
               </p>
@@ -307,6 +345,27 @@ export const RequestsSidebar = ({
 
             {/* Status badge + admin actions */}
             <div className="flex items-center justify-between mt-auto pt-1 gap-2">
+              {isAdmin && isPrerelease && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleActivatePrereleaseClick(req.id)}
+                    disabled={isProcessing(req.id)}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isProcessing(req.id) ? 'Activating...' : 'Activate Now'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDenyClick(req.id)}
+                    disabled={isProcessing(req.id)}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
+                  </button>
+                </div>
+              )}
+
               {/* Admin approve/deny/complete buttons for pending items */}
               {isAdmin && isPending && (
                 <div className="flex items-center gap-1 flex-wrap">
@@ -334,6 +393,16 @@ export const RequestsSidebar = ({
                   >
                     {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                   </button>
+                  {!req.is_released && !!req.expected_release_date && (
+                    <button
+                      type="button"
+                      onClick={() => handleMoveToPrereleaseClick(req.id, req.expected_release_date)}
+                      disabled={isProcessing(req.id)}
+                      className="px-2 py-0.5 text-xs font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isProcessing(req.id) ? 'Holding...' : 'Move to Pre-release'}
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -494,7 +563,7 @@ export const RequestsSidebar = ({
 
         {/* Filter Tabs */}
         <div className="flex gap-1 px-4 pt-3 pb-1">
-          {(['all', 'pending', 'fulfilled'] as FilterTab[]).map((tab) => (
+          {(['all', 'prerelease', 'pending', 'fulfilled'] as FilterTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -506,7 +575,7 @@ export const RequestsSidebar = ({
               }`}
               style={filter === tab ? { backgroundColor: theme.button.primary } : {}}
             >
-              {tab === 'all' ? 'All' : tab === 'pending' ? 'Pending' : 'Completed'}
+              {tab === 'all' ? 'All' : tab === 'prerelease' ? 'Pre-release' : tab === 'pending' ? 'Pending' : 'Completed'}
             </button>
           ))}
         </div>

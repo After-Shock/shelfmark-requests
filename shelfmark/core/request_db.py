@@ -16,7 +16,16 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
     return None
 
 
-_VALID_STATUSES = ("pending", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled")
+_VALID_STATUSES = (
+    "pending",
+    "approved",
+    "denied",
+    "downloading",
+    "fulfilled",
+    "failed",
+    "cancelled",
+    "prerelease_requested",
+)
 _VALID_CONTENT_TYPES = ("ebook", "audiobook")
 
 _CREATE_REQUESTS_TABLE_SQL = """
@@ -24,7 +33,7 @@ CREATE TABLE IF NOT EXISTS requests (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status          TEXT NOT NULL DEFAULT 'pending'
-                    CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled')),
+                    CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled','prerelease_requested')),
     content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
     title           TEXT NOT NULL,
     author          TEXT,
@@ -107,7 +116,7 @@ class RequestDB:
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                         status          TEXT NOT NULL DEFAULT 'pending'
-                                        CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled')),
+                        CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled','prerelease_requested')),
                         content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
                         title           TEXT NOT NULL,
                         author          TEXT,
@@ -174,6 +183,58 @@ class RequestDB:
                     "ALTER TABLE requests ADD COLUMN expected_release_date TEXT DEFAULT NULL"
                 )
             conn.execute("UPDATE schema_version SET version = 5")
+
+        if current_version < 6:
+            # Migration 6: add 'prerelease_requested' to CHECK constraint
+            # SQLite can't ALTER CHECK constraints, so recreate the table
+            table_sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='requests'"
+            ).fetchone()
+            if table_sql and "'prerelease_requested'" not in table_sql["sql"]:
+                logger.info(
+                    "Migration 6: Adding 'prerelease_requested' to status CHECK constraint"
+                )
+                conn.executescript("""
+                    CREATE TABLE IF NOT EXISTS requests_new (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        status          TEXT NOT NULL DEFAULT 'pending'
+                                        CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled','prerelease_requested')),
+                        content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
+                        title           TEXT NOT NULL,
+                        author          TEXT,
+                        year            TEXT,
+                        cover_url       TEXT,
+                        description     TEXT,
+                        isbn_10         TEXT,
+                        isbn_13         TEXT,
+                        provider        TEXT,
+                        provider_id     TEXT,
+                        series_name     TEXT,
+                        series_position REAL,
+                        admin_note      TEXT,
+                        approved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        download_task_id TEXT,
+                        created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        hidden_from_admin INTEGER DEFAULT 0,
+                        prefer_alternate_version INTEGER DEFAULT 0,
+                        is_manual_request INTEGER DEFAULT 0,
+                        is_released INTEGER DEFAULT NULL,
+                        expected_release_date TEXT DEFAULT NULL
+                    );
+                    INSERT INTO requests_new SELECT
+                        id, user_id, status, content_type, title, author, year,
+                        cover_url, description, isbn_10, isbn_13, provider, provider_id,
+                        series_name, series_position, admin_note, approved_by,
+                        download_task_id, created_at, updated_at, hidden_from_admin,
+                        prefer_alternate_version, is_manual_request, is_released,
+                        expected_release_date
+                    FROM requests;
+                    DROP TABLE requests;
+                    ALTER TABLE requests_new RENAME TO requests;
+                """)
+            conn.execute("UPDATE schema_version SET version = 6")
 
     def create_request(
         self,

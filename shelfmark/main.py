@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta
 from functools import wraps
@@ -135,10 +136,19 @@ try:
     register_self_user_routes(app, user_db)
     # Custom request layer (our fork addition)
     from shelfmark.core.request_db import RequestDB
-    from shelfmark.core.request_routes import register_request_routes
+    from shelfmark.core.prerelease_requests import run_prerelease_request_loop
+    from shelfmark.core.request_routes import _broadcast_request_update, register_request_routes
     request_db = RequestDB(_user_db_path)
     request_db.initialize()
     register_request_routes(app, request_db, user_db)
+    if not app.config.get("TESTING"):
+        threading.Thread(
+            target=run_prerelease_request_loop,
+            args=(request_db, user_db),
+            kwargs={"on_request_update": _broadcast_request_update},
+            daemon=True,
+            name="prerelease-request-loop",
+        ).start()
     from shelfmark.core.abs_routes import register_abs_routes
     from shelfmark.core.audiobookshelf import abs_client
     register_abs_routes(app)

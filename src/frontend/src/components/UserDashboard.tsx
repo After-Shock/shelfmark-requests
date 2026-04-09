@@ -15,6 +15,7 @@ interface UserDashboardProps {
 
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string }> = {
   pending: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
+  prerelease_requested: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pre-release' },
   approved: { bg: 'bg-sky-500/20', text: 'text-sky-700 dark:text-sky-300', label: 'Approved' },
   denied: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Denied' },
   downloading: { bg: 'bg-indigo-500/20', text: 'text-indigo-700 dark:text-indigo-300', label: 'Downloading' },
