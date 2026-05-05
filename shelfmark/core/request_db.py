@@ -321,6 +321,7 @@ class RequestDB:
         limit: int = 100,
         offset: int = 0,
         include_hidden_from_admin: bool = False,
+        include_hidden_completed_for_admin: bool = False,
     ) -> List[Dict[str, Any]]:
         """List requests with optional filters. Returns list of request dicts.
 
@@ -340,9 +341,16 @@ class RequestDB:
                 conditions.append("r.user_id = ?")
                 params.append(user_id)
             else:
-                # Admin view - exclude hidden requests unless explicitly requested
+                # Admin view - exclude hidden requests unless explicitly requested.
+                # History should still surface hidden completed rows.
                 if not include_hidden_from_admin:
-                    conditions.append("(r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL)")
+                    if include_hidden_completed_for_admin:
+                        conditions.append(
+                            "((r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL) "
+                            "OR r.status IN ('fulfilled','denied','failed','cancelled'))"
+                        )
+                    else:
+                        conditions.append("(r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL)")
             if status is not None:
                 conditions.append("r.status = ?")
                 params.append(status)

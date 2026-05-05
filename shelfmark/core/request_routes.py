@@ -356,10 +356,16 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             offset = 0
 
         user_id = None if _is_admin() else _get_db_user_id()
+        list_kwargs = {
+            "user_id": user_id,
+            "status": status_filter,
+            "limit": limit,
+            "offset": offset,
+        }
+        if _is_admin():
+            list_kwargs["include_hidden_completed_for_admin"] = True
 
-        requests_list = request_db.list_requests(
-            user_id=user_id, status=status_filter, limit=limit, offset=offset
-        )
+        requests_list = request_db.list_requests(**list_kwargs)
         total = request_db.count_requests(user_id=user_id, status=status_filter)
 
         return jsonify({
@@ -572,7 +578,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
-        if req["status"] != "pending":
+        if req["status"] not in {"pending", "approved"}:
             return jsonify({"error": f"Cannot move a request with status '{req['status']}' to prerelease"}), 400
 
         data = request.get_json() or {}

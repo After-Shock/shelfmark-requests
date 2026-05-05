@@ -272,6 +272,7 @@ export const RequestsSidebar = ({
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
+    const isApproved = req.status === 'approved';
     const isPrerelease = req.status === 'prerelease_requested';
     const isHistoryItem = HISTORY_STATUSES.includes(req.status);
     // Show retry for: failed, cancelled, denied, stuck downloading, or approved (audiobooks)
@@ -542,7 +543,7 @@ export const RequestsSidebar = ({
               </div>
             )}
 
-            {isAdmin && isPending && (
+            {isAdmin && (isPending || isApproved) && (
               <div className="flex gap-1 mt-1.5">
                 <input
                   type="date"

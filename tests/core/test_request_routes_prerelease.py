@@ -210,6 +210,27 @@ class TestAdminPrereleaseTransitions:
         assert resp.status_code == 200
         data = json.loads(resp.data)
         assert data["requests"][0]["completed_at"] == "2026-05-05 13:00:00"
+        request_db.list_requests.assert_called_once_with(
+            user_id=1, status=None, limit=100, offset=0
+        )
+
+    def test_admin_list_requests_includes_hidden_completed_history(self, app):
+        request_db = app.request_db
+        request_db.list_requests.return_value = []
+        request_db.count_requests.return_value = 0
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            resp = client.get("/api/requests")
+
+        assert resp.status_code == 200
+        request_db.list_requests.assert_called_once_with(
+            user_id=None,
+            status=None,
+            limit=100,
+            offset=0,
+            include_hidden_from_admin=True,
+        )
 
     def test_move_pending_request_to_prerelease(self, app):
         request_db = app.request_db
@@ -252,6 +273,40 @@ class TestAdminPrereleaseTransitions:
         )
         request_db.update_request_status.assert_called_once_with(1, "prerelease_requested", approved_by=1)
         mock_broadcast.assert_called_once()
+
+    def test_move_approved_request_to_prerelease(self, app):
+        request_db = app.request_db
+        request_db.get_request.return_value = {
+            "id": 1,
+            "title": "Future Book",
+            "status": "approved",
+            "content_type": "audiobook",
+            "author": "Future Author",
+            "user_id": 1,
+            "expected_release_date": None,
+            "is_released": False,
+        }
+
+        request_db.update_request_status.return_value = {
+            "id": 1,
+            "title": "Future Book",
+            "status": "prerelease_requested",
+            "content_type": "audiobook",
+            "author": "Future Author",
+            "user_id": 1,
+            "expected_release_date": "2099-01-01",
+            "is_released": False,
+        }
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._broadcast_request_update"):
+                resp = client.post("/api/requests/1/move-to-prerelease", json={
+                    "expected_release_date": "2099-01-01",
+                })
+
+        assert resp.status_code == 200
+        request_db.update_request_status.assert_called_once_with(1, "prerelease_requested", approved_by=1)
 
     def test_move_pending_request_to_prerelease_rejects_non_future_date(self, app):
         request_db = app.request_db
