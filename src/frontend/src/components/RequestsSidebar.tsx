@@ -151,7 +151,7 @@ export const RequestsSidebar = ({
     if (filter === 'prerelease') return req.status === 'prerelease_requested';
     if (filter === 'pending') return req.status === 'pending';
     if (filter === 'history') return HISTORY_STATUSES.includes(req.status);
-    return true;
+    return !HISTORY_STATUSES.includes(req.status);
   }).sort((a, b) => {
     if (filter !== 'history') return 0;
     const aTime = new Date(normalizeTimestamp(a.completed_at || a.updated_at)).getTime();
@@ -627,7 +627,7 @@ export const RequestsSidebar = ({
               }`}
               style={filter === tab ? { backgroundColor: theme.button.primary } : {}}
             >
-              {tab === 'all' ? 'All' : tab === 'prerelease' ? 'Pre-release' : tab === 'pending' ? 'Pending' : 'History'}
+              {tab === 'all' ? 'Active' : tab === 'prerelease' ? 'Pre-release' : tab === 'pending' ? 'Pending' : 'History'}
             </button>
           ))}
         </div>
