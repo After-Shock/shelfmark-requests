@@ -18,7 +18,8 @@ interface RequestsSidebarProps {
   onRefresh: () => Promise<void>;
 }
 
-type FilterTab = 'all' | 'prerelease' | 'pending' | 'fulfilled';
+type FilterTab = 'all' | 'prerelease' | 'pending' | 'history';
+const HISTORY_STATUSES: RequestStatus[] = ['fulfilled', 'denied', 'failed', 'cancelled'];
 
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string; customStyle?: React.CSSProperties }> = {
   pending: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
@@ -95,6 +96,19 @@ const formatRelativeTime = (dateString: string): string => {
   return date.toLocaleDateString();
 };
 
+const formatHistoryDate = (dateString: string): string => {
+  const date = new Date(normalizeTimestamp(dateString));
+  if (Number.isNaN(date.getTime())) return dateString;
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+const normalizeTimestamp = (dateString: string): string =>
+  dateString.includes('T') || dateString.endsWith('Z') ? dateString : `${dateString.replace(' ', 'T')}Z`;
+
 export const RequestsSidebar = ({
   isOpen,
   onClose,
@@ -113,6 +127,7 @@ export const RequestsSidebar = ({
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
   const [denyNote, setDenyNote] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
+  const [prereleaseDateById, setPrereleaseDateById] = useState<Record<number, string>>({});
   const addProcessing = (id: number) => setProcessingIds(prev => new Set(prev).add(id));
   const removeProcessing = (id: number) => setProcessingIds(prev => { const next = new Set(prev); next.delete(id); return next; });
   const isProcessing = (id: number) => processingIds.has(id);
@@ -135,8 +150,13 @@ export const RequestsSidebar = ({
   const filteredRequests = requests.filter((req) => {
     if (filter === 'prerelease') return req.status === 'prerelease_requested';
     if (filter === 'pending') return req.status === 'pending';
-    if (filter === 'fulfilled') return req.status === 'fulfilled' || req.status === 'denied' || req.status === 'failed';
+    if (filter === 'history') return HISTORY_STATUSES.includes(req.status);
     return true;
+  }).sort((a, b) => {
+    if (filter !== 'history') return 0;
+    const aTime = new Date(normalizeTimestamp(a.completed_at || a.updated_at)).getTime();
+    const bTime = new Date(normalizeTimestamp(b.completed_at || b.updated_at)).getTime();
+    return bTime - aTime;
   });
 
   const handleApproveClick = async (requestId: number) => {
@@ -210,6 +230,11 @@ export const RequestsSidebar = ({
     addProcessing(requestId);
     try {
       await onMoveToPrerelease(requestId, expectedReleaseDate);
+      setPrereleaseDateById(prev => {
+        const next = { ...prev };
+        delete next[requestId];
+        return next;
+      });
     } catch (error) {
       console.error('Failed to move request to prerelease:', error);
     } finally {
@@ -238,13 +263,17 @@ export const RequestsSidebar = ({
 
   // Show clear button if there are any completed requests
   const hasClearable = requests.some(
-    (r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed' || r.status === 'cancelled'
+    (r) => HISTORY_STATUSES.includes(r.status)
   );
+
+  const getPrereleaseDateValue = (req: BookRequest): string =>
+    prereleaseDateById[req.id] ?? req.expected_release_date ?? '';
 
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
     const isPrerelease = req.status === 'prerelease_requested';
+    const isHistoryItem = HISTORY_STATUSES.includes(req.status);
     // Show retry for: failed, cancelled, denied, stuck downloading, or approved (audiobooks)
     const isRetryable = req.status === 'failed' || req.status === 'cancelled' || req.status === 'denied' || req.status === 'downloading' || req.status === 'approved';
     const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
@@ -304,6 +333,12 @@ export const RequestsSidebar = ({
               <span>{formatRelativeTime(req.created_at)}</span>
             </div>
 
+            {isHistoryItem && (
+              <p className="text-xs mt-1 text-gray-500 dark:text-gray-400">
+                History date: {formatHistoryDate(req.completed_at || req.updated_at)}
+              </p>
+            )}
+
             {/* Admin note */}
             {!!req.admin_note && (
               <p
@@ -328,6 +363,11 @@ export const RequestsSidebar = ({
             {req.is_released != null && !req.is_released && (
               <p className="text-xs mt-0.5 font-medium text-amber-600 dark:text-amber-400">
                 Not yet released{req.expected_release_date ? ` — expected ${req.expected_release_date}` : ''}
+              </p>
+            )}
+            {isPrerelease && req.expected_release_date && (
+              <p className="text-xs mt-0.5 text-amber-700 dark:text-amber-300">
+                Returns to pending at 9:00 AM ET on release day
               </p>
             )}
             {req.is_released != null && !!req.is_released && (
@@ -393,16 +433,6 @@ export const RequestsSidebar = ({
                   >
                     {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                   </button>
-                  {!req.is_released && !!req.expected_release_date && (
-                    <button
-                      type="button"
-                      onClick={() => handleMoveToPrereleaseClick(req.id, req.expected_release_date)}
-                      disabled={isProcessing(req.id)}
-                      className="px-2 py-0.5 text-xs font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isProcessing(req.id) ? 'Holding...' : 'Move to Pre-release'}
-                    </button>
-                  )}
                 </div>
               )}
 
@@ -511,6 +541,27 @@ export const RequestsSidebar = ({
                 </button>
               </div>
             )}
+
+            {isAdmin && isPending && (
+              <div className="flex gap-1 mt-1.5">
+                <input
+                  type="date"
+                  value={getPrereleaseDateValue(req)}
+                  onChange={(e) => setPrereleaseDateById(prev => ({ ...prev, [req.id]: e.target.value }))}
+                  className="flex-1 px-2 py-1 text-xs rounded border border-[var(--border-muted)] bg-[var(--bg)]"
+                  disabled={isProcessing(req.id)}
+                  aria-label={`Release date for ${req.title}`}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleMoveToPrereleaseClick(req.id, getPrereleaseDateValue(req))}
+                  disabled={isProcessing(req.id) || !getPrereleaseDateValue(req)}
+                  className="px-2 py-1 text-xs font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isProcessing(req.id) ? 'Holding...' : 'Schedule Pre-release'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -563,7 +614,7 @@ export const RequestsSidebar = ({
 
         {/* Filter Tabs */}
         <div className="flex gap-1 px-4 pt-3 pb-1">
-          {(['all', 'prerelease', 'pending', 'fulfilled'] as FilterTab[]).map((tab) => (
+          {(['all', 'prerelease', 'pending', 'history'] as FilterTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -575,7 +626,7 @@ export const RequestsSidebar = ({
               }`}
               style={filter === tab ? { backgroundColor: theme.button.primary } : {}}
             >
-              {tab === 'all' ? 'All' : tab === 'prerelease' ? 'Pre-release' : tab === 'pending' ? 'Pending' : 'Completed'}
+              {tab === 'all' ? 'All' : tab === 'prerelease' ? 'Pre-release' : tab === 'pending' ? 'Pending' : 'History'}
             </button>
           ))}
         </div>

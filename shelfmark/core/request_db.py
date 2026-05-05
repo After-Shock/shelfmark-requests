@@ -27,6 +27,7 @@ _VALID_STATUSES = (
     "prerelease_requested",
 )
 _VALID_CONTENT_TYPES = ("ebook", "audiobook")
+_TERMINAL_STATUSES = {"fulfilled", "denied", "failed", "cancelled"}
 
 _CREATE_REQUESTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS requests (
     download_task_id TEXT,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    prefer_alternate_version INTEGER DEFAULT 0
+    prefer_alternate_version INTEGER DEFAULT 0,
+    completed_at    TIMESTAMP DEFAULT NULL
 );
 """
 
@@ -221,7 +223,8 @@ class RequestDB:
                         prefer_alternate_version INTEGER DEFAULT 0,
                         is_manual_request INTEGER DEFAULT 0,
                         is_released INTEGER DEFAULT NULL,
-                        expected_release_date TEXT DEFAULT NULL
+                        expected_release_date TEXT DEFAULT NULL,
+                        completed_at TIMESTAMP DEFAULT NULL
                     );
                     INSERT INTO requests_new SELECT
                         id, user_id, status, content_type, title, author, year,
@@ -229,12 +232,23 @@ class RequestDB:
                         series_name, series_position, admin_note, approved_by,
                         download_task_id, created_at, updated_at, hidden_from_admin,
                         prefer_alternate_version, is_manual_request, is_released,
-                        expected_release_date
+                        expected_release_date, NULL
                     FROM requests;
                     DROP TABLE requests;
                     ALTER TABLE requests_new RENAME TO requests;
                 """)
             conn.execute("UPDATE schema_version SET version = 6")
+
+        if current_version < 7:
+            cursor = conn.execute("PRAGMA table_info(requests)")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "completed_at" not in columns:
+                logger.info("Migration 7: Adding completed_at column")
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN completed_at TIMESTAMP DEFAULT NULL"
+                )
+            conn.execute("UPDATE requests SET completed_at = updated_at WHERE status IN ('fulfilled','denied','failed','cancelled') AND completed_at IS NULL")
+            conn.execute("UPDATE schema_version SET version = 7")
 
     def create_request(
         self,
@@ -449,6 +463,9 @@ class RequestDB:
                 if download_task_id is not None:
                     sets.append("download_task_id = ?")
                     params.append(download_task_id)
+                sets.append(
+                    "completed_at = CURRENT_TIMESTAMP" if status in _TERMINAL_STATUSES else "completed_at = NULL"
+                )
                 params.append(request_id)
                 conn.execute(
                     f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params

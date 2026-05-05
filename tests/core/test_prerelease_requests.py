@@ -1,4 +1,6 @@
+from datetime import datetime
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 
 def test_promote_due_prerelease_requests_moves_due_rows_to_pending():
@@ -35,6 +37,51 @@ def test_promote_due_prerelease_requests_moves_due_rows_to_pending():
         clear_expected_release_date=True,
     )
     request_db.update_request_status.assert_called_once_with(10, "pending")
+    mock_notify.assert_called_once()
+
+
+def test_promote_due_prerelease_requests_waits_until_9am_eastern():
+    from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
+
+    request_db = MagicMock()
+    user_db = MagicMock()
+    request_db.list_requests.return_value = [
+        {
+            "id": 13,
+            "status": "prerelease_requested",
+            "title": "Morning Book",
+            "user_id": 3,
+            "expected_release_date": "2026-05-05",
+        }
+    ]
+
+    before_nine = datetime(2026, 5, 5, 8, 59, tzinfo=ZoneInfo("America/New_York"))
+    at_nine = datetime(2026, 5, 5, 9, 0, tzinfo=ZoneInfo("America/New_York"))
+
+    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
+        promoted = promote_due_prerelease_requests(request_db, user_db, now=before_nine)
+
+    assert promoted == []
+    request_db.update_request_status.assert_not_called()
+    mock_notify.assert_not_called()
+
+    request_db.update_request_status.reset_mock()
+    request_db.update_request_metadata.reset_mock()
+    request_db.update_request_status.return_value = {
+        "id": 13,
+        "status": "pending",
+        "title": "Morning Book",
+        "user_id": 3,
+        "expected_release_date": None,
+        "is_released": True,
+    }
+    user_db.get_user.return_value = {"id": 3, "email": "reader@example.com"}
+
+    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
+        promoted = promote_due_prerelease_requests(request_db, user_db, now=at_nine)
+
+    assert [row["id"] for row in promoted] == [13]
+    request_db.update_request_status.assert_called_once_with(13, "pending")
     mock_notify.assert_called_once()
 
 

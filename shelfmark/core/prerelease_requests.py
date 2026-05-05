@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time as dt_time
 import time
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.request_notifications import send_request_notification
 
 logger = setup_logger(__name__)
 
-PRERELEASE_SCAN_INTERVAL_SECONDS = 900
+PRERELEASE_SCAN_INTERVAL_SECONDS = 60
+RELEASE_NOTIFICATION_TZ = ZoneInfo("America/New_York")
+RELEASE_NOTIFICATION_HOUR = 9
 
 
 def _parse_release_date(raw_value: Any) -> date | None:
@@ -49,10 +52,10 @@ def promote_due_prerelease_requests(
     user_db: Any,
     *,
     on_request_update: Callable[[dict[str, Any]], None] | None = None,
-    today: date | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Promote due prerelease requests to pending and notify requesters."""
-    current_date = today or date.today()
+    current_time = now.astimezone(RELEASE_NOTIFICATION_TZ) if now else datetime.now(RELEASE_NOTIFICATION_TZ)
     promoted: list[dict[str, Any]] = []
     rows = request_db.list_requests(
         status="prerelease_requested",
@@ -68,7 +71,12 @@ def promote_due_prerelease_requests(
                 row.get("expected_release_date"),
             )
             continue
-        if release_date > current_date:
+        release_ready_at = datetime.combine(
+            release_date,
+            dt_time(hour=RELEASE_NOTIFICATION_HOUR),
+            tzinfo=RELEASE_NOTIFICATION_TZ,
+        )
+        if current_time < release_ready_at:
             continue
 
         request_db.update_request_metadata(
@@ -109,4 +117,6 @@ def run_prerelease_request_loop(
             )
         except Exception as exc:
             logger.warning("Prerelease promotion loop failed: %s", exc)
-        time.sleep(delay)
+        now_ts = time.time()
+        sleep_for = delay - (now_ts % delay)
+        time.sleep(max(1, sleep_for))

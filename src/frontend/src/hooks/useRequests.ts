@@ -41,6 +41,7 @@ const EMPTY_COUNTS: RequestCounts = {
   downloading: 0,
   fulfilled: 0,
   failed: 0,
+  cancelled: 0,
   total: 0,
 };
 

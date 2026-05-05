@@ -111,3 +111,66 @@ def test_initialize_migrates_existing_v5_schema_to_allow_prerelease_requested(tm
 
     assert updated is not None
     assert updated["status"] == "prerelease_requested"
+
+
+def test_terminal_status_sets_completed_at_and_retry_clears_it(db):
+    req = db.create_request(user_id=1, title="History Book", content_type="ebook")
+
+    fulfilled = db.update_request_status(req["id"], "fulfilled")
+    assert fulfilled is not None
+    assert fulfilled["completed_at"] is not None
+
+    retried = db.update_request_status(req["id"], "approved")
+    assert retried is not None
+    assert retried["completed_at"] is None
+
+
+def test_initialize_adds_completed_at_column_to_existing_v6_schema(tmp_path):
+    db_path = str(tmp_path / "existing_v6.db")
+    conn = sqlite3.connect(db_path)
+    _create_users_table(conn)
+    conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+    conn.execute("INSERT INTO schema_version (version) VALUES (6)")
+    conn.execute(
+        """CREATE TABLE requests (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status          TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled','prerelease_requested')),
+            content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
+            title           TEXT NOT NULL,
+            author          TEXT,
+            year            TEXT,
+            cover_url       TEXT,
+            description     TEXT,
+            isbn_10         TEXT,
+            isbn_13         TEXT,
+            provider        TEXT,
+            provider_id     TEXT,
+            series_name     TEXT,
+            series_position REAL,
+            admin_note      TEXT,
+            approved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            download_task_id TEXT,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            hidden_from_admin INTEGER DEFAULT 0,
+            prefer_alternate_version INTEGER DEFAULT 0,
+            is_manual_request INTEGER DEFAULT 0,
+            is_released INTEGER DEFAULT NULL,
+            expected_release_date TEXT DEFAULT NULL
+        )"""
+    )
+    conn.commit()
+    conn.close()
+
+    request_db = RequestDB(db_path)
+    request_db.initialize()
+
+    fulfilled = request_db.update_request_status(
+        request_db.create_request(user_id=1, title="Migrated Book")["id"],
+        "fulfilled",
+    )
+
+    assert fulfilled is not None
+    assert fulfilled["completed_at"] is not None

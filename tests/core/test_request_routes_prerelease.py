@@ -51,6 +51,7 @@ def app():
         "user_id": 1,
         "expected_release_date": "2099-01-01",
         "is_released": False,
+        "completed_at": None,
     }
     request_db.get_request.return_value = {
         "id": 1,
@@ -61,6 +62,7 @@ def app():
         "user_id": 1,
         "expected_release_date": "2099-01-01",
         "is_released": False,
+        "completed_at": None,
     }
     user_db = MagicMock()
     user_db.get_user.return_value = {"id": 1, "username": "testuser", "email": "user@example.com"}
@@ -181,6 +183,33 @@ class TestAdminPrereleaseTransitions:
         request_db.update_request_status.assert_called_once_with(1, "pending", approved_by=1)
         mock_broadcast.assert_called_once()
         mock_notify.assert_called_once()
+
+    def test_list_requests_exposes_completed_at_for_history(self, app):
+        request_db = app.request_db
+        request_db.list_requests.return_value = [{
+            "id": 4,
+            "title": "Completed Book",
+            "status": "fulfilled",
+            "content_type": "audiobook",
+            "author": "Author",
+            "user_id": 1,
+            "expected_release_date": None,
+            "is_released": True,
+            "completed_at": "2026-05-05 13:00:00",
+            "created_at": "2026-05-01 10:00:00",
+            "updated_at": "2026-05-05 13:00:00",
+            "requester_username": "testuser",
+            "requester_display_name": "Test User",
+        }]
+        request_db.count_requests.return_value = 1
+
+        with app.test_client() as client:
+            _set_user_session(client)
+            resp = client.get("/api/requests")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["requests"][0]["completed_at"] == "2026-05-05 13:00:00"
 
     def test_move_pending_request_to_prerelease(self, app):
         request_db = app.request_db

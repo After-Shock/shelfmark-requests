@@ -351,6 +351,7 @@ export interface BookRequest {
   is_manual_request?: boolean;
   is_released?: boolean | null;
   expected_release_date?: string | null;
+  completed_at?: string | null;
   created_at: string;
   updated_at: string;
   requester_username: string;
@@ -379,6 +380,7 @@ export interface RequestCounts {
   downloading: number;
   fulfilled: number;
   failed: number;
+  cancelled?: number;
   total: number;
   unviewed?: number;
 }

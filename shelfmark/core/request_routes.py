@@ -4,9 +4,10 @@ Registers /api/requests endpoints for the book request workflow.
 Authenticated users can create requests; admins can approve/deny them.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time as dt_time
 import threading
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request, session
 
@@ -16,6 +17,8 @@ from shelfmark.core.request_db import RequestDB
 from shelfmark.core.user_db import UserDB
 
 logger = setup_logger(__name__)
+RELEASE_TIMEZONE = ZoneInfo("America/New_York")
+RELEASE_ACTIVATION_HOUR = 9
 
 
 def _normalize_release_date(raw_value: object) -> str | None:
@@ -41,20 +44,33 @@ def _should_start_as_prerelease(is_released: bool | None, expected_release_date:
     """Return True when a request should be held until its future release date."""
     if is_released is not False or not expected_release_date:
         return False
-    try:
-        return date.fromisoformat(expected_release_date) > date.today()
-    except ValueError:
+    release_ready_at = _release_ready_datetime(expected_release_date)
+    if release_ready_at is None:
         return False
+    return datetime.now(RELEASE_TIMEZONE) < release_ready_at
 
 
 def _is_future_release_date(expected_release_date: str | None) -> bool:
-    """Return True when the supplied ISO date is strictly in the future."""
+    """Return True when the supplied release date/time is still in the future."""
+    release_ready_at = _release_ready_datetime(expected_release_date)
+    if release_ready_at is None:
+        return False
+    return datetime.now(RELEASE_TIMEZONE) < release_ready_at
+
+
+def _release_ready_datetime(expected_release_date: str | None) -> datetime | None:
+    """Return the 9:00 AM America/New_York activation time for an ISO release date."""
     if not expected_release_date:
-        return False
+        return None
     try:
-        return date.fromisoformat(expected_release_date) > date.today()
+        release_date = date.fromisoformat(expected_release_date)
     except ValueError:
-        return False
+        return None
+    return datetime.combine(
+        release_date,
+        dt_time(hour=RELEASE_ACTIVATION_HOUR),
+        tzinfo=RELEASE_TIMEZONE,
+    )
 
 
 def _get_auth_mode():
