@@ -13,6 +13,7 @@ interface RequestsSidebarProps {
   onRetry: (requestId: number) => Promise<void>;
   onActivatePrerelease: (requestId: number) => Promise<void>;
   onMoveToPrerelease: (requestId: number, expectedReleaseDate: string) => Promise<void>;
+  onSetStatus: (requestId: number, status: RequestStatus) => Promise<void>;
   onDelete: (requestId: number) => Promise<void>;
   onMarkCompleted: (requestId: number) => Promise<void>;
   onRefresh: () => Promise<void>;
@@ -119,6 +120,7 @@ export const RequestsSidebar = ({
   onRetry,
   onActivatePrerelease,
   onMoveToPrerelease,
+  onSetStatus,
   onDelete,
   onMarkCompleted,
   onRefresh,
@@ -128,6 +130,7 @@ export const RequestsSidebar = ({
   const [denyNote, setDenyNote] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
   const [prereleaseDateById, setPrereleaseDateById] = useState<Record<number, string>>({});
+  const [selectedStatusById, setSelectedStatusById] = useState<Record<number, RequestStatus>>({});
   const addProcessing = (id: number) => setProcessingIds(prev => new Set(prev).add(id));
   const removeProcessing = (id: number) => setProcessingIds(prev => { const next = new Set(prev); next.delete(id); return next; });
   const isProcessing = (id: number) => processingIds.has(id);
@@ -225,23 +228,6 @@ export const RequestsSidebar = ({
     }
   };
 
-  const handleMoveToPrereleaseClick = async (requestId: number, expectedReleaseDate?: string | null) => {
-    if (!expectedReleaseDate) return;
-    addProcessing(requestId);
-    try {
-      await onMoveToPrerelease(requestId, expectedReleaseDate);
-      setPrereleaseDateById(prev => {
-        const next = { ...prev };
-        delete next[requestId];
-        return next;
-      });
-    } catch (error) {
-      console.error('Failed to move request to prerelease:', error);
-    } finally {
-      removeProcessing(requestId);
-    }
-  };
-
   const handleClearFulfilled = async () => {
     // Clear all completed requests (fulfilled, denied, failed, cancelled)
     const clearableRequests = requests.filter(
@@ -269,11 +255,48 @@ export const RequestsSidebar = ({
   const getPrereleaseDateValue = (req: BookRequest): string =>
     prereleaseDateById[req.id] ?? req.expected_release_date ?? '';
 
+  const getSelectedStatus = (req: BookRequest): RequestStatus =>
+    selectedStatusById[req.id] ?? req.status;
+
+  const handleAdminStatusApply = async (req: BookRequest) => {
+    const nextStatus = getSelectedStatus(req);
+    if (nextStatus === req.status) return;
+
+    addProcessing(req.id);
+    try {
+      if (nextStatus === 'prerelease_requested') {
+        const expectedReleaseDate = getPrereleaseDateValue(req);
+        if (!expectedReleaseDate) {
+          return;
+        }
+        await onMoveToPrerelease(req.id, expectedReleaseDate);
+      } else {
+        await onSetStatus(req.id, nextStatus);
+      }
+      setSelectedStatusById((prev) => {
+        const next = { ...prev };
+        delete next[req.id];
+        return next;
+      });
+      if (nextStatus === 'prerelease_requested') {
+        setPrereleaseDateById((prev) => {
+          const next = { ...prev };
+          delete next[req.id];
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to apply request status change:', error);
+    } finally {
+      removeProcessing(req.id);
+    }
+  };
+
   const renderRequestItem = (req: BookRequest) => {
     const statusStyle = STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
-    const isApproved = req.status === 'approved';
     const isPrerelease = req.status === 'prerelease_requested';
+    const selectedStatus = getSelectedStatus(req);
     const isHistoryItem = HISTORY_STATUSES.includes(req.status);
     // Show retry for: failed, cancelled, denied, stuck downloading, or approved (audiobooks)
     const isRetryable = req.status === 'failed' || req.status === 'cancelled' || req.status === 'denied' || req.status === 'downloading' || req.status === 'approved';
@@ -543,23 +566,45 @@ export const RequestsSidebar = ({
               </div>
             )}
 
-            {isAdmin && (isPending || isApproved) && (
+            {isAdmin && (
               <div className="flex gap-1 mt-1.5">
-                <input
-                  type="date"
-                  value={getPrereleaseDateValue(req)}
-                  onChange={(e) => setPrereleaseDateById(prev => ({ ...prev, [req.id]: e.target.value }))}
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatusById(prev => ({ ...prev, [req.id]: e.target.value as RequestStatus }))}
                   className="flex-1 px-2 py-1 text-xs rounded border border-[var(--border-muted)] bg-[var(--bg)]"
                   disabled={isProcessing(req.id)}
-                  aria-label={`Release date for ${req.title}`}
-                />
+                  aria-label={`Status for ${req.title}`}
+                >
+                  <option value="pending">Pending</option>
+                  <option value="prerelease_requested">Pre-release</option>
+                  <option value="approved">Approved</option>
+                  <option value="denied">Denied</option>
+                  <option value="downloading">Downloading</option>
+                  <option value="fulfilled">Fulfilled</option>
+                  <option value="failed">Failed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                {selectedStatus === 'prerelease_requested' && (
+                  <input
+                    type="date"
+                    value={getPrereleaseDateValue(req)}
+                    onChange={(e) => setPrereleaseDateById(prev => ({ ...prev, [req.id]: e.target.value }))}
+                    className="flex-1 px-2 py-1 text-xs rounded border border-[var(--border-muted)] bg-[var(--bg)]"
+                    disabled={isProcessing(req.id)}
+                    aria-label={`Release date for ${req.title}`}
+                  />
+                )}
                 <button
                   type="button"
-                  onClick={() => handleMoveToPrereleaseClick(req.id, getPrereleaseDateValue(req))}
-                  disabled={isProcessing(req.id) || !getPrereleaseDateValue(req)}
+                  onClick={() => handleAdminStatusApply(req)}
+                  disabled={
+                    isProcessing(req.id) ||
+                    selectedStatus === req.status ||
+                    (selectedStatus === 'prerelease_requested' && !getPrereleaseDateValue(req))
+                  }
                   className="px-2 py-1 text-xs font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isProcessing(req.id) ? 'Holding...' : 'Schedule Pre-release'}
+                  {isProcessing(req.id) ? 'Applying...' : 'Apply'}
                 </button>
               </div>
             )}

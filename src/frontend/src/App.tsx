@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, CSSProperties } from
 import { Navigate, Route, Routes } from 'react-router-dom';
 import {
   Book,
+  BookRequest,
   Release,
   StatusData,
   AppConfig,
@@ -152,6 +153,7 @@ function App() {
     handleRetry: handleRequestRetry,
     handleActivatePrerelease: handleRequestActivatePrerelease,
     handleMoveToPrerelease: handleRequestMoveToPrerelease,
+    handleSetStatus: handleRequestSetStatus,
     handleDelete: handleRequestDelete,
     handleMarkCompleted: handleRequestMarkCompleted,
     refreshRequests,
@@ -207,6 +209,16 @@ function App() {
       throw error;
     }
   }, [handleRequestMoveToPrerelease, showToast]);
+
+  const handleSetStatusWithToast = useCallback(async (requestId: number, status: BookRequest['status']) => {
+    try {
+      await handleRequestSetStatus(requestId, status);
+      showToast(`Request moved to ${status.replace(/_/g, ' ')}`, 'success');
+    } catch (error) {
+      showToast('Failed to update request status', 'error');
+      throw error;
+    }
+  }, [handleRequestSetStatus, showToast]);
 
   const handleMarkCompletedWithToast = useCallback(async (requestId: number) => {
     try {
@@ -1053,6 +1065,7 @@ function App() {
           onRetry={handleRetryWithToast}
           onActivatePrerelease={handleActivatePrereleaseWithToast}
           onMoveToPrerelease={handleMoveToPrereleaseWithToast}
+          onSetStatus={handleSetStatusWithToast}
           onDelete={handleRequestDelete}
           onMarkCompleted={handleMarkCompletedWithToast}
           onRefresh={refreshRequests}

@@ -28,6 +28,7 @@ interface UseRequestsReturn {
   handleRetry: (requestId: number) => Promise<void>;
   handleActivatePrerelease: (requestId: number) => Promise<void>;
   handleMoveToPrerelease: (requestId: number, expectedReleaseDate: string) => Promise<void>;
+  handleSetStatus: (requestId: number, status: BookRequest['status']) => Promise<void>;
   handleDelete: (requestId: number) => Promise<void>;
   handleMarkCompleted: (requestId: number) => Promise<void>;
   refreshRequests: () => Promise<void>;
@@ -225,6 +226,16 @@ export const useRequests = ({
     }
   }, [fetchAll]);
 
+  const handleSetStatus = useCallback(async (requestId: number, status: BookRequest['status']) => {
+    try {
+      await updateRequestStatus(requestId, status);
+      await fetchAll();
+    } catch (error) {
+      console.error('Failed to update request status:', error);
+      throw error;
+    }
+  }, [fetchAll]);
+
   return {
     requests,
     counts,
@@ -235,6 +246,7 @@ export const useRequests = ({
     handleRetry,
     handleActivatePrerelease,
     handleMoveToPrerelease,
+    handleSetStatus,
     handleDelete,
     handleMarkCompleted,
     refreshRequests: fetchAll,
