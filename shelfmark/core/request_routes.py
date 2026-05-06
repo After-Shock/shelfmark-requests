@@ -593,6 +593,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             request_id,
             expected_release_date=expected_release_date,
             is_released=False,
+            hidden_from_admin=False,
         )
         updated = request_db.update_request_status(
             request_id, "prerelease_requested", approved_by=admin_user_id
@@ -614,6 +615,10 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         admin_user_id = _get_db_user_id()
 
+        request_db.update_request_metadata(
+            request_id,
+            hidden_from_admin=False,
+        )
         # Update to approved status (ready for retry)
         updated = request_db.update_request_status(
             request_id, "approved", approved_by=admin_user_id
