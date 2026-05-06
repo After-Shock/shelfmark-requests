@@ -578,7 +578,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
-        if req["status"] not in {"pending", "approved"}:
+        if req["status"] not in {"pending", "approved", "failed"}:
             return jsonify({"error": f"Cannot move a request with status '{req['status']}' to prerelease"}), 400
 
         data = request.get_json() or {}
