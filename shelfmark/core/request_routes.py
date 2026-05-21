@@ -521,7 +521,17 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         if not new_status:
             return jsonify({"error": "status is required"}), 400
 
-        valid_statuses = ["pending", "prerelease_requested", "approved", "denied", "downloading", "fulfilled", "failed", "cancelled"]
+        valid_statuses = [
+            "pending",
+            "prerelease_requested",
+            "approved",
+            "denied",
+            "downloading",
+            "fulfilled",
+            "failed",
+            "cancelled",
+            "no_sources_requested",
+        ]
         if new_status not in valid_statuses:
             return jsonify({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}), 400
         if new_status == "prerelease_requested":

@@ -211,7 +211,11 @@ class TestAdminPrereleaseTransitions:
         data = json.loads(resp.data)
         assert data["requests"][0]["completed_at"] == "2026-05-05 13:00:00"
         request_db.list_requests.assert_called_once_with(
-            user_id=1, status=None, limit=100, offset=0
+            user_id=None,
+            status=None,
+            limit=100,
+            offset=0,
+            include_hidden_completed_for_admin=True,
         )
 
     def test_admin_list_requests_includes_hidden_completed_history(self, app):
@@ -229,7 +233,7 @@ class TestAdminPrereleaseTransitions:
             status=None,
             limit=100,
             offset=0,
-            include_hidden_from_admin=True,
+            include_hidden_completed_for_admin=True,
         )
 
     def test_move_pending_request_to_prerelease(self, app):
@@ -270,6 +274,7 @@ class TestAdminPrereleaseTransitions:
             1,
             expected_release_date="2099-01-01",
             is_released=False,
+            hidden_from_admin=False,
         )
         request_db.update_request_status.assert_called_once_with(1, "prerelease_requested", approved_by=1)
         mock_broadcast.assert_called_once()
@@ -353,4 +358,74 @@ class TestAdminPrereleaseTransitions:
 
         assert resp.status_code == 400
         assert "move-to-prerelease" in json.loads(resp.data)["error"]
-        request_db.update_request_status.assert_not_called()
+
+    def test_admin_can_set_no_sources_requested_status(self, app):
+        request_db = app.request_db
+        request_db.get_request.return_value = {
+            "id": 1,
+            "title": "Missing Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Author",
+            "user_id": 1,
+        }
+        request_db.update_request_status.return_value = {
+            "id": 1,
+            "title": "Missing Book",
+            "status": "no_sources_requested",
+            "content_type": "ebook",
+            "author": "Author",
+            "user_id": 1,
+            "admin_note": "Requested from provider",
+        }
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast:
+                resp = client.put(
+                    "/api/requests/1/status",
+                    json={"status": "no_sources_requested", "admin_note": "Requested from provider"},
+                )
+
+        assert resp.status_code == 200
+        request_db.update_request_status.assert_called_once_with(
+            1,
+            "no_sources_requested",
+            admin_note="Requested from provider",
+            approved_by=1,
+        )
+        mock_broadcast.assert_called_once()
+
+    def test_no_sources_requested_does_not_send_terminal_notification(self, app):
+        request_db = app.request_db
+        request_db.get_request.return_value = {
+            "id": 1,
+            "title": "Missing Book",
+            "status": "approved",
+            "content_type": "ebook",
+            "author": "Author",
+            "user_id": 1,
+        }
+        request_db.update_request_status.return_value = {
+            "id": 1,
+            "title": "Missing Book",
+            "status": "no_sources_requested",
+            "content_type": "ebook",
+            "author": "Author",
+            "user_id": 1,
+        }
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._broadcast_request_update"), \
+                 patch("shelfmark.core.request_routes._send_status_notification") as mock_notify:
+                resp = client.put("/api/requests/1/status", json={"status": "no_sources_requested"})
+
+        assert resp.status_code == 200
+        mock_notify.assert_not_called()
+        request_db.update_request_status.assert_called_once_with(
+            1,
+            "no_sources_requested",
+            admin_note=None,
+            approved_by=1,
+        )

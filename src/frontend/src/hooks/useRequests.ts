@@ -40,6 +40,7 @@ const EMPTY_COUNTS: RequestCounts = {
   approved: 0,
   denied: 0,
   downloading: 0,
+  no_sources_requested: 0,
   fulfilled: 0,
   failed: 0,
   cancelled: 0,

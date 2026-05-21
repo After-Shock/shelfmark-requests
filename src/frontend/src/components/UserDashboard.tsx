@@ -19,6 +19,7 @@ const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: st
   approved: { bg: 'bg-sky-500/20', text: 'text-sky-700 dark:text-sky-300', label: 'Approved' },
   denied: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Denied' },
   downloading: { bg: 'bg-indigo-500/20', text: 'text-indigo-700 dark:text-indigo-300', label: 'Downloading' },
+  no_sources_requested: { bg: 'bg-orange-500/20', text: 'text-orange-700 dark:text-orange-300', label: 'Requested from Provider' },
   fulfilled: { bg: 'bg-green-500/20', text: 'text-green-700 dark:text-green-300', label: 'Fulfilled' },
   failed: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' },
   cancelled: { bg: 'bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', label: 'Cancelled' },
@@ -51,7 +52,7 @@ export const UserDashboard = ({
   onManualRequest,
 }: UserDashboardProps) => {
   const pendingCount = counts.pending || 0;
-  const inProgressCount = (counts.approved || 0) + (counts.downloading || 0);
+  const inProgressCount = (counts.approved || 0) + (counts.downloading || 0) + (counts.no_sources_requested || 0);
   const fulfilledCount = counts.fulfilled || 0;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
