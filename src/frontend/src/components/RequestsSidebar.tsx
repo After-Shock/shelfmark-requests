@@ -44,6 +44,15 @@ const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: st
   },
   denied: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Denied' },
   downloading: { bg: 'bg-indigo-500/20', text: 'text-indigo-700 dark:text-indigo-300', label: 'Downloading' },
+  no_sources_requested: {
+    bg: '',
+    text: '',
+    label: 'Requested',
+    customStyle: {
+      backgroundColor: 'rgba(249, 115, 22, 0.2)',
+      color: '#ea580c'
+    }
+  },
   fulfilled: { bg: 'bg-green-500/20', text: 'text-green-700 dark:text-green-300', label: 'Fulfilled' },
   failed: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' },
   cancelled: { bg: 'bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', label: 'Cancelled' },
@@ -580,6 +589,7 @@ export const RequestsSidebar = ({
                   <option value="approved">Approved</option>
                   <option value="denied">Denied</option>
                   <option value="downloading">Downloading</option>
+                  <option value="no_sources_requested">No Sources / Requested</option>
                   <option value="fulfilled">Fulfilled</option>
                   <option value="failed">Failed</option>
                   <option value="cancelled">Cancelled</option>
