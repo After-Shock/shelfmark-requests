@@ -15,13 +15,37 @@ services:
       DEBUG: true
       PUID: 1000
       PGID: 1000
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: saltbox
+      traefik.http.routers.books-shelfmark-http.entrypoints: web
+      traefik.http.routers.books-shelfmark-http.middlewares: globalHeaders@file,redirect-to-https@docker,robotHeaders@file
+      traefik.http.routers.books-shelfmark-http.priority: "20"
+      traefik.http.routers.books-shelfmark-http.rule: Host(`books.sullyflix.com`)
+      traefik.http.routers.books-shelfmark-http.service: books-shelfmark-http
+      traefik.http.routers.books-shelfmark.entrypoints: websecure
+      traefik.http.routers.books-shelfmark.middlewares: globalHeaders@file,secureHeaders@file,robotHeaders@file
+      traefik.http.routers.books-shelfmark.priority: "20"
+      traefik.http.routers.books-shelfmark.rule: Host(`books.sullyflix.com`)
+      traefik.http.routers.books-shelfmark.service: books-shelfmark
+      traefik.http.routers.books-shelfmark.tls: "true"
+      traefik.http.routers.books-shelfmark.tls.certresolver: cfdns
+      traefik.http.routers.books-shelfmark.tls.options: securetls@file
+      traefik.http.services.books-shelfmark-http.loadbalancer.server.port: "8084"
+      traefik.http.services.books-shelfmark.loadbalancer.server.port: "8084"
+    networks:
+      - saltbox
     ports:
       - 8084:8084
     restart: unless-stopped
     volumes:
-      - ./.local/config:/config
+      - ./config:/config
       - ./.local/books:/books
       - ./.local/log:/var/log/shelfmark
       - ./.local/tmp:/tmp/shelfmark
       # Required for torrent / usenet - path must match your download client's volume exactly
       # - /path/to/downloads:/path/to/downloads
+
+networks:
+  saltbox:
+    external: true

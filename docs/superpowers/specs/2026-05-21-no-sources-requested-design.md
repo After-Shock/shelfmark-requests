@@ -6,7 +6,7 @@
 
 Add a new request status, `no_sources_requested`, for cases where staff cannot find the requested item through normal sources but has requested it from the provider. This is an active request state, not a terminal one.
 
-The new state must preserve the current request workflow, remain visible to admins and users, and roll out safely against the production SQLite database stored at `/config/users.db`.
+The new state must preserve the current request workflow, remain visible to admins and users, and roll out safely against the production SQLite database mounted in the container at `/config/users.db` and stored on the host at `/opt/shelfmark-requests/config/users.db`.
 
 ## Status Semantics
 
@@ -137,7 +137,7 @@ Manual verification:
 - confirm the user dashboard displays the new label
 - confirm transition from `no_sources_requested` to `fulfilled` works normally
 - confirm transition from `no_sources_requested` to `failed` works normally
-- confirm production startup still reads existing request data from `/config/users.db`
+- confirm production startup still reads existing request data from `/opt/shelfmark-requests/config/users.db` via `/config/users.db`
 
 ## Files Expected To Change During Implementation
 
