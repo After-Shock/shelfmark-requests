@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./config:/config
-      - ./.local/books:/books
+      - /media/bank/ebookimport:/books
       - ./.local/log:/var/log/shelfmark
       - ./.local/tmp:/tmp/shelfmark
       # Required for torrent / usenet - path must match your download client's volume exactly
