@@ -717,6 +717,10 @@ def _extract_libgen_download_url(link: str, cancel_flag: Optional[Event] = None)
             logger.debug(f"Libgen fast: redirected away to {final_url}")
             return ""
 
+        if "file not found in db" in html.lower():
+            logger.debug("Libgen fast: page says file not found in DB")
+            return ""
+
         if "get.php" not in html:
             logger.debug(f"Libgen fast: page doesn't contain get.php")
             return ""
