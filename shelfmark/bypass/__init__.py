@@ -3,3 +3,6 @@
 
 class BypassCancelledException(Exception):
     """Raised when a bypass operation is cancelled."""
+
+
+BypassCancelledError = BypassCancelledException

@@ -2,10 +2,18 @@ import requests
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, *, headers: dict | None = None, text: str = "") -> None:
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        headers: dict | None = None,
+        text: str = "",
+        url: str = "",
+    ) -> None:
         self.status_code = status_code
         self.headers = headers or {}
         self.text = text
+        self.url = url
 
     @property
     def is_redirect(self) -> bool:  # requests.Response compatibility
@@ -140,3 +148,48 @@ def test_html_get_page_locked_aa_does_not_fail_over_on_cross_host_redirect(monke
 
     assert html == ""
     assert calls == ["https://annas-archive.li/search?q=test"]
+
+
+def test_html_get_page_returns_response_url_when_requested(monkeypatch):
+    import shelfmark.download.http as http
+
+    monkeypatch.setattr(http, "_is_cf_bypass_enabled", lambda: False)
+    monkeypatch.setattr(http, "get_proxies", lambda _url: {})
+    monkeypatch.setattr(http, "get_ssl_verify", lambda _url: True)
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(http.network, "get_aa_base_url", lambda: "https://annas-archive.li")
+    monkeypatch.setattr(http.network, "should_rotate_dns_for_url", lambda _url: False)
+
+    def fake_get(url: str, **kwargs):
+        return _FakeResponse(200, text="OK", url=f"{url}&final=1")
+
+    monkeypatch.setattr(http.requests, "get", fake_get)
+
+    result = http.html_get_page(
+        "https://annas-archive.li/search?q=test",
+        include_response_url=True,
+    )
+
+    assert result == ("OK", "https://annas-archive.li/search?q=test&final=1")
+
+
+def test_html_get_page_uses_ssl_verify_for_requests(monkeypatch):
+    import shelfmark.download.http as http
+
+    monkeypatch.setattr(http, "_is_cf_bypass_enabled", lambda: False)
+    monkeypatch.setattr(http, "get_proxies", lambda _url: {})
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(http.network, "get_aa_base_url", lambda: "https://annas-archive.li")
+    monkeypatch.setattr(http.network, "should_rotate_dns_for_url", lambda _url: False)
+    monkeypatch.setattr(http, "get_ssl_verify", lambda _url: "VERIFY_SENTINEL")
+
+    seen: dict[str, object] = {}
+
+    def fake_get(url: str, **kwargs):
+        seen.update(kwargs)
+        return _FakeResponse(200, text="OK", url=url)
+
+    monkeypatch.setattr(http.requests, "get", fake_get)
+
+    assert http.html_get_page("https://annas-archive.li/search?q=test") == "OK"
+    assert seen["verify"] == "VERIFY_SENTINEL"
