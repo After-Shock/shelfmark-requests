@@ -16,7 +16,7 @@ import threading
 import time
 import traceback
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
 from threading import Event
@@ -1142,7 +1142,7 @@ def _start_ffmpeg_recording(display: str) -> None:
     """Start FFmpeg screen recording for debug mode."""
     global DISPLAY
     RECORDING_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%y%m%d-%H%M%S")
     output_file = RECORDING_DIR / f"screen_recording_{timestamp}.mp4"
 
     screen_width, screen_height = get_screen_size()

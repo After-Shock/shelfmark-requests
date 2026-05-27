@@ -28,6 +28,10 @@ htmlcov/
 # Logs
 *.log
 
+# Runtime state mounted separately in production/local compose
+config/
+.local/
+
 # Build artifacts
 build/
 dist/
