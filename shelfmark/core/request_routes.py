@@ -513,10 +513,11 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             return jsonify({"error": "Access denied"}), 403
 
         if is_admin and not is_owner:
-            # Admin hiding request from their view (doesn't affect user's list)
-            request_db.hide_request_from_admin(request_id)
-            logger.info(f"Request #{request_id} hidden from admin view")
-            _broadcast_request_update({"id": request_id, "deleted": True})
+            # Admin hiding a request removes the entire group from the admin queue.
+            canonical = request_db.hide_request_group_from_admin(request_id)
+            logger.info(f"Request group for #{request_id} hidden from admin view")
+            if canonical:
+                _broadcast_request_update(canonical)
             return jsonify({"success": True, "action": "hidden"})
         else:
             # Owner permanently deleting their own request.

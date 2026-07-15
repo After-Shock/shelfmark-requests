@@ -448,6 +448,22 @@ def test_canonical_promotion_copies_current_canonical_metadata(grouped_requests)
     assert promoted["hidden_from_admin"] == 1
 
 
+@pytest.mark.parametrize("target", ["canonical", "linked"])
+def test_hiding_group_from_admin_resolves_any_member_and_survives_promotion(
+    grouped_requests, target
+):
+    db, canonical, linked = grouped_requests
+    target_id = canonical["id"] if target == "canonical" else linked["id"]
+
+    hidden = db.hide_request_group_from_admin(target_id)
+
+    assert hidden["id"] == canonical["id"]
+    assert {row["hidden_from_admin"] for row in db.get_request_group(canonical["id"])} == {1}
+    promoted = db.delete_user_request(canonical["id"], canonical["user_id"])
+    assert promoted["id"] == linked["id"]
+    assert promoted["hidden_from_admin"] == 1
+
+
 def test_group_lookup_rejects_dangling_canonical_reference(grouped_requests, monkeypatch):
     db, _, linked = grouped_requests
     _corrupt_canonical_link(db, linked["id"], 999)

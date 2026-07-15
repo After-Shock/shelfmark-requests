@@ -930,19 +930,34 @@ class RequestDB:
         was_deleted, _ = self._delete_request(request_id)
         return was_deleted
 
-    def hide_request_from_admin(self, request_id: int) -> bool:
-        """Hide a request from admin view. Returns True if updated."""
+    def hide_request_group_from_admin(self, request_id: int) -> Optional[Dict[str, Any]]:
+        """Hide every request in a group and return its canonical request."""
         with self._lock:
             conn = self._connect()
             try:
-                cursor = conn.execute(
-                    "UPDATE requests SET hidden_from_admin = 1 WHERE id = ?",
-                    (request_id,)
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+                conn.execute(
+                    "UPDATE requests SET hidden_from_admin = 1 "
+                    "WHERE id = ? OR canonical_request_id = ?",
+                    (canonical_id, canonical_id),
                 )
+                canonical = self._get_request(conn, canonical_id)
                 conn.commit()
-                return cursor.rowcount > 0
+                return canonical
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
+
+    def hide_request_from_admin(self, request_id: int) -> bool:
+        """Hide a request from admin view. Returns True if updated."""
+        return self.hide_request_group_from_admin(request_id) is not None
 
     def delete_requests_by_user(self, user_id: int) -> int:
         """Delete all requests for a given user. Returns number of deleted requests."""

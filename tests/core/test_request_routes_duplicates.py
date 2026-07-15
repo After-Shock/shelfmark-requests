@@ -189,3 +189,31 @@ def test_retry_updates_the_entire_request_group(app):
 
     assert response.status_code == 200
     assert {app.request_db.get_request(row["id"])["status"] for row in (canonical, linked)} == {"approved"}
+
+
+@pytest.mark.parametrize("target", ["canonical", "linked"])
+def test_admin_non_owner_delete_hides_entire_group_and_broadcasts_canonical(app, target):
+    canonical, linked = _group(app)
+    target_id = canonical["id"] if target == "canonical" else linked["id"]
+
+    with patch("shelfmark.core.request_routes._broadcast_request_update") as broadcast:
+        with app.test_client() as client:
+            login(client, 3, is_admin=True)
+            response = client.delete(f"/api/requests/{target_id}")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"success": True, "action": "hidden"}
+    assert {app.request_db.get_request(row["id"])["hidden_from_admin"] for row in (canonical, linked)} == {1}
+    broadcast.assert_called_once_with(app.request_db.get_request(canonical["id"]))
+
+    with app.test_client() as client:
+        login(client, canonical["user_id"])
+        deleted = client.delete(f"/api/requests/{canonical['id']}")
+        login(client, 3, is_admin=True)
+        admin_rows = client.get("/api/requests").get_json()["requests"]
+
+    assert deleted.status_code == 200
+    promoted = app.request_db.get_request(linked["id"])
+    assert promoted["canonical_request_id"] is None
+    assert promoted["hidden_from_admin"] == 1
+    assert linked["id"] not in [row["id"] for row in admin_rows]
