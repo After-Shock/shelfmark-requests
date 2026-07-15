@@ -342,6 +342,21 @@ class RequestDB:
         with self._lock:
             conn = self._connect()
             try:
+                if canonical_request_id is not None:
+                    canonical_row = conn.execute(
+                        """WITH RECURSIVE request_group(id, canonical_request_id) AS (
+                               SELECT id, canonical_request_id FROM requests WHERE id = ?
+                               UNION ALL
+                               SELECT r.id, r.canonical_request_id
+                               FROM requests r
+                               JOIN request_group g ON r.id = g.canonical_request_id
+                           )
+                           SELECT id FROM request_group
+                           WHERE canonical_request_id IS NULL""",
+                        (canonical_request_id,),
+                    ).fetchone()
+                    if canonical_row:
+                        canonical_request_id = canonical_row["id"]
                 safe_cover_url = _sanitize_url(cover_url)
                 cursor = conn.execute(
                     """INSERT INTO requests

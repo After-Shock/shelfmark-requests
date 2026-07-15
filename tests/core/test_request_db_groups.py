@@ -75,3 +75,32 @@ def test_admin_lists_exclude_linked_rows_but_user_lists_include_them(request_db,
     assert [row["id"] for row in request_db.list_requests(user_id=None)] == [canonical["id"]]
     assert [row["id"] for row in request_db.list_requests(user_id=two_users[1])] == [linked["id"]]
     assert request_db.get_request(canonical["id"])["requester_count"] == 2
+
+
+def test_linked_target_is_normalized_to_its_canonical_request(request_db, two_users):
+    canonical = request_db.create_request(user_id=two_users[0], title="Dune")
+    linked = request_db.create_request(
+        user_id=two_users[1],
+        title="Dune",
+        canonical_request_id=canonical["id"],
+    )
+
+    nested_link = request_db.create_request(
+        user_id=two_users[0],
+        title="Dune",
+        canonical_request_id=linked["id"],
+    )
+
+    assert nested_link["canonical_request_id"] == canonical["id"]
+    assert request_db.get_request(canonical["id"])["requester_count"] == 3
+    assert request_db.get_request(linked["id"])["requester_count"] == 3
+    assert request_db.get_request(nested_link["id"])["requester_count"] == 3
+
+
+def test_missing_canonical_request_id_is_rejected(request_db, two_users):
+    with pytest.raises(sqlite3.IntegrityError):
+        request_db.create_request(
+            user_id=two_users[0],
+            title="Dune",
+            canonical_request_id=999,
+        )
