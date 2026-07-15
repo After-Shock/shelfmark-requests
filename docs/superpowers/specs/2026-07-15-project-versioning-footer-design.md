@@ -44,7 +44,7 @@ An explicit deployment environment value remains authoritative so packaged or CI
 
 `BUILD_VERSION` remains unchanged and continues representing build-specific metadata when supplied.
 
-The version loader validates `major.minor.patch` numeric syntax. Reading or validation errors are logged at an appropriate level and do not prevent application startup.
+The version loader validates `major.minor.patch` numeric syntax. Missing files use the fallback silently; unreadable files and malformed values log a warning and do not prevent application startup.
 
 ## API Data Flow
 
