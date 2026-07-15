@@ -14,6 +14,7 @@ from flask import Flask, jsonify, request, session
 from shelfmark.core.audiobookshelf import abs_client
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.request_db import RequestDB
+from shelfmark.core.request_notifications import send_request_notification
 from shelfmark.core.user_db import UserDB
 
 logger = setup_logger(__name__)
@@ -286,26 +287,29 @@ def _send_discord_book_available(req: dict) -> None:
         logger.warning(f"Discord book-available notification failed for #{req.get('id')}: {e}")
 
 
-def _send_status_notification(
-    user_db: UserDB, req: dict, new_status: str, admin_note: str | None = None
+def _send_group_status_notifications(
+    request_db: RequestDB,
+    user_db: UserDB,
+    request_id: int,
+    status_override: str | None = None,
 ) -> None:
-    """Send email notification to the requesting user (best-effort, non-blocking)."""
-    try:
-        user_id = req.get("user_id")
-        if not user_id:
-            return
-        user = user_db.get_user(user_id=user_id)
-        if not user or not user.get("email"):
-            return
-        from shelfmark.core.request_notifications import send_request_notification
-        send_request_notification(
-            user_email=user["email"],
-            request_title=req.get("title", "Unknown"),
-            new_status=new_status,
-            admin_note=admin_note,
-        )
-    except Exception as e:
-        logger.warning(f"Failed to send notification for request #{req.get('id')}: {e}")
+    """Send a status notification to every active member of a request group."""
+    for member in request_db.get_request_group(request_id, active_only=True):
+        try:
+            user = user_db.get_user(user_id=member["user_id"])
+            email = (user or {}).get("email")
+            if not email:
+                continue
+            send_request_notification(
+                email,
+                member.get("title", "Unknown"),
+                status_override or member["status"],
+                member.get("admin_note"),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Request notification failed for user %s: %s", member["user_id"], exc
+            )
 
 
 def _requests_enabled() -> bool:
@@ -557,8 +561,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         logger.info(f"Request #{request_id} approved by admin {admin_user_id}")
         _broadcast_request_update(updated)
 
-        # Send notification to requester
-        _send_status_notification(user_db, req, "approved")
+        _send_group_status_notifications(request_db, user_db, request_id, "approved")
 
         # For audiobooks, just stay at "approved" status - admin will manually manage
         content_type = req.get("content_type", "ebook")
@@ -602,8 +605,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         logger.info(f"Request #{request_id} denied by admin {admin_user_id} (was {req['status']})")
         _broadcast_request_update(updated)
 
-        # Send notification to requester
-        _send_status_notification(user_db, req, "denied", admin_note=admin_note)
+        _send_group_status_notifications(request_db, user_db, request_id, "denied")
 
         return jsonify(updated)
 
@@ -646,13 +648,10 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         logger.info(f"Request #{request_id} status changed to '{new_status}' by admin {admin_user_id} (was {req['status']})")
         _broadcast_request_update(updated)
 
-        # Send notification to requester if status changed significantly
         if new_status in ["approved", "denied", "fulfilled", "failed"]:
-            _send_status_notification(user_db, req, new_status, admin_note=admin_note)
+            _send_group_status_notifications(request_db, user_db, request_id, new_status)
         if new_status == "fulfilled":
-            updated_req = request_db.get_request(request_id)
-            if updated_req:
-                _send_discord_book_available(updated_req)
+            _send_discord_book_available(updated)
 
         return jsonify(updated)
 
@@ -677,7 +676,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         )
         logger.info(f"Request #{request_id} activated from prerelease by admin {admin_user_id}")
         _broadcast_request_update(updated)
-        _send_status_notification(user_db, req, "activated")
+        _send_group_status_notifications(request_db, user_db, request_id, "activated")
         return jsonify(updated)
 
     @app.route("/api/requests/<int:request_id>/move-to-prerelease", methods=["POST"])
@@ -784,12 +783,12 @@ def _auto_download_request(
     def _safe_update_status(status: str, **kwargs) -> None:
         """Update status only if the request still exists."""
         if request_db.get_request(request_id) is not None:
-            request_db.update_request_status(request_id, status, **kwargs)
-            _broadcast_request_update(request_db.get_request(request_id))
-            if status == "fulfilled":
-                updated_req = request_db.get_request(request_id)
-                if updated_req:
-                    _send_discord_book_available(updated_req)
+            updated = request_db.update_request_status(request_id, status, **kwargs)
+            _broadcast_request_update(updated)
+            if status in {"fulfilled", "failed"}:
+                _send_group_status_notifications(request_db, user_db, request_id, status)
+            if status == "fulfilled" and updated:
+                _send_discord_book_available(updated)
 
     try:
         from shelfmark.download import orchestrator as backend

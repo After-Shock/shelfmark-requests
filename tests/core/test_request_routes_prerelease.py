@@ -203,7 +203,7 @@ class TestAdminPrereleaseTransitions:
 
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
-            with patch("shelfmark.core.request_routes._send_status_notification") as mock_notify, \
+            with patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify, \
                  patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
                  patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
@@ -354,7 +354,7 @@ class TestAdminPrereleaseTransitions:
 
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
-            with patch("shelfmark.core.request_routes._send_status_notification"), \
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
                  patch("shelfmark.core.request_routes._broadcast_request_update"), \
                  patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
@@ -412,7 +412,7 @@ class TestAdminPrereleaseTransitions:
 
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
-            with patch("shelfmark.core.request_routes._send_status_notification"), \
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
                  patch("shelfmark.core.request_routes._broadcast_request_update"), \
                  patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
@@ -466,7 +466,7 @@ class TestAdminPrereleaseTransitions:
 
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
-            with patch("shelfmark.core.request_routes._send_status_notification"), \
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
                  patch("shelfmark.core.request_routes._broadcast_request_update"), \
                  patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
@@ -509,7 +509,7 @@ class TestAdminPrereleaseTransitions:
 
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
-            with patch("shelfmark.core.request_routes._send_status_notification"), \
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
                  patch("shelfmark.core.request_routes._broadcast_request_update"), \
                  patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
@@ -562,7 +562,7 @@ class TestAdminPrereleaseTransitions:
 
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
-            with patch("shelfmark.core.request_routes._send_status_notification") as mock_notify, \
+            with patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify, \
                  patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
                  patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
@@ -594,7 +594,7 @@ class TestAdminPrereleaseTransitions:
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
             with patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
-                 patch("shelfmark.core.request_routes._send_status_notification") as mock_notify:
+                 patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify:
                 resp = client.post("/api/requests/1/activate")
 
         assert resp.status_code == 200
@@ -845,7 +845,7 @@ class TestAdminPrereleaseTransitions:
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
             with patch("shelfmark.core.request_routes._broadcast_request_update"), \
-                 patch("shelfmark.core.request_routes._send_status_notification") as mock_notify:
+                 patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify:
                 resp = client.put("/api/requests/1/status", json={"status": "no_sources_requested"})
 
         assert resp.status_code == 200
@@ -908,7 +908,7 @@ class TestAdminPrereleaseTransitions:
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
             with patch("shelfmark.core.request_routes._broadcast_request_update"), \
-                 patch("shelfmark.core.request_routes._send_status_notification"):
+                 patch("shelfmark.core.request_routes._send_group_status_notifications"):
                 response = client.post("/api/requests/2/activate")
 
         assert response.status_code == 200

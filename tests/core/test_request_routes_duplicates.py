@@ -37,6 +37,28 @@ def app(request_db):
     return app
 
 
+@pytest.fixture
+def grouped_requests(request_db):
+    canonical, _ = request_db.create_or_join_request(
+        user_id=1, title="Dune", author="Frank Herbert", content_type="ebook"
+    )
+    linked, _ = request_db.create_or_join_request(
+        user_id=2, title="Dune", author="Frank Herbert", content_type="ebook"
+    )
+    return canonical, linked
+
+
+@pytest.fixture
+def user_db():
+    users = {
+        1: {"id": 1, "email": "first@example.com"},
+        2: {"id": 2, "email": "second@example.com"},
+    }
+    db = MagicMock()
+    db.get_user.side_effect = lambda *, user_id: users.get(user_id)
+    return db
+
+
 def login(client, user_id, *, is_admin=False):
     with client.session_transaction() as session:
         session["user_id"] = f"user-{user_id}"
@@ -159,6 +181,23 @@ def test_generic_status_update_updates_the_entire_request_group(app):
     assert {app.request_db.get_request(row["id"])["status"] for row in (canonical, linked)} == {"approved"}
 
 
+def test_fulfilling_linked_request_notifies_discord_once_with_canonical(app):
+    canonical, linked = _group(app)
+
+    with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
+         patch("shelfmark.core.request_routes._send_discord_book_available") as discord:
+        with app.test_client() as client:
+            login(client, 1, is_admin=True)
+            response = client.put(
+                f"/api/requests/{linked['id']}/status", json={"status": "fulfilled"}
+            )
+
+    assert response.status_code == 200
+    assert app.request_db.get_request(canonical["id"])["status"] == "fulfilled"
+    assert app.request_db.get_request(linked["id"])["status"] == "fulfilled"
+    discord.assert_called_once_with(app.request_db.get_request(canonical["id"]))
+
+
 def test_activate_updates_linked_prerelease_member(app):
     canonical, linked = _group(app, status="prerelease_requested")
 
@@ -189,6 +228,48 @@ def test_retry_updates_the_entire_request_group(app):
 
     assert response.status_code == 200
     assert {app.request_db.get_request(row["id"])["status"] for row in (canonical, linked)} == {"approved"}
+
+
+def test_status_notification_fans_out_to_all_active_users(request_db, user_db, grouped_requests):
+    from shelfmark.core.request_routes import _send_group_status_notifications
+
+    canonical, _ = grouped_requests
+    with patch("shelfmark.core.request_routes.send_request_notification") as send:
+        _send_group_status_notifications(request_db, user_db, canonical["id"], "fulfilled")
+
+    assert {call.args[0] for call in send.call_args_list} == {
+        "first@example.com",
+        "second@example.com",
+    }
+
+
+def test_removed_user_does_not_receive_group_notification(request_db, user_db, grouped_requests):
+    from shelfmark.core.request_routes import _send_group_status_notifications
+
+    canonical, linked = grouped_requests
+    request_db.delete_user_request(linked["id"], linked["user_id"])
+    with patch("shelfmark.core.request_routes.send_request_notification") as send:
+        _send_group_status_notifications(request_db, user_db, canonical["id"], "fulfilled")
+
+    assert [call.args[0] for call in send.call_args_list] == ["first@example.com"]
+
+
+def test_failed_group_recipient_notification_does_not_stop_other_recipients(
+    request_db, user_db, grouped_requests
+):
+    from shelfmark.core.request_routes import _send_group_status_notifications
+
+    canonical, _ = grouped_requests
+    with patch(
+        "shelfmark.core.request_routes.send_request_notification",
+        side_effect=[RuntimeError("SMTP unavailable"), None],
+    ) as send:
+        _send_group_status_notifications(request_db, user_db, canonical["id"], "fulfilled")
+
+    assert [call.args[0] for call in send.call_args_list] == [
+        "first@example.com",
+        "second@example.com",
+    ]
 
 
 @pytest.mark.parametrize("target", ["canonical", "linked"])

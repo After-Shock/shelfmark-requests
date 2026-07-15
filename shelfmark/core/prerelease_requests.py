@@ -29,22 +29,25 @@ def _parse_release_date(raw_value: Any) -> date | None:
         return None
 
 
-def _notify_request_activated(user_db: Any, request_row: dict[str, Any]) -> None:
-    user_id = request_row.get("user_id")
-    if not user_id:
-        return
-    try:
-        user = user_db.get_user(user_id=user_id)
-    except Exception as exc:
-        logger.warning("Failed to load user for prerelease request #%s: %s", request_row.get("id"), exc)
-        return
-    if not user or not user.get("email"):
-        return
-    send_request_notification(
-        user_email=user["email"],
-        request_title=request_row.get("title", "Unknown"),
-        new_status="activated",
-    )
+def _notify_group_activated(request_db: Any, user_db: Any, request_id: int) -> None:
+    """Notify every active member after a prerelease group is activated."""
+    for member in request_db.get_request_group(request_id, active_only=True):
+        try:
+            user = user_db.get_user(user_id=member["user_id"])
+            email = (user or {}).get("email")
+            if not email:
+                continue
+            send_request_notification(
+                user_email=email,
+                request_title=member.get("title", "Unknown"),
+                new_status="activated",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Prerelease activation notification failed for user %s: %s",
+                member["user_id"],
+                exc,
+            )
 
 
 def promote_due_prerelease_requests(
@@ -95,7 +98,7 @@ def promote_due_prerelease_requests(
         )
         if on_request_update is not None:
             on_request_update(updated)
-        _notify_request_activated(user_db, updated)
+        _notify_group_activated(request_db, user_db, updated["id"])
     return promoted
 
 
