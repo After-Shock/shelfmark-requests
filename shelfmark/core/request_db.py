@@ -2,7 +2,8 @@
 
 import sqlite3
 import threading
-from typing import Any, Dict, List, Optional
+import unicodedata
+from typing import Any, Dict, List, Literal, Optional
 
 from shelfmark.core.logger import setup_logger
 
@@ -14,6 +15,30 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
     if url and (url.startswith("http://") or url.startswith("https://")):
         return url
     return None
+
+
+def _normalize_match_text(value: Optional[str]) -> str:
+    """Normalize human-readable fields before matching requests."""
+    normalized = unicodedata.normalize("NFKC", value or "")
+    return " ".join(normalized.strip().casefold().split())
+
+
+def _same_request_identity(
+    existing: Dict[str, Any], *, title: str, author: Optional[str],
+    content_type: str, provider: Optional[str], provider_id: Optional[str],
+) -> bool:
+    """Return whether an active canonical request represents the same item."""
+    if existing["content_type"] != content_type:
+        return False
+    if provider and provider_id and existing.get("provider") and existing.get("provider_id"):
+        return (
+            _normalize_match_text(existing["provider"]) == _normalize_match_text(provider)
+            and existing["provider_id"].strip() == provider_id.strip()
+        )
+    return (
+        _normalize_match_text(existing.get("title")) == _normalize_match_text(title)
+        and _normalize_match_text(existing.get("author")) == _normalize_match_text(author)
+    )
 
 
 _VALID_STATUSES = (
@@ -29,6 +54,10 @@ _VALID_STATUSES = (
 )
 _VALID_CONTENT_TYPES = ("ebook", "audiobook")
 _TERMINAL_STATUSES = {"fulfilled", "denied", "failed", "cancelled"}
+_ACTIVE_GROUP_STATUSES = {
+    "pending", "prerelease_requested", "approved", "downloading", "no_sources_requested",
+}
+CreateRequestOutcome = Literal["created", "joined", "already_joined"]
 
 _CREATE_REQUESTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS requests (
@@ -316,6 +345,50 @@ class RequestDB:
             )
             conn.execute("UPDATE schema_version SET version = 9")
 
+    def _insert_request(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: int,
+        title: str,
+        content_type: str = "ebook",
+        author: Optional[str] = None,
+        year: Optional[str] = None,
+        cover_url: Optional[str] = None,
+        description: Optional[str] = None,
+        isbn_10: Optional[str] = None,
+        isbn_13: Optional[str] = None,
+        provider: Optional[str] = None,
+        provider_id: Optional[str] = None,
+        series_name: Optional[str] = None,
+        series_position: Optional[float] = None,
+        prefer_alternate_version: bool = False,
+        is_manual_request: bool = False,
+        is_released: Optional[bool] = None,
+        expected_release_date: Optional[str] = None,
+        canonical_request_id: Optional[int] = None,
+        status: str = "pending",
+        admin_note: Optional[str] = None,
+        approved_by: Optional[int] = None,
+        download_task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Insert and return a request using an existing transaction."""
+        cursor = conn.execute(
+            """INSERT INTO requests
+               (user_id, title, content_type, author, year, cover_url, description,
+                isbn_10, isbn_13, provider, provider_id, series_name, series_position,
+                prefer_alternate_version, is_manual_request, is_released, expected_release_date,
+                canonical_request_id, status, admin_note, approved_by, download_task_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, content_type, author, year, _sanitize_url(cover_url), description,
+             isbn_10, isbn_13, provider, provider_id, series_name, series_position,
+             1 if prefer_alternate_version else 0,
+             1 if is_manual_request else 0,
+             None if is_released is None else (1 if is_released else 0), expected_release_date,
+             canonical_request_id, status, admin_note, approved_by, download_task_id),
+        )
+        return self._get_request(conn, cursor.lastrowid)
+
     def create_request(
         self,
         user_id: int,
@@ -357,23 +430,95 @@ class RequestDB:
                     ).fetchone()
                     if canonical_row:
                         canonical_request_id = canonical_row["id"]
-                safe_cover_url = _sanitize_url(cover_url)
-                cursor = conn.execute(
-                    """INSERT INTO requests
-                       (user_id, title, content_type, author, year, cover_url, description,
-                        isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                        prefer_alternate_version, is_manual_request, is_released, canonical_request_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (user_id, title, content_type, author, year, safe_cover_url, description,
-                     isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                     1 if prefer_alternate_version else 0,
-                     1 if is_manual_request else 0,
-                     None if is_released is None else (1 if is_released else 0),
-                     canonical_request_id),
+                request = self._insert_request(
+                    conn, user_id=user_id, title=title, content_type=content_type,
+                    author=author, year=year, cover_url=cover_url, description=description,
+                    isbn_10=isbn_10, isbn_13=isbn_13, provider=provider,
+                    provider_id=provider_id, series_name=series_name,
+                    series_position=series_position,
+                    prefer_alternate_version=prefer_alternate_version,
+                    is_manual_request=is_manual_request, is_released=is_released,
+                    canonical_request_id=canonical_request_id,
                 )
                 conn.commit()
-                request_id = cursor.lastrowid
-                return self._get_request(conn, request_id)
+                return request
+            finally:
+                conn.close()
+
+    def create_or_join_request(
+        self,
+        *,
+        user_id: int,
+        title: str,
+        content_type: str = "ebook",
+        author: Optional[str] = None,
+        **metadata: Any,
+    ) -> tuple[Dict[str, Any], CreateRequestOutcome]:
+        """Atomically create an active request or join its canonical group."""
+        if content_type not in _VALID_CONTENT_TYPES:
+            raise ValueError(f"Invalid content_type: {content_type}")
+
+        create_fields = (
+            "year", "cover_url", "description", "isbn_10", "isbn_13", "provider",
+            "provider_id", "series_name", "series_position", "prefer_alternate_version",
+            "is_manual_request", "is_released", "expected_release_date",
+        )
+        create_metadata = {field: metadata[field] for field in create_fields if field in metadata}
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                candidates = conn.execute(
+                    "SELECT * FROM requests WHERE canonical_request_id IS NULL "
+                    "AND content_type = ? AND status IN (?,?,?,?,?) ORDER BY created_at, id",
+                    (content_type, *sorted(_ACTIVE_GROUP_STATUSES)),
+                ).fetchall()
+                canonical = next(
+                    (dict(row) for row in candidates if _same_request_identity(
+                        dict(row), title=title, author=author, content_type=content_type,
+                        provider=metadata.get("provider"), provider_id=metadata.get("provider_id"),
+                    )),
+                    None,
+                )
+                if canonical is None:
+                    result = self._insert_request(
+                        conn, user_id=user_id, title=title, content_type=content_type,
+                        author=author, **create_metadata,
+                    )
+                    outcome: CreateRequestOutcome = "created"
+                else:
+                    existing_member = conn.execute(
+                        "SELECT id FROM requests WHERE user_id = ? "
+                        "AND (id = ? OR canonical_request_id = ?) LIMIT 1",
+                        (user_id, canonical["id"], canonical["id"]),
+                    ).fetchone()
+                    if existing_member:
+                        result = self._get_request(conn, existing_member["id"])
+                        outcome = "already_joined"
+                    else:
+                        result = self._insert_request(
+                            conn, user_id=user_id, title=canonical["title"],
+                            content_type=canonical["content_type"], author=canonical["author"],
+                            year=canonical["year"], cover_url=canonical["cover_url"],
+                            description=canonical["description"], isbn_10=canonical["isbn_10"],
+                            isbn_13=canonical["isbn_13"], provider=canonical["provider"],
+                            provider_id=canonical["provider_id"], series_name=canonical["series_name"],
+                            series_position=canonical["series_position"],
+                            prefer_alternate_version=canonical["prefer_alternate_version"],
+                            is_manual_request=canonical["is_manual_request"],
+                            is_released=canonical["is_released"],
+                            expected_release_date=canonical["expected_release_date"],
+                            canonical_request_id=canonical["id"], status=canonical["status"],
+                            admin_note=canonical["admin_note"], approved_by=canonical["approved_by"],
+                            download_task_id=canonical["download_task_id"],
+                        )
+                        outcome = "joined"
+                conn.commit()
+                return result, outcome
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
