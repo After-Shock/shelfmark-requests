@@ -261,6 +261,22 @@ make restart     # Restart container
 
 The frontend dev server proxies to the backend on port 8084.
 
+## Release Versioning
+
+Shelfmark Requests uses semantic versions in `major.minor.patch` form. The root
+`VERSION` file is the release source of truth. For every release:
+
+1. Update `VERSION`.
+2. Set the same value in `pyproject.toml`, `src/frontend/package.json`, and both
+   root package version fields in `src/frontend/package-lock.json`.
+3. Run backend tests, frontend tests, TypeScript checking, and the production build.
+4. Commit the release changes.
+5. After explicit approval, create an annotated tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`.
+6. Build and deploy from the tagged commit.
+
+`RELEASE_VERSION` can override the displayed release version in packaged builds,
+but only when it contains a valid numeric semantic version.
+
 ### Architecture
 
 ```
