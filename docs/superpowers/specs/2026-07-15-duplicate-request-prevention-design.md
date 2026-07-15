@@ -48,7 +48,7 @@ Users join an existing request when its canonical row has any non-terminal statu
 - `downloading`
 - `no_sources_requested`
 
-A new canonical request may be created after a prior matching group reaches a terminal status:
+A new canonical request is allowed after a prior matching group reaches a terminal status:
 
 - `fulfilled`
 - `denied`
@@ -84,7 +84,7 @@ The same-user path is idempotent so double-clicks and client retries cannot crea
 All workflow status changes target a request group transactionally.
 
 - The canonical row is updated first.
-- Every non-cancelled linked row receives the same workflow status, admin note, handler, task ID, completion timestamp, and other group-level workflow fields relevant to that transition.
+- Every non-cancelled linked row receives the canonical row's status, admin note, approved-by user, download task ID, `updated_at`, and `completed_at` values for that transition.
 - A failed update rolls back the whole group operation.
 - Direct status mutation of a linked row is rejected or redirected to its canonical row, except for the user's own cancellation/removal flow.
 
@@ -97,7 +97,7 @@ A user's cancellation or deletion removes only that user's interest.
 - Deleting a linked row does not affect the canonical request or other users.
 - If the canonical requester leaves and active linked users remain, promote the oldest active linked row to canonical and repoint every remaining linked row to the promoted ID in one transaction.
 - The promoted row retains the group's workflow state and processing metadata.
-- If the final interested user leaves, cancel or delete the final request according to the existing endpoint semantics.
+- If the final interested user uses the existing DELETE endpoint, permanently delete the final request row. An admin status change to `cancelled` remains a group-level workflow transition.
 - Admin cancellation remains a group-level action and synchronizes cancellation to every active row.
 
 Promotion must preserve download task references, prerelease metadata, admin notes, and current processing state.
@@ -133,7 +133,7 @@ The existing request list can continue displaying each user's row.
 - HTTP `200` with `joined_existing: true` displays “Joined existing request.”
 - HTTP `200` with `already_joined: true` displays “You are already tracking this request.”
 - The local request cache is refreshed or updated with the returned user-owned row so the action button immediately reflects the requested state.
-- Admin screens render only canonical requests and may display `requester_count` as demand context.
+- Admin screens render only canonical requests and display `requester_count` as demand context.
 
 ## Error Handling and Concurrency
 
@@ -151,7 +151,7 @@ The local settings file does not override `ZLIB_PRIMARY_URL` or `ZLIB_ADDITIONAL
 - `https://z-lib.gs`
 - `https://z-lib.id`
 
-On 2026-07-15, `.fm` resolved but returned HTTP 503 to a direct request, while `.gs` and `.id` did not resolve from the development host. The `.fm` result may be a challenge response handled by the project's pinned Chromium/bypasser path.
+On 2026-07-15, `.fm` resolved but returned HTTP 503 to a direct request, while `.gs` and `.id` did not resolve from the development host. A direct HTTP 503 is not sufficient to declare `.fm` unusable because production access uses the project's pinned Chromium/bypasser path.
 
 No unverified replacement URL will be added. Implementation verification will exercise the actual bypasser/download flow against `.fm`. Mirror configuration changes are in scope only if that end-to-end check fails and a trustworthy endpoint can be independently verified; otherwise the duplicate-request change leaves mirror settings untouched.
 
