@@ -52,6 +52,14 @@ def test_resolve_release_version_returns_na_for_malformed_file(tmp_path: Path, c
     assert "Invalid release version" in caplog.text
 
 
+def test_invalid_utf8_version_file_does_not_raise(tmp_path: Path, caplog):
+    version_file = tmp_path / "VERSION"
+    version_file.write_bytes(b"\xff\xfe")
+
+    assert resolve_release_version(None, version_file) == "N/A"
+    assert "Unable to read release version" in caplog.text
+
+
 def test_unreadable_version_file_does_not_raise(tmp_path: Path, monkeypatch, caplog):
     version_file = tmp_path / "VERSION"
     version_file.write_text("1.6.0", encoding="utf-8")

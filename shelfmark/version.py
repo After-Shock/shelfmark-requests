@@ -19,7 +19,7 @@ def read_version_file(path: Path) -> str | None:
         value = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return None
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.warning("Unable to read release version from %s: %s", path, exc)
         return None
 
