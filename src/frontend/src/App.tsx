@@ -1036,6 +1036,7 @@ function App() {
       <Footer
         debug={config?.debug}
         isAdmin={isAdmin}
+        version={config?.release_version}
       />
       <ToastContainer toasts={toasts} />
 
