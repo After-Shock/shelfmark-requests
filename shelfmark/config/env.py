@@ -5,6 +5,8 @@ import os
 import shutil
 from pathlib import Path
 
+from shelfmark.version import resolve_release_version
+
 
 def string_to_bool(s: str) -> bool:
     """Convert string to boolean."""
@@ -156,7 +158,7 @@ OIDC_AUTO_REDIRECT = string_to_bool(os.getenv("OIDC_AUTO_REDIRECT", "false"))
 # =============================================================================
 
 BUILD_VERSION = os.getenv("BUILD_VERSION", "N/A")
-RELEASE_VERSION = os.getenv("RELEASE_VERSION", "N/A")
+RELEASE_VERSION = resolve_release_version(os.getenv("RELEASE_VERSION"))
 
 
 # =============================================================================
