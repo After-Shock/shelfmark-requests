@@ -85,15 +85,26 @@ class TestUserDBInitialization:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )"""
         )
+        conn.execute(
+            "INSERT INTO users (username, email, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+            ("legacy_user", "legacy@example.invalid", "Legacy User", "legacy_hash", "user"),
+        )
         conn.commit()
         conn.close()
 
-        UserDB(db_path).initialize()
+        db = UserDB(db_path)
+        db.initialize()
+        db.initialize()
 
         conn = sqlite3.connect(db_path)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        row = conn.execute(
+            "SELECT username, email, display_name, password_hash, role FROM users WHERE username = ?",
+            ("legacy_user",),
+        ).fetchone()
         conn.close()
         assert "requests_last_viewed_at" in columns
+        assert row == ("legacy_user", "legacy@example.invalid", "Legacy User", "legacy_hash", "user")
 
 
 class TestUserCRUD:
