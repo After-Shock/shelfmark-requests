@@ -499,6 +499,11 @@ async def _is_bypassed(page: Any, *, escape_emojis: bool = True) -> bool:
     title, body, current_url = await _get_page_info(page)
     body_len = len(body.strip())
 
+    # Chrome's internal error page means navigation failed, not that protection passed.
+    if current_url.lower().startswith("chrome-error://"):
+        logger.debug("Chrome navigation error page detected: %s", current_url)
+        return False
+
     # Long page content = probably bypassed
     if body_len > _BYPASSED_BODY_LENGTH_MIN:
         logger.debug("Page content too long, probably bypassed (len: %s)", body_len)
