@@ -13,6 +13,7 @@ The first explicit version is `1.6.0`.
 The project currently has several partially connected version mechanisms:
 
 - `pyproject.toml` declares `version = "1.06"`;
+- `src/frontend/package.json` and its lockfile also declare `version = "1.06"`;
 - `shelfmark/config/env.py` exposes `BUILD_VERSION` and `RELEASE_VERSION`, both defaulting to `N/A`;
 - `/api/config` already returns `build_version` and `release_version`;
 - the frontend `AppConfig` type already contains both fields;
@@ -30,7 +31,7 @@ Add a root `VERSION` text file containing exactly:
 
 `VERSION` is the human-maintained release source of truth. It uses semantic versioning in `major.minor.patch` form.
 
-Normalize `pyproject.toml` to `version = "1.6.0"`. The release checklist requires `VERSION` and `pyproject.toml` to be updated together. Automated release tooling is deliberately out of scope for this first versioning change.
+Normalize `pyproject.toml`, `src/frontend/package.json`, and `src/frontend/package-lock.json` to `1.6.0`. The release checklist requires `VERSION` and all package metadata to be updated together. Automated release tooling is deliberately out of scope for this first versioning change.
 
 ## Backend Resolution
 
@@ -89,7 +90,7 @@ For each release:
 
 1. Select the next semantic version according to the change scope.
 2. Update the root `VERSION` file.
-3. Update `pyproject.toml` to the same value.
+3. Update `pyproject.toml`, `src/frontend/package.json`, and `src/frontend/package-lock.json` to the same value.
 4. Run backend tests, frontend typecheck/tests, and the production build.
 5. Commit the release changes.
 6. Create a matching annotated Git tag such as `v1.6.0`.
