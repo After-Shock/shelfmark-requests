@@ -19,6 +19,7 @@ from shelfmark.core.user_db import UserDB
 logger = setup_logger(__name__)
 RELEASE_TIMEZONE = ZoneInfo("America/New_York")
 RELEASE_ACTIVATION_HOUR = 9
+_PROVIDER_FUTURE_RELEASE_DATE_KEY = "_provider_future_release_date"
 
 
 def _normalize_release_date(raw_value: object) -> str | None:
@@ -71,6 +72,102 @@ def _release_ready_datetime(expected_release_date: str | None) -> datetime | Non
         dt_time(hour=RELEASE_ACTIVATION_HOUR),
         tzinfo=RELEASE_TIMEZONE,
     )
+
+
+def _provider_expected_release_date(req: dict, raw_publish_date: object) -> tuple[str | None, str | None]:
+    """Return the persisted date and provider-derived future date, if any."""
+    publish_date = _normalize_release_date(raw_publish_date)
+    if publish_date and _is_future_release_date(publish_date):
+        return publish_date, publish_date
+    if req.get("is_released"):
+        return None, None
+    return publish_date, None
+
+
+def _backfill_missing_metadata(request_db: RequestDB, request_id: int, req: dict) -> dict:
+    """Populate provider metadata for requests created without a search result."""
+    if req.get("provider") and req.get("provider_id"):
+        return req
+
+    logger.info(f"Request #{request_id} missing metadata, searching...")
+    try:
+        from shelfmark.metadata_providers import (
+            MetadataSearchOptions,
+            get_configured_provider,
+        )
+
+        provider = get_configured_provider(content_type=req.get("content_type", "ebook"))
+        if not provider:
+            logger.warning(f"Request #{request_id} metadata search skipped: no provider available")
+            return req
+
+        title = req.get("title", "")
+        author = req.get("author", "")
+        search_attempts = [f"{title} {author}".strip(), title] if author else [title]
+        results = []
+        for attempt in search_attempts:
+            results = provider.search(MetadataSearchOptions(query=attempt))
+            if results:
+                break
+
+        if not results:
+            logger.warning(f"Request #{request_id} metadata search returned no results for '{title}'")
+            return req
+
+        best_match = results[0]
+        expected_release_date, provider_future_release_date = _provider_expected_release_date(
+            req, getattr(best_match, "publish_date", None)
+        )
+        updated = request_db.update_request_metadata(
+            request_id,
+            provider=provider.name,
+            provider_id=best_match.provider_id,
+            expected_release_date=expected_release_date,
+        )
+        refreshed = updated or request_db.get_request(request_id) or req
+        if provider_future_release_date:
+            refreshed = dict(refreshed)
+            refreshed[_PROVIDER_FUTURE_RELEASE_DATE_KEY] = provider_future_release_date
+        logger.info(f"Request #{request_id} metadata updated: {provider.name}:{best_match.provider_id}")
+        return refreshed
+    except Exception as e:
+        logger.error(f"Failed to fetch metadata for request #{request_id}: {e}")
+        return req
+
+
+def _move_to_prerelease_if_future_release(
+    request_db: RequestDB,
+    request_id: int,
+    req: dict,
+    admin_user_id: int | None,
+) -> dict | None:
+    """Move ebook requests with future release metadata into prerelease hold."""
+    provider_future_release_date = req.pop(_PROVIDER_FUTURE_RELEASE_DATE_KEY, None)
+    if req.get("content_type", "ebook") != "ebook":
+        return None
+
+    expected_release_date = _normalize_release_date(provider_future_release_date)
+    if not _is_future_release_date(expected_release_date):
+        return None
+
+    request_db.update_request_metadata(
+        request_id,
+        expected_release_date=expected_release_date,
+        is_released=False,
+        hidden_from_admin=False,
+    )
+    updated = request_db.update_request_status(
+        request_id,
+        "prerelease_requested",
+        approved_by=admin_user_id,
+    )
+    refreshed = updated or request_db.get_request(request_id) or req
+    logger.info(
+        "Request #%s moved to prerelease automatically for release date %s",
+        request_id,
+        expected_release_date,
+    )
+    return refreshed
 
 
 def _get_auth_mode():
@@ -286,22 +383,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             except Exception as e:
                 logger.warning("ABS duplicate check failed (skipping): %s", e)
 
-        # Duplicate detection: check for active requests by the same user
-        provider = data.get("provider")
-        provider_id_val = data.get("provider_id")
-        existing = request_db.list_requests(user_id=db_user_id, limit=200)
-        active_statuses = {"pending", "approved", "downloading", "prerelease_requested"}
-        for ex in existing:
-            if ex["status"] not in active_statuses:
-                continue
-            if provider and provider_id_val:
-                if ex.get("provider") == provider and ex.get("provider_id") == provider_id_val and ex.get("content_type") == content_type:
-                    return jsonify({"error": "You already have an active request for this book"}), 409
-            elif ex.get("title", "").lower() == title.lower() and ex.get("content_type") == content_type:
-                return jsonify({"error": "You already have an active request for this book"}), 409
-
         try:
-            req = request_db.create_request(
+            req, outcome = request_db.create_or_join_request(
                 user_id=db_user_id,
                 title=title,
                 content_type=content_type,
@@ -322,24 +405,28 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
-        if expected_release_date:
-            req = request_db.update_request_metadata(
-                req["id"], expected_release_date=expected_release_date
-            ) or req
+        if outcome == "created":
+            if expected_release_date:
+                req = request_db.update_request_metadata(
+                    req["id"], expected_release_date=expected_release_date
+                ) or req
 
-        if start_as_prerelease:
-            req = request_db.update_request_status(
-                req["id"], "prerelease_requested"
-            ) or req
+            if start_as_prerelease:
+                req = request_db.update_request_status(
+                    req["id"], "prerelease_requested"
+                ) or req
 
-        logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
-        _broadcast_request_update(req)
-        _send_pushover_new_request(req, user_db)
-        _send_discord_new_request(req, user_db)
+            logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
+            _broadcast_request_update(req)
+            _send_pushover_new_request(req, user_db)
+            _send_discord_new_request(req, user_db)
+
         response_data = dict(req)
+        response_data["joined_existing"] = outcome == "joined"
+        response_data["already_joined"] = outcome == "already_joined"
         if abs_warning:
             response_data["warning"] = "Standard version already in library — request submitted for graphic/dramatized version"
-        return jsonify(response_data), 201
+        return jsonify(response_data), 201 if outcome == "created" else 200
 
     @app.route("/api/requests", methods=["GET"])
     @_require_auth
@@ -432,10 +519,12 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             _broadcast_request_update({"id": request_id, "deleted": True})
             return jsonify({"success": True, "action": "hidden"})
         else:
-            # Owner permanently deleting their own request
-            request_db.delete_request(request_id)
+            # Owner permanently deleting their own request.
+            promoted = request_db.delete_user_request(request_id, req["user_id"])
             logger.info(f"Request #{request_id} permanently deleted by owner")
             _broadcast_request_update({"id": request_id, "deleted": True})
+            if promoted:
+                _broadcast_request_update(promoted)
             return jsonify({"success": True, "action": "deleted"})
 
     @app.route("/api/requests/<int:request_id>/approve", methods=["POST"])
@@ -455,6 +544,15 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         updated = request_db.update_request_status(
             request_id, "approved", approved_by=admin_user_id
         )
+        updated = _backfill_missing_metadata(request_db, request_id, updated)
+
+        prerelease = _move_to_prerelease_if_future_release(
+            request_db, request_id, updated, admin_user_id
+        )
+        if prerelease:
+            _broadcast_request_update(prerelease)
+            return jsonify(prerelease)
+
         logger.info(f"Request #{request_id} approved by admin {admin_user_id}")
         _broadcast_request_update(updated)
 
@@ -474,7 +572,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         if _acquire_download_slot(request_id):
             thread = threading.Thread(
                 target=_auto_download_request,
-                args=(request_db, user_db, request_id, req, admin_user_id, admin_username),
+                args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),
                 daemon=True,
             )
             thread.start()
@@ -635,44 +733,14 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         )
         logger.info(f"Request #{request_id} retrying by admin {admin_user_id}")
 
-        # If request is missing metadata (from old direct-mode requests), search for it now
-        if not updated.get("provider") or not updated.get("provider_id"):
-            logger.info(f"Request #{request_id} missing metadata, searching...")
-            try:
-                from shelfmark.metadata_providers import get_configured_provider, _get_configured_provider_name, MetadataSearchOptions
+        updated = _backfill_missing_metadata(request_db, request_id, updated)
 
-                provider_name = _get_configured_provider_name() or "openlibrary"
-                provider = get_configured_provider(content_type=updated.get("content_type", "ebook"))
-
-                if provider:
-                    title = updated.get("title", "")
-                    author = updated.get("author", "")
-
-                    # Try title+author first, then title-only as fallback
-                    search_attempts = [f"{title} {author}".strip(), title] if author else [title]
-                    results = []
-                    for attempt in search_attempts:
-                        results = provider.search(MetadataSearchOptions(query=attempt))
-                        if results:
-                            break
-
-                    if results:
-                        # Use the first result and update the request with metadata
-                        best_match = results[0]
-                        expected_release_date = best_match.publish_date if not updated.get("is_released") else None
-                        request_db.update_request_metadata(
-                            request_id,
-                            provider=provider_name,
-                            provider_id=best_match.provider_id,
-                            expected_release_date=expected_release_date,
-                        )
-                        # Re-fetch the updated request
-                        updated = request_db.get_request(request_id)
-                        logger.info(f"Request #{request_id} metadata updated: {provider_name}:{best_match.provider_id}")
-                    else:
-                        logger.warning(f"Request #{request_id} metadata search returned no results for '{title}'")
-            except Exception as e:
-                logger.error(f"Failed to fetch metadata for request #{request_id}: {e}")
+        prerelease = _move_to_prerelease_if_future_release(
+            request_db, request_id, updated, admin_user_id
+        )
+        if prerelease:
+            _broadcast_request_update(prerelease)
+            return jsonify(prerelease)
 
         _broadcast_request_update(updated)
 
