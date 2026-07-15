@@ -41,6 +41,56 @@ def _same_request_identity(
     )
 
 
+class RequestGroupIntegrityError(RuntimeError):
+    """Raised when linked requests do not form a valid one-level group."""
+
+
+def _canonical_id_for_row(conn: sqlite3.Connection, request_id: int) -> Optional[int]:
+    """Return a validated canonical ID, or None when the request does not exist."""
+    row = conn.execute(
+        "SELECT id, canonical_request_id FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    if not row:
+        return None
+    canonical_id = row["canonical_request_id"]
+    if canonical_id is None:
+        return row["id"]
+    if canonical_id == row["id"]:
+        reason = "self-referential canonical request link"
+    else:
+        canonical = conn.execute(
+            "SELECT id, canonical_request_id FROM requests WHERE id = ?", (canonical_id,)
+        ).fetchone()
+        if not canonical:
+            reason = "dangling canonical request link"
+        elif canonical["canonical_request_id"] is not None:
+            if canonical["canonical_request_id"] == row["id"]:
+                reason = "cyclic canonical request link"
+            else:
+                reason = "canonical request points to another linked request"
+        else:
+            return canonical["id"]
+    message = f"Request group integrity error for request {request_id}: {reason}"
+    logger.error(message)
+    raise RequestGroupIntegrityError(message)
+
+
+def _validate_group_descendants(conn: sqlite3.Connection, canonical_id: int) -> None:
+    """Reject malformed links anywhere beneath a canonical group member."""
+    rows = conn.execute(
+        """WITH RECURSIVE descendants(id) AS (
+               SELECT id FROM requests WHERE canonical_request_id = ?
+               UNION
+               SELECT r.id FROM requests r
+               JOIN descendants d ON r.canonical_request_id = d.id
+           )
+           SELECT id FROM descendants""",
+        (canonical_id,),
+    ).fetchall()
+    for row in rows:
+        _canonical_id_for_row(conn, row["id"])
+
+
 _VALID_STATUSES = (
     "pending",
     "approved",
@@ -547,6 +597,29 @@ class RequestDB:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_request_group(
+        self, request_id: int, active_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Return a canonical request and all its linked members."""
+        conn = self._connect()
+        try:
+            canonical_id = _canonical_id_for_row(conn, request_id)
+            if canonical_id is None:
+                return []
+            _validate_group_descendants(conn, canonical_id)
+            conditions = ["(id = ? OR canonical_request_id = ?)"]
+            params: list = [canonical_id, canonical_id]
+            if active_only:
+                conditions.append("status != 'cancelled'")
+            rows = conn.execute(
+                f"SELECT * FROM requests WHERE {' AND '.join(conditions)} "
+                "ORDER BY created_at, id",
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
     def list_requests(
         self,
         user_id: Optional[int] = None,
@@ -696,12 +769,19 @@ class RequestDB:
         approved_by: Optional[int] = None,
         download_task_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update request status and optional fields. Returns updated request or None."""
+        """Atomically update every non-cancelled member of a request group."""
         if status not in _VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}")
         with self._lock:
             conn = self._connect()
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+
                 sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
                 params: list = [status]
                 if admin_note is not None:
@@ -716,12 +796,17 @@ class RequestDB:
                 sets.append(
                     "completed_at = CURRENT_TIMESTAMP" if status in _TERMINAL_STATUSES else "completed_at = NULL"
                 )
-                params.append(request_id)
+                params.extend([canonical_id, canonical_id])
                 conn.execute(
-                    f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params
+                    f"UPDATE requests SET {', '.join(sets)} "
+                    "WHERE (id = ? OR canonical_request_id = ?) AND status != 'cancelled'",
+                    params,
                 )
                 conn.commit()
-                return self._get_request(conn, request_id)
+                return self._get_request(conn, canonical_id)
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
@@ -765,16 +850,85 @@ class RequestDB:
             finally:
                 conn.close()
 
-    def delete_request(self, request_id: int) -> bool:
-        """Delete a request. Returns True if a row was deleted."""
+    def _delete_request(
+        self, request_id: int, user_id: Optional[int] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        """Delete a request group member and return whether it was deleted and its replacement."""
         with self._lock:
             conn = self._connect()
             try:
-                cursor = conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
+                conn.execute("BEGIN IMMEDIATE")
+                target_query = "SELECT * FROM requests WHERE id = ?"
+                target_params: tuple[int, ...] = (request_id,)
+                if user_id is not None:
+                    target_query += " AND user_id = ?"
+                    target_params = (request_id, user_id)
+                target = conn.execute(target_query, target_params).fetchone()
+                if not target:
+                    conn.rollback()
+                    return False, None
+
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return False, None
+                _validate_group_descendants(conn, canonical_id)
+                remaining_canonical_id: Optional[int] = canonical_id
+                if request_id == canonical_id:
+                    active_statuses = tuple(sorted(_ACTIVE_GROUP_STATUSES))
+                    placeholders = ", ".join("?" for _ in active_statuses)
+                    replacement = conn.execute(
+                        "SELECT id FROM requests WHERE canonical_request_id = ? "
+                        f"ORDER BY status NOT IN ({placeholders}), created_at, id LIMIT 1",
+                        (canonical_id, *active_statuses),
+                    ).fetchone()
+                    if replacement:
+                        remaining_canonical_id = replacement["id"]
+                        # Repoint before deletion so the self-referential foreign key
+                        # cannot clear the linked members with ON DELETE SET NULL.
+                        promotion_fields = (
+                            "status", "content_type", "title", "author", "year", "cover_url",
+                            "description", "isbn_10", "isbn_13", "provider", "provider_id",
+                            "series_name", "series_position", "admin_note", "approved_by",
+                            "download_task_id", "prefer_alternate_version", "completed_at",
+                            "is_manual_request", "is_released", "expected_release_date",
+                            "hidden_from_admin",
+                        )
+                        sets = [f"{field} = ?" for field in promotion_fields]
+                        sets.extend(["canonical_request_id = NULL", "updated_at = CURRENT_TIMESTAMP"])
+                        conn.execute(
+                            f"UPDATE requests SET {', '.join(sets)} WHERE id = ?",
+                            [target[field] for field in promotion_fields] + [remaining_canonical_id],
+                        )
+                        conn.execute(
+                            "UPDATE requests SET canonical_request_id = ? "
+                            "WHERE canonical_request_id = ?",
+                            (remaining_canonical_id, canonical_id),
+                        )
+                    else:
+                        remaining_canonical_id = None
+                conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
                 conn.commit()
-                return cursor.rowcount > 0
+                if remaining_canonical_id is None:
+                    return True, None
+                return True, self._get_request(conn, remaining_canonical_id)
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
+
+    def delete_user_request(
+        self, request_id: int, user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Delete an owned request and promote a linked member when necessary."""
+        _, remaining = self._delete_request(request_id, user_id)
+        return remaining
+
+    def delete_request(self, request_id: int) -> bool:
+        """Delete a request with group validation and canonical promotion."""
+        was_deleted, _ = self._delete_request(request_id)
+        return was_deleted
 
     def hide_request_from_admin(self, request_id: int) -> bool:
         """Hide a request from admin view. Returns True if updated."""
