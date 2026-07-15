@@ -34,6 +34,7 @@ _CREATE_REQUESTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS requests (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    canonical_request_id INTEGER REFERENCES requests(id) ON DELETE SET NULL,
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled','prerelease_requested','no_sources_requested')),
     content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
@@ -302,6 +303,19 @@ class RequestDB:
                 """)
             conn.execute("UPDATE schema_version SET version = 8")
 
+        if current_version < 9:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+            if "canonical_request_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN canonical_request_id "
+                    "INTEGER REFERENCES requests(id) ON DELETE SET NULL"
+                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requests_canonical_request_id "
+                "ON requests(canonical_request_id)"
+            )
+            conn.execute("UPDATE schema_version SET version = 9")
+
     def create_request(
         self,
         user_id: int,
@@ -320,6 +334,7 @@ class RequestDB:
         prefer_alternate_version: bool = False,
         is_manual_request: bool = False,
         is_released: Optional[bool] = None,
+        canonical_request_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a new request. Returns the created request dict."""
         if content_type not in _VALID_CONTENT_TYPES:
@@ -332,13 +347,14 @@ class RequestDB:
                     """INSERT INTO requests
                        (user_id, title, content_type, author, year, cover_url, description,
                         isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                        prefer_alternate_version, is_manual_request, is_released)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        prefer_alternate_version, is_manual_request, is_released, canonical_request_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (user_id, title, content_type, author, year, safe_cover_url, description,
                      isbn_10, isbn_13, provider, provider_id, series_name, series_position,
                      1 if prefer_alternate_version else 0,
                      1 if is_manual_request else 0,
-                     None if is_released is None else (1 if is_released else 0)),
+                     None if is_released is None else (1 if is_released else 0),
+                     canonical_request_id),
                 )
                 conn.commit()
                 request_id = cursor.lastrowid
@@ -357,7 +373,12 @@ class RequestDB:
     def _get_request(self, conn: sqlite3.Connection, request_id: int) -> Optional[Dict[str, Any]]:
         row = conn.execute(
             """SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name,
-                      a.username AS handled_by_username, a.display_name AS handled_by_display_name
+                      a.username AS handled_by_username, a.display_name AS handled_by_display_name,
+                      1 + (
+                          SELECT COUNT(*) FROM requests linked
+                          WHERE linked.canonical_request_id = COALESCE(r.canonical_request_id, r.id)
+                            AND linked.status NOT IN ('fulfilled','denied','failed','cancelled')
+                      ) AS requester_count
                FROM requests r
                JOIN users u ON r.user_id = u.id
                LEFT JOIN users a ON r.approved_by = a.id
@@ -393,6 +414,7 @@ class RequestDB:
                 conditions.append("r.user_id = ?")
                 params.append(user_id)
             else:
+                conditions.append("r.canonical_request_id IS NULL")
                 # Admin view - exclude hidden requests unless explicitly requested.
                 # History should still surface hidden completed rows.
                 if not include_hidden_from_admin:
@@ -410,7 +432,12 @@ class RequestDB:
             params.extend([limit, offset])
             rows = conn.execute(
                 f"""SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name,
-                           a.username AS handled_by_username, a.display_name AS handled_by_display_name
+                           a.username AS handled_by_username, a.display_name AS handled_by_display_name,
+                           1 + (
+                               SELECT COUNT(*) FROM requests linked
+                               WHERE linked.canonical_request_id = COALESCE(r.canonical_request_id, r.id)
+                                 AND linked.status NOT IN ('fulfilled','denied','failed','cancelled')
+                           ) AS requester_count
                     FROM requests r
                     JOIN users u ON r.user_id = u.id
                     LEFT JOIN users a ON r.approved_by = a.id
@@ -436,6 +463,8 @@ class RequestDB:
             if user_id is not None:
                 conditions.append("user_id = ?")
                 params.append(user_id)
+            else:
+                conditions.append("canonical_request_id IS NULL")
             if status is not None:
                 conditions.append("status = ?")
                 params.append(status)
@@ -458,7 +487,8 @@ class RequestDB:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT status, COUNT(*) AS cnt FROM requests GROUP BY status"
+                    "SELECT status, COUNT(*) AS cnt FROM requests "
+                    "WHERE canonical_request_id IS NULL GROUP BY status"
                 ).fetchall()
             counts: Dict[str, int] = {s: 0 for s in _VALID_STATUSES}
             total = 0
