@@ -358,11 +358,15 @@ export interface BookRequest {
   requester_display_name?: string;
   handled_by_username?: string;
   handled_by_display_name?: string;
+  canonical_request_id?: number | null;
+  requester_count?: number;
 }
 
 /** Response from POST /api/requests — extends BookRequest with optional creation-time warning. */
 export interface CreateBookRequestResponse extends BookRequest {
   warning?: string;
+  joined_existing?: boolean;
+  already_joined?: boolean;
 }
 
 export interface RequestsListResponse {
