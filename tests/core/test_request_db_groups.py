@@ -175,6 +175,23 @@ def test_same_user_repeat_is_idempotent(request_db, user_id):
     assert repeated["id"] == first["id"]
 
 
+def test_title_fallback_normalizes_unicode_casefold_and_whitespace(request_db, two_users):
+    first, first_outcome = request_db.create_or_join_request(
+        user_id=two_users[0],
+        title="Straße Ｆｏｏ",
+        author="Jörg　Müller",
+    )
+    joined, joined_outcome = request_db.create_or_join_request(
+        user_id=two_users[1],
+        title="STRASSE FOO",
+        author="jörg müller",
+    )
+
+    assert first_outcome == "created"
+    assert joined_outcome == "joined"
+    assert joined["canonical_request_id"] == first["id"]
+
+
 def test_content_types_do_not_join(request_db, two_users):
     ebook, _ = request_db.create_or_join_request(
         user_id=two_users[0], title="Dune", author="Frank Herbert", content_type="ebook"

@@ -254,6 +254,22 @@ def test_removed_user_does_not_receive_group_notification(request_db, user_db, g
     assert [call.args[0] for call in send.call_args_list] == ["first@example.com"]
 
 
+def test_cancelled_linked_member_does_not_receive_group_notification(
+    request_db, user_db, grouped_requests
+):
+    from shelfmark.core.request_routes import _send_group_status_notifications
+
+    canonical, linked = grouped_requests
+    with request_db._connect() as conn:
+        conn.execute("UPDATE requests SET status = 'cancelled' WHERE id = ?", (linked["id"],))
+        conn.commit()
+
+    with patch("shelfmark.core.request_routes.send_request_notification") as send:
+        _send_group_status_notifications(request_db, user_db, canonical["id"], "fulfilled")
+
+    assert [call.args[0] for call in send.call_args_list] == ["first@example.com"]
+
+
 def test_failed_group_recipient_notification_does_not_stop_other_recipients(
     request_db, user_db, grouped_requests
 ):
