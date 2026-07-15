@@ -511,9 +511,11 @@ class RequestDB:
         create_fields = (
             "year", "cover_url", "description", "isbn_10", "isbn_13", "provider",
             "provider_id", "series_name", "series_position", "prefer_alternate_version",
-            "is_manual_request", "is_released", "expected_release_date",
+            "is_manual_request", "is_released", "expected_release_date", "status",
         )
         create_metadata = {field: metadata[field] for field in create_fields if field in metadata}
+        if create_metadata.get("status", "pending") not in _VALID_STATUSES:
+            raise ValueError(f"Invalid status: {create_metadata['status']}")
 
         with self._lock:
             conn = self._connect()
@@ -820,11 +822,18 @@ class RequestDB:
         clear_expected_release_date: bool = False,
         hidden_from_admin: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update request metadata (provider, provider_id, expected_release_date). Returns updated request or None."""
+        """Atomically update shared metadata while retaining row-specific visibility."""
         with self._lock:
             conn = self._connect()
             try:
-                sets = ["updated_at = CURRENT_TIMESTAMP"]
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+
+                sets: list[str] = []
                 params: list = []
                 if provider is not None:
                     sets.append("provider = ?")
@@ -838,15 +847,25 @@ class RequestDB:
                 if is_released is not None:
                     sets.append("is_released = ?")
                     params.append(1 if is_released else 0)
+                if sets:
+                    sets.append("updated_at = CURRENT_TIMESTAMP")
+                    params.extend([canonical_id, canonical_id])
+                    conn.execute(
+                        f"UPDATE requests SET {', '.join(sets)} "
+                        "WHERE (id = ? OR canonical_request_id = ?) AND status != 'cancelled'",
+                        params,
+                    )
                 if hidden_from_admin is not None:
-                    sets.append("hidden_from_admin = ?")
-                    params.append(1 if hidden_from_admin else 0)
-                params.append(request_id)
-                conn.execute(
-                    f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params
-                )
+                    conn.execute(
+                        "UPDATE requests SET hidden_from_admin = ?, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE id = ?",
+                        (1 if hidden_from_admin else 0, request_id),
+                    )
                 conn.commit()
-                return self._get_request(conn, request_id)
+                return self._get_request(conn, canonical_id)
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 

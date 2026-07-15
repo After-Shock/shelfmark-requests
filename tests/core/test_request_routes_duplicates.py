@@ -1,6 +1,7 @@
 """Route integration tests for shared duplicate requests."""
 
 import sqlite3
+from threading import Barrier, Thread
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -228,6 +229,112 @@ def test_retry_updates_the_entire_request_group(app):
 
     assert response.status_code == 200
     assert {app.request_db.get_request(row["id"])["status"] for row in (canonical, linked)} == {"approved"}
+
+
+def test_cancelled_request_retry_is_rejected_without_starting_work(app):
+    canonical, linked = _group(app, status="cancelled")
+
+    with patch("shelfmark.core.request_routes._acquire_download_slot") as acquire_slot, \
+         patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+         patch.object(app.request_db, "update_request_metadata") as update_metadata, \
+         patch.object(app.request_db, "update_request_status") as update_status:
+        response = _admin_post(app, f"/api/requests/{linked['id']}/retry")
+
+    assert response.status_code == 409
+    assert "cancelled" in response.get_json()["error"].lower()
+    acquire_slot.assert_not_called()
+    thread_cls.assert_not_called()
+    update_metadata.assert_not_called()
+    update_status.assert_not_called()
+    assert app.request_db.get_request(canonical["id"])["status"] == "cancelled"
+
+
+def test_linked_and_canonical_retry_share_one_download_slot(app):
+    canonical, linked = _group(app, status="failed")
+
+    from shelfmark.core import request_routes
+    request_routes._in_flight_downloads.clear()
+    try:
+        with patch(
+            "shelfmark.core.request_routes._backfill_missing_metadata",
+            side_effect=lambda _db, _request_id, req: req,
+        ), patch("shelfmark.core.request_routes.threading.Thread") as thread_cls:
+            linked_response = _admin_post(app, f"/api/requests/{linked['id']}/retry")
+            canonical_response = _admin_post(app, f"/api/requests/{canonical['id']}/retry")
+
+        assert linked_response.status_code == 200
+        assert canonical_response.status_code == 200
+        assert thread_cls.call_count == 1
+        assert thread_cls.call_args.kwargs["args"][2] == canonical["id"]
+        assert request_routes._in_flight_downloads == {canonical["id"]}
+    finally:
+        request_routes._in_flight_downloads.clear()
+
+
+def _simultaneous_admin_posts(app, paths):
+    start = Barrier(len(paths))
+    responses = []
+
+    def post(path):
+        with app.test_client() as client:
+            login(client, 1, is_admin=True)
+            start.wait()
+            responses.append(client.post(path, json={}))
+
+    threads = [Thread(target=post, args=(path,)) for path in paths]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return responses
+
+
+@pytest.mark.parametrize("route", ["retry", "approve"])
+def test_simultaneous_canonical_and_linked_routes_start_one_worker(app, route):
+    initial_status = "failed" if route == "retry" else "pending"
+    canonical, linked = _group(app, status=initial_status)
+    paths = [
+        f"/api/requests/{canonical['id']}/{route}",
+        f"/api/requests/{linked['id']}/{route}",
+    ]
+    original_get_request = app.request_db.get_request
+    initial_reads = Barrier(2)
+
+    def synchronized_initial_read(request_id):
+        initial_reads.wait()
+        return original_get_request(request_id)
+
+    from shelfmark.core import request_routes
+    request_routes._in_flight_downloads.clear()
+    created_threads = []
+
+    def make_thread(*args, **kwargs):
+        worker = MagicMock()
+        created_threads.append((args, kwargs, worker))
+        return worker
+
+    try:
+        with patch.object(app.request_db, "get_request", side_effect=synchronized_initial_read), \
+             patch(
+                 "shelfmark.core.request_routes._backfill_missing_metadata",
+                 side_effect=lambda _db, _request_id, req: req,
+             ), patch(
+                 "shelfmark.core.request_routes.threading.Thread",
+                 side_effect=make_thread,
+             ):
+            responses = _simultaneous_admin_posts(app, paths)
+
+        download_workers = [
+            (kwargs, worker) for _, kwargs, worker in created_threads
+            if kwargs.get("target") is request_routes._auto_download_request
+        ]
+        assert {response.status_code for response in responses} == {200}
+        assert len(download_workers) == 1
+        assert download_workers[0][0]["args"][2] == canonical["id"]
+        assert download_workers[0][1].start.call_count == 1
+        assert request_routes._in_flight_downloads == {canonical["id"]}
+    finally:
+        request_routes._in_flight_downloads.clear()
 
 
 def test_status_notification_fans_out_to_all_active_users(request_db, user_db, grouped_requests):

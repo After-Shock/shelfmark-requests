@@ -335,6 +335,14 @@ def _release_download_slot(request_id: int) -> None:
         _in_flight_downloads.discard(request_id)
 
 
+def _resolve_canonical_request(request_db: RequestDB, req: dict) -> dict:
+    """Return the current canonical request for download work and slot identity."""
+    canonical_id = req.get("canonical_request_id") or req["id"]
+    if canonical_id == req["id"]:
+        return req
+    return request_db.get_request(canonical_id) or req
+
+
 def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) -> None:
     """Register request management routes on the Flask app."""
 
@@ -365,7 +373,9 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         prefer_alternate_version = bool(data.get("prefer_alternate_version", False)) and content_type == "audiobook"
         is_manual_request = bool(data.get("is_manual_request", False))
         raw_is_released = data.get("is_released")
-        is_released = None if raw_is_released is None else bool(raw_is_released)
+        if raw_is_released is not None and type(raw_is_released) is not bool:
+            return jsonify({"error": "is_released must be a boolean or null"}), 400
+        is_released = raw_is_released
         expected_release_date = _normalize_release_date(data.get("expected_release_date"))
         start_as_prerelease = _should_start_as_prerelease(is_released, expected_release_date)
         abs_warning = False
@@ -405,21 +415,13 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                 prefer_alternate_version=prefer_alternate_version,
                 is_manual_request=is_manual_request,
                 is_released=is_released,
+                expected_release_date=expected_release_date,
+                status="prerelease_requested" if start_as_prerelease else "pending",
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
         if outcome == "created":
-            if expected_release_date:
-                req = request_db.update_request_metadata(
-                    req["id"], expected_release_date=expected_release_date
-                ) or req
-
-            if start_as_prerelease:
-                req = request_db.update_request_status(
-                    req["id"], "prerelease_requested"
-                ) or req
-
             logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
             _broadcast_request_update(req)
             _send_pushover_new_request(req, user_db)
@@ -569,19 +571,21 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             logger.info(f"Request #{request_id} is audiobook - staying at 'approved' for manual management")
             return jsonify(updated)
 
-        # For ebooks, start auto-download in background thread
-        # Capture session data before spawning thread (session unavailable outside request context)
+        # For ebooks, start auto-download in background thread.
+        # Resolve linked route IDs to the live canonical before reserving work.
         admin_username = session.get("user_id")
+        download_request = _resolve_canonical_request(request_db, updated)
+        canonical_request_id = download_request["id"]
 
-        if _acquire_download_slot(request_id):
+        if _acquire_download_slot(canonical_request_id):
             thread = threading.Thread(
                 target=_auto_download_request,
-                args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),
+                args=(request_db, user_db, canonical_request_id, download_request, admin_user_id, admin_username),
                 daemon=True,
             )
             thread.start()
         else:
-            logger.info(f"Request #{request_id} already being auto-downloaded, skipping")
+            logger.info(f"Request #{canonical_request_id} already being auto-downloaded, skipping")
 
         return jsonify(updated)
 
@@ -713,12 +717,14 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>/retry", methods=["POST"])
     @_require_admin
     def retry_request_route(request_id):
-        """Retry a failed, cancelled, denied, downloading, or approved request."""
+        """Retry a non-cancelled failed, denied, downloading, or approved request."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
+        if req["status"] == "cancelled":
+            return jsonify({"error": "Cancelled requests cannot be retried"}), 409
 
-        if req["status"] not in ("failed", "cancelled", "denied", "downloading", "approved"):
+        if req["status"] not in ("failed", "denied", "downloading", "approved"):
             return jsonify({"error": f"Cannot retry a request with status '{req['status']}'"}), 400
 
         admin_user_id = _get_db_user_id()
@@ -750,19 +756,21 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             logger.info(f"Request #{request_id} is audiobook - staying at 'approved' for manual management")
             return jsonify(updated)
 
-        # For ebooks, start auto-download in background thread
-        # Capture session data before spawning thread
+        # For ebooks, start auto-download in background thread.
+        # Resolve linked route IDs to the live canonical before reserving work.
         admin_username = session.get("user_id")
+        download_request = _resolve_canonical_request(request_db, updated)
+        canonical_request_id = download_request["id"]
 
-        if _acquire_download_slot(request_id):
+        if _acquire_download_slot(canonical_request_id):
             thread = threading.Thread(
                 target=_auto_download_request,
-                args=(request_db, user_db, request_id, updated, admin_user_id, admin_username),
+                args=(request_db, user_db, canonical_request_id, download_request, admin_user_id, admin_username),
                 daemon=True,
             )
             thread.start()
         else:
-            logger.info(f"Request #{request_id} already being auto-downloaded, skipping")
+            logger.info(f"Request #{canonical_request_id} already being auto-downloaded, skipping")
 
         return jsonify(updated)
 

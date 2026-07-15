@@ -236,6 +236,41 @@ def test_status_determines_whether_requests_join(
     )
 
 
+def test_prerelease_creation_is_atomic_and_does_not_mutate_existing_group(request_db, two_users):
+    prerelease, outcome = request_db.create_or_join_request(
+        user_id=two_users[0],
+        title="Future Dune",
+        author="Frank Herbert",
+        provider="GoogleBooks",
+        provider_id="gb-future",
+        is_released=False,
+        expected_release_date="2099-01-01",
+        status="prerelease_requested",
+    )
+
+    assert outcome == "created"
+    assert prerelease["status"] == "prerelease_requested"
+    assert prerelease["expected_release_date"] == "2099-01-01"
+    assert prerelease["is_released"] == 0
+
+    joined, joined_outcome = request_db.create_or_join_request(
+        user_id=two_users[1],
+        title="Future Dune",
+        author="Frank Herbert",
+        provider="GoogleBooks",
+        provider_id="gb-future",
+        is_released=True,
+        expected_release_date="2000-01-01",
+        status="pending",
+    )
+
+    assert joined_outcome == "joined"
+    assert joined["canonical_request_id"] == prerelease["id"]
+    assert request_db.get_request(prerelease["id"])["status"] == "prerelease_requested"
+    assert request_db.get_request(prerelease["id"])["expected_release_date"] == "2099-01-01"
+    assert request_db.get_request(prerelease["id"])["is_released"] == 0
+
+
 def test_joined_request_copies_canonical_metadata_and_status(request_db, two_users):
     first, _ = request_db.create_or_join_request(
         user_id=two_users[0], title="Dune", author="Frank Herbert", year="1965",
@@ -312,6 +347,74 @@ def test_group_status_update_changes_all_active_rows(grouped_requests):
     assert {row["status"] for row in rows} == {"approved"}
     assert {row["admin_note"] for row in rows} == {"Queued"}
     assert {row["download_task_id"] for row in rows} == {"task-1"}
+
+
+def test_group_metadata_update_resolves_linked_id_and_propagates_to_active_members(grouped_requests):
+    db, canonical, linked = grouped_requests
+
+    updated = db.update_request_metadata(
+        linked["id"],
+        provider="OpenLibrary",
+        provider_id="ol-123",
+        expected_release_date="2099-01-01",
+        is_released=False,
+    )
+    db.update_request_status(linked["id"], "prerelease_requested")
+
+    assert updated["id"] == canonical["id"]
+    rows = db.get_request_group(canonical["id"])
+    assert {row["provider"] for row in rows} == {"OpenLibrary"}
+    assert {row["provider_id"] for row in rows} == {"ol-123"}
+    assert {row["expected_release_date"] for row in rows} == {"2099-01-01"}
+    assert {row["is_released"] for row in rows} == {0}
+    assert {row["status"] for row in rows} == {"prerelease_requested"}
+
+
+def test_group_metadata_update_rolls_back_all_members_on_failure(grouped_requests):
+    db, canonical, linked = grouped_requests
+    before = _request_snapshots(db, [canonical["id"], linked["id"]])
+    with db._connect() as conn:
+        conn.execute(
+            f"""CREATE TRIGGER fail_group_metadata
+                BEFORE UPDATE OF provider ON requests
+                WHEN NEW.id = {linked["id"]}
+                BEGIN SELECT RAISE(ABORT, 'metadata propagation failure'); END"""
+        )
+        conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata propagation failure"):
+        db.update_request_metadata(linked["id"], provider="OpenLibrary")
+
+    assert _request_snapshots(db, [canonical["id"], linked["id"]]) == before
+
+
+def test_shared_metadata_update_preserves_member_specific_admin_visibility(grouped_requests):
+    db, canonical, linked = grouped_requests
+    with db._connect() as conn:
+        conn.execute(
+            "UPDATE requests SET hidden_from_admin = 1 WHERE id = ?", (canonical["id"],)
+        )
+        conn.execute(
+            "UPDATE requests SET hidden_from_admin = 0 WHERE id = ?", (linked["id"],)
+        )
+        conn.commit()
+
+    db.update_request_metadata(
+        linked["id"],
+        provider="OpenLibrary",
+        provider_id="ol-123",
+        expected_release_date="2099-01-01",
+        is_released=False,
+        hidden_from_admin=False,
+    )
+
+    rows = {row["id"]: row for row in db.get_request_group(canonical["id"])}
+    assert rows[canonical["id"]]["hidden_from_admin"] == 1
+    assert rows[linked["id"]]["hidden_from_admin"] == 0
+    assert {row["provider"] for row in rows.values()} == {"OpenLibrary"}
+    assert {row["provider_id"] for row in rows.values()} == {"ol-123"}
+    assert {row["expected_release_date"] for row in rows.values()} == {"2099-01-01"}
+    assert {row["is_released"] for row in rows.values()} == {0}
 
 
 def test_group_lookup_resolves_linked_rows_and_can_exclude_cancelled(grouped_requests):

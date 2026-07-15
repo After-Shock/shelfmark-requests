@@ -25,11 +25,11 @@ def app():
     request_db.create_or_join_request.return_value = ({
         "id": 1,
         "title": "Future Book",
-        "status": "pending",
+        "status": "prerelease_requested",
         "content_type": "ebook",
         "author": "Future Author",
         "user_id": 1,
-        "expected_release_date": None,
+        "expected_release_date": "2099-01-01",
         "is_released": False,
     }, "created")
     request_db.update_request_status.return_value = {
@@ -96,13 +96,50 @@ class TestCreatePrereleaseRequests:
         assert resp.status_code == 201
         data = json.loads(resp.data)
         assert data["status"] == "prerelease_requested"
-        request_db.update_request_metadata.assert_called_once_with(
-            1, expected_release_date="2099-01-01"
+        request_db.create_or_join_request.assert_called_once_with(
+            user_id=1,
+            title="Future Book",
+            content_type="ebook",
+            author="Future Author",
+            year=None,
+            cover_url=None,
+            description=None,
+            isbn_10=None,
+            isbn_13=None,
+            provider=None,
+            provider_id=None,
+            series_name=None,
+            series_position=None,
+            prefer_alternate_version=False,
+            is_manual_request=False,
+            is_released=False,
+            expected_release_date="2099-01-01",
+            status="prerelease_requested",
         )
-        request_db.update_request_status.assert_called_once()
+        request_db.update_request_metadata.assert_not_called()
+        request_db.update_request_status.assert_not_called()
+
+    @pytest.mark.parametrize("invalid_value", ["false", 0, [], {}])
+    def test_create_request_rejects_non_boolean_is_released(self, app, invalid_value):
+        request_db = app.request_db
+        with app.test_client() as client:
+            _set_user_session(client)
+            response = client.post("/api/requests", json={
+                "title": "Future Book",
+                "is_released": invalid_value,
+            })
+
+        assert response.status_code == 400
+        assert "is_released" in response.get_json()["error"]
+        request_db.create_or_join_request.assert_not_called()
 
     def test_create_request_past_release_stays_pending(self, app):
         request_db = app.request_db
+        request_db.create_or_join_request.return_value = ({
+            **request_db.create_or_join_request.return_value[0],
+            "status": "pending",
+            "expected_release_date": "2000-01-01",
+        }, "created")
         with app.test_client() as client:
             _set_user_session(client)
             with patch("shelfmark.core.request_routes.abs_client.find_match", return_value=None), \
