@@ -28,15 +28,19 @@ describe('getRequestOutcomeMessage', () => {
     });
   });
 
-  it('reports the exact alternate-version warning', () => {
+  it('reports the exact alternate-version warning for a newly created request', () => {
     expect(getRequestOutcomeMessage({ ...response, warning: 'alternate' }, 'Dune')).toEqual(alternateWarning);
   });
 
-  it('prioritizes an alternate-version warning over joining a request', () => {
-    expect(getRequestOutcomeMessage({ ...response, warning: 'alternate', joined_existing: true }, 'Dune')).toEqual(alternateWarning);
+  it('reports a joined request when an alternate-version warning is also present', () => {
+    expect(getRequestOutcomeMessage({ ...response, warning: 'alternate', joined_existing: true }, 'Dune')).toEqual({
+      message: 'Joined existing request: Dune', type: 'success',
+    });
   });
 
-  it('prioritizes an alternate-version warning over an idempotent repeat', () => {
-    expect(getRequestOutcomeMessage({ ...response, warning: 'alternate', already_joined: true }, 'Dune')).toEqual(alternateWarning);
+  it('reports an idempotent repeat when an alternate-version warning is also present', () => {
+    expect(getRequestOutcomeMessage({ ...response, warning: 'alternate', already_joined: true }, 'Dune')).toEqual({
+      message: 'You are already tracking this request: Dune', type: 'info',
+    });
   });
 });
