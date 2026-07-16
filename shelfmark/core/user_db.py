@@ -162,6 +162,7 @@ class UserDB:
             try:
                 conn.executescript(_CREATE_TABLES_SQL)
                 self._migrate_auth_source_column(conn)
+                self._migrate_requests_last_viewed_column(conn)
                 self._migrate_request_delivery_columns(conn)
                 self._migrate_activity_tables(conn)
                 conn.commit()
@@ -188,6 +189,13 @@ class UserDB:
         conn.execute(
             "UPDATE users SET auth_source = 'builtin' WHERE auth_source IS NULL OR auth_source = ''"
         )
+
+    def _migrate_requests_last_viewed_column(self, conn: sqlite3.Connection) -> None:
+        """Ensure legacy user databases support request-count tracking."""
+        columns = conn.execute("PRAGMA table_info(users)").fetchall()
+        column_names = {str(col["name"]) for col in columns}
+        if "requests_last_viewed_at" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN requests_last_viewed_at TIMESTAMP")
 
     def _migrate_request_delivery_columns(self, conn: sqlite3.Connection) -> None:
         """Ensure request delivery-state columns exist and backfill historical rows."""

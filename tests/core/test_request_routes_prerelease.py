@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,17 +22,16 @@ def _make_app(request_db, user_db):
 @pytest.fixture
 def app():
     request_db = MagicMock()
-    request_db.list_requests.return_value = []
-    request_db.create_request.return_value = {
+    request_db.create_or_join_request.return_value = ({
         "id": 1,
         "title": "Future Book",
-        "status": "pending",
+        "status": "prerelease_requested",
         "content_type": "ebook",
         "author": "Future Author",
         "user_id": 1,
-        "expected_release_date": None,
+        "expected_release_date": "2099-01-01",
         "is_released": False,
-    }
+    }, "created")
     request_db.update_request_status.return_value = {
         "id": 1,
         "title": "Future Book",
@@ -96,13 +96,50 @@ class TestCreatePrereleaseRequests:
         assert resp.status_code == 201
         data = json.loads(resp.data)
         assert data["status"] == "prerelease_requested"
-        request_db.update_request_metadata.assert_called_once_with(
-            1, expected_release_date="2099-01-01"
+        request_db.create_or_join_request.assert_called_once_with(
+            user_id=1,
+            title="Future Book",
+            content_type="ebook",
+            author="Future Author",
+            year=None,
+            cover_url=None,
+            description=None,
+            isbn_10=None,
+            isbn_13=None,
+            provider=None,
+            provider_id=None,
+            series_name=None,
+            series_position=None,
+            prefer_alternate_version=False,
+            is_manual_request=False,
+            is_released=False,
+            expected_release_date="2099-01-01",
+            status="prerelease_requested",
         )
-        request_db.update_request_status.assert_called_once()
+        request_db.update_request_metadata.assert_not_called()
+        request_db.update_request_status.assert_not_called()
+
+    @pytest.mark.parametrize("invalid_value", ["false", 0, [], {}])
+    def test_create_request_rejects_non_boolean_is_released(self, app, invalid_value):
+        request_db = app.request_db
+        with app.test_client() as client:
+            _set_user_session(client)
+            response = client.post("/api/requests", json={
+                "title": "Future Book",
+                "is_released": invalid_value,
+            })
+
+        assert response.status_code == 400
+        assert "is_released" in response.get_json()["error"]
+        request_db.create_or_join_request.assert_not_called()
 
     def test_create_request_past_release_stays_pending(self, app):
         request_db = app.request_db
+        request_db.create_or_join_request.return_value = ({
+            **request_db.create_or_join_request.return_value[0],
+            "status": "pending",
+            "expected_release_date": "2000-01-01",
+        }, "created")
         with app.test_client() as client:
             _set_user_session(client)
             with patch("shelfmark.core.request_routes.abs_client.find_match", return_value=None), \
@@ -122,16 +159,17 @@ class TestCreatePrereleaseRequests:
         assert data["status"] == "pending"
         request_db.update_request_status.assert_not_called()
 
-    def test_duplicate_prerelease_request_is_blocked(self, app):
+    def test_duplicate_prerelease_request_returns_existing_row(self, app):
         request_db = app.request_db
-        request_db.list_requests.return_value = [{
+        request_db.create_or_join_request.return_value = ({
             "id": 7,
             "title": "Future Book",
             "status": "prerelease_requested",
             "content_type": "ebook",
             "provider": "googlebooks",
             "provider_id": "abc123",
-        }]
+            "user_id": 1,
+        }, "already_joined")
 
         with app.test_client() as client:
             _set_user_session(client)
@@ -146,11 +184,437 @@ class TestCreatePrereleaseRequests:
                     "expected_release_date": "2099-01-01",
                 })
 
-        assert resp.status_code == 409
-        assert "active request" in json.loads(resp.data)["error"].lower()
+        assert resp.status_code == 200
+        assert json.loads(resp.data)["already_joined"] is True
 
 
 class TestAdminPrereleaseTransitions:
+    def test_approve_manual_ebook_with_future_metadata_moves_to_prerelease(self, app):
+        request_db = app.request_db
+        pending_request = {
+            "id": 1,
+            "title": "Future Manual Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Future Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+            "expected_release_date": None,
+        }
+        approved_without_metadata = {
+            **pending_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        approved_with_future_metadata = {
+            **approved_without_metadata,
+            "provider": "googlebooks",
+            "provider_id": "gb-future",
+            "expected_release_date": "2099-01-01",
+        }
+        prerelease_metadata = {
+            **approved_with_future_metadata,
+            "is_released": False,
+        }
+        prerelease_request = {
+            **prerelease_metadata,
+            "status": "prerelease_requested",
+        }
+        request_db.get_request.return_value = pending_request
+        request_db.update_request_status.side_effect = [
+            approved_without_metadata,
+            prerelease_request,
+        ]
+        request_db.update_request_metadata.side_effect = [
+            approved_with_future_metadata,
+            prerelease_metadata,
+        ]
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = [
+            SimpleNamespace(provider_id="gb-future", publish_date="2099-01-01")
+        ]
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify, \
+                 patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
+                 patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/approve")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "prerelease_requested"
+        assert data["expected_release_date"] == "2099-01-01"
+        assert data["is_released"] is False
+        request_db.update_request_metadata.assert_any_call(
+            1,
+            provider="googlebooks",
+            provider_id="gb-future",
+            expected_release_date="2099-01-01",
+        )
+        request_db.update_request_metadata.assert_any_call(
+            1,
+            expected_release_date="2099-01-01",
+            is_released=False,
+            hidden_from_admin=False,
+        )
+        request_db.update_request_status.assert_any_call(
+            1,
+            "prerelease_requested",
+            approved_by=1,
+        )
+        mock_broadcast.assert_called_once_with(prerelease_request)
+        mock_notify.assert_not_called()
+        thread_cls.return_value.start.assert_not_called()
+
+    def test_retry_manual_ebook_with_future_metadata_moves_to_prerelease(self, app):
+        request_db = app.request_db
+        failed_request = {
+            "id": 1,
+            "title": "Future Retry Book",
+            "status": "failed",
+            "content_type": "ebook",
+            "author": "Future Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+            "expected_release_date": None,
+        }
+        approved_without_metadata = {
+            **failed_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        approved_with_future_metadata = {
+            **approved_without_metadata,
+            "provider": "googlebooks",
+            "provider_id": "gb-future",
+            "expected_release_date": "2099-01-01",
+        }
+        prerelease_metadata = {
+            **approved_with_future_metadata,
+            "is_released": False,
+        }
+        prerelease_request = {
+            **prerelease_metadata,
+            "status": "prerelease_requested",
+        }
+        request_db.get_request.return_value = failed_request
+        request_db.update_request_status.side_effect = [
+            approved_without_metadata,
+            prerelease_request,
+        ]
+        request_db.update_request_metadata.side_effect = [
+            failed_request,
+            approved_with_future_metadata,
+            prerelease_metadata,
+        ]
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = [
+            SimpleNamespace(provider_id="gb-future", publish_date="2099-01-01")
+        ]
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
+                 patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/retry")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "prerelease_requested"
+        assert data["expected_release_date"] == "2099-01-01"
+        assert data["is_released"] is False
+        request_db.update_request_metadata.assert_any_call(
+            1,
+            provider="googlebooks",
+            provider_id="gb-future",
+            expected_release_date="2099-01-01",
+        )
+        request_db.update_request_metadata.assert_any_call(
+            1,
+            expected_release_date="2099-01-01",
+            is_released=False,
+            hidden_from_admin=False,
+        )
+        request_db.update_request_status.assert_any_call(
+            1,
+            "prerelease_requested",
+            approved_by=1,
+        )
+        mock_broadcast.assert_called_once_with(prerelease_request)
+        thread_cls.return_value.start.assert_not_called()
+
+    def test_approve_manual_ebook_backfills_metadata_before_auto_download(self, app):
+        request_db = app.request_db
+        pending_request = {
+            "id": 1,
+            "title": "Manual Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Manual Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+        }
+        approved_without_metadata = {
+            **pending_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        approved_with_metadata = {
+            **approved_without_metadata,
+            "provider": "googlebooks",
+            "provider_id": "gb123",
+        }
+        request_db.get_request.return_value = pending_request
+        request_db.update_request_status.return_value = approved_without_metadata
+        request_db.update_request_metadata.return_value = approved_with_metadata
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = [
+            SimpleNamespace(provider_id="gb123", publish_date="2024-01-01")
+        ]
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
+                 patch("shelfmark.core.request_routes._broadcast_request_update"), \
+                 patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/approve")
+
+        assert resp.status_code == 200
+        request_db.update_request_metadata.assert_called_once_with(
+            1,
+            provider="googlebooks",
+            provider_id="gb123",
+            expected_release_date=None,
+        )
+        thread_args = thread_cls.call_args.kwargs["args"]
+        assert thread_args[3]["provider"] == "googlebooks"
+        assert thread_args[3]["provider_id"] == "gb123"
+        thread_cls.return_value.start.assert_called_once()
+
+    @pytest.mark.parametrize("publish_date", ["2026", "not-a-date"])
+    def test_approve_manual_ebook_with_unparseable_metadata_date_does_not_move_to_prerelease(
+        self, app, publish_date
+    ):
+        request_db = app.request_db
+        pending_request = {
+            "id": 1,
+            "title": "Manual Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Manual Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+            "expected_release_date": None,
+        }
+        approved_without_metadata = {
+            **pending_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        approved_with_metadata = {
+            **approved_without_metadata,
+            "provider": "googlebooks",
+            "provider_id": "gb123",
+        }
+        request_db.get_request.return_value = pending_request
+        request_db.update_request_status.return_value = approved_without_metadata
+        request_db.update_request_metadata.return_value = approved_with_metadata
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = [
+            SimpleNamespace(provider_id="gb123", publish_date=publish_date)
+        ]
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
+                 patch("shelfmark.core.request_routes._broadcast_request_update"), \
+                 patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/approve")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "approved"
+        request_db.update_request_status.assert_called_once_with(
+            1, "approved", approved_by=1
+        )
+        thread_cls.return_value.start.assert_called_once()
+
+    @pytest.mark.parametrize("publish_date", ["2026", "not-a-date", "2024-01-01"])
+    def test_approve_manual_ebook_ignores_stale_future_date_when_provider_date_is_not_future(
+        self, app, publish_date
+    ):
+        request_db = app.request_db
+        pending_request = {
+            "id": 1,
+            "title": "Manual Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Manual Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+            "expected_release_date": "2099-01-01",
+        }
+        approved_without_metadata = {
+            **pending_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        approved_with_metadata = {
+            **approved_without_metadata,
+            "provider": "googlebooks",
+            "provider_id": "gb123",
+        }
+        request_db.get_request.return_value = pending_request
+        request_db.update_request_status.return_value = approved_without_metadata
+        request_db.update_request_metadata.return_value = approved_with_metadata
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = [
+            SimpleNamespace(provider_id="gb123", publish_date=publish_date)
+        ]
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
+                 patch("shelfmark.core.request_routes._broadcast_request_update"), \
+                 patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/approve")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "approved"
+        request_db.update_request_status.assert_called_once_with(
+            1, "approved", approved_by=1
+        )
+        thread_cls.return_value.start.assert_called_once()
+
+    def test_approve_manual_ebook_ignores_stale_future_date_when_metadata_has_no_results(self, app):
+        request_db = app.request_db
+        pending_request = {
+            "id": 1,
+            "title": "Manual Book",
+            "status": "pending",
+            "content_type": "ebook",
+            "author": "Manual Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+            "expected_release_date": "2099-01-01",
+        }
+        approved_without_metadata = {
+            **pending_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        request_db.get_request.return_value = pending_request
+        request_db.update_request_status.return_value = approved_without_metadata
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = []
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._send_group_status_notifications"), \
+                 patch("shelfmark.core.request_routes._broadcast_request_update"), \
+                 patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/approve")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "approved"
+        request_db.update_request_status.assert_called_once_with(
+            1, "approved", approved_by=1
+        )
+        request_db.update_request_metadata.assert_not_called()
+        thread_cls.return_value.start.assert_called_once()
+
+    def test_approve_manual_audiobook_with_future_metadata_stays_approved(self, app):
+        request_db = app.request_db
+        pending_request = {
+            "id": 1,
+            "title": "Future Audiobook",
+            "status": "pending",
+            "content_type": "audiobook",
+            "author": "Audio Author",
+            "user_id": 1,
+            "provider": None,
+            "provider_id": None,
+            "is_released": True,
+            "expected_release_date": None,
+        }
+        approved_without_metadata = {
+            **pending_request,
+            "status": "approved",
+            "approved_by": 1,
+        }
+        approved_with_metadata = {
+            **approved_without_metadata,
+            "provider": "googlebooks",
+            "provider_id": "gb-audio",
+            "expected_release_date": "2099-01-01",
+        }
+        request_db.get_request.return_value = pending_request
+        request_db.update_request_status.return_value = approved_without_metadata
+        request_db.update_request_metadata.return_value = approved_with_metadata
+
+        provider = MagicMock()
+        provider.name = "googlebooks"
+        provider.search.return_value = [
+            SimpleNamespace(provider_id="gb-audio", publish_date="2099-01-01")
+        ]
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify, \
+                 patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
+                 patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                resp = client.post("/api/requests/1/approve")
+
+        assert resp.status_code == 200
+        data = json.loads(resp.data)
+        assert data["status"] == "approved"
+        request_db.update_request_status.assert_called_once_with(
+            1, "approved", approved_by=1
+        )
+        mock_broadcast.assert_called_once_with(approved_with_metadata)
+        mock_notify.assert_called_once()
+        thread_cls.return_value.start.assert_not_called()
+
     def test_activate_prerelease_request_moves_to_pending(self, app):
         request_db = app.request_db
         request_db.update_request_status.return_value = {
@@ -167,7 +631,7 @@ class TestAdminPrereleaseTransitions:
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
             with patch("shelfmark.core.request_routes._broadcast_request_update") as mock_broadcast, \
-                 patch("shelfmark.core.request_routes._send_status_notification") as mock_notify:
+                 patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify:
                 resp = client.post("/api/requests/1/activate")
 
         assert resp.status_code == 200
@@ -418,7 +882,7 @@ class TestAdminPrereleaseTransitions:
         with app.test_client() as client:
             _set_user_session(client, is_admin=True)
             with patch("shelfmark.core.request_routes._broadcast_request_update"), \
-                 patch("shelfmark.core.request_routes._send_status_notification") as mock_notify:
+                 patch("shelfmark.core.request_routes._send_group_status_notifications") as mock_notify:
                 resp = client.put("/api/requests/1/status", json={"status": "no_sources_requested"})
 
         assert resp.status_code == 200
@@ -429,3 +893,61 @@ class TestAdminPrereleaseTransitions:
             admin_note=None,
             approved_by=1,
         )
+
+    def test_admin_prerelease_queue_excludes_linked_rows(self, app):
+        request_db = app.request_db
+        request_db.list_requests.return_value = [{
+            "id": 1,
+            "title": "Future Book",
+            "status": "prerelease_requested",
+            "content_type": "ebook",
+            "user_id": 1,
+            "requester_count": 2,
+        }]
+        request_db.count_requests.return_value = 1
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            response = client.get("/api/requests?status=prerelease_requested")
+
+        assert response.status_code == 200
+        assert [row["id"] for row in response.get_json()["requests"]] == [1]
+        request_db.list_requests.assert_called_once_with(
+            user_id=None,
+            status="prerelease_requested",
+            limit=100,
+            offset=0,
+            include_hidden_completed_for_admin=True,
+        )
+
+    def test_activating_linked_prerelease_row_returns_canonical_transition(self, app):
+        request_db = app.request_db
+        linked = {
+            "id": 2,
+            "canonical_request_id": 1,
+            "title": "Future Book",
+            "status": "prerelease_requested",
+            "content_type": "ebook",
+            "user_id": 2,
+        }
+        canonical = {
+            **linked,
+            "id": 1,
+            "canonical_request_id": None,
+            "user_id": 1,
+            "status": "pending",
+            "is_released": True,
+            "expected_release_date": None,
+        }
+        request_db.get_request.return_value = linked
+        request_db.update_request_status.return_value = canonical
+
+        with app.test_client() as client:
+            _set_user_session(client, is_admin=True)
+            with patch("shelfmark.core.request_routes._broadcast_request_update"), \
+                 patch("shelfmark.core.request_routes._send_group_status_notifications"):
+                response = client.post("/api/requests/2/activate")
+
+        assert response.status_code == 200
+        assert response.get_json()["id"] == canonical["id"]
+        request_db.update_request_status.assert_called_once_with(2, "pending", approved_by=1)

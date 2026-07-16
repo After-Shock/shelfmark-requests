@@ -36,6 +36,22 @@ def test_bypass_tries_all_methods_before_abort(monkeypatch):
     assert calls == [f"m{i}" for i in range(6)]
 
 
+def test_bypass_rejects_chrome_navigation_error_page():
+    import shelfmark.bypass.internal_bypasser as internal_bypasser
+
+    class FakePage:
+        async def get_title(self):
+            return "z-lib.fm"
+
+        async def evaluate(self, _script):
+            return "A browser error page that is long enough to otherwise pass"
+
+        async def get_current_url(self):
+            return "chrome-error://chromewebdata/"
+
+    assert asyncio.run(internal_bypasser._is_bypassed(FakePage())) is False
+
+
 def test_extract_cookies_from_cdp_filters_and_stores_ua():
     import time
     import asyncio

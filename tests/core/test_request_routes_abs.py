@@ -19,12 +19,11 @@ def _make_app(request_db, user_db):
 @pytest.fixture
 def app():
     request_db = MagicMock()
-    request_db.list_requests.return_value = []
-    request_db.create_request.return_value = {
+    request_db.create_or_join_request.return_value = ({
         "id": 1, "title": "The Hobbit", "status": "pending",
         "content_type": "audiobook", "author": "Tolkien",
         "user_id": 1,
-    }
+    }, "created")
     user_db = MagicMock()
     user_db.get_user.return_value = {"id": 1, "username": "testuser"}
     return _make_app(request_db, user_db)

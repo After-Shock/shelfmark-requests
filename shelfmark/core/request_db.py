@@ -2,7 +2,8 @@
 
 import sqlite3
 import threading
-from typing import Any, Dict, List, Optional
+import unicodedata
+from typing import Any, Dict, List, Literal, Optional
 
 from shelfmark.core.logger import setup_logger
 
@@ -14,6 +15,80 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
     if url and (url.startswith("http://") or url.startswith("https://")):
         return url
     return None
+
+
+def _normalize_match_text(value: Optional[str]) -> str:
+    """Normalize human-readable fields before matching requests."""
+    normalized = unicodedata.normalize("NFKC", value or "")
+    return " ".join(normalized.strip().casefold().split())
+
+
+def _same_request_identity(
+    existing: Dict[str, Any], *, title: str, author: Optional[str],
+    content_type: str, provider: Optional[str], provider_id: Optional[str],
+) -> bool:
+    """Return whether an active canonical request represents the same item."""
+    if existing["content_type"] != content_type:
+        return False
+    if provider and provider_id and existing.get("provider") and existing.get("provider_id"):
+        return (
+            _normalize_match_text(existing["provider"]) == _normalize_match_text(provider)
+            and existing["provider_id"].strip() == provider_id.strip()
+        )
+    return (
+        _normalize_match_text(existing.get("title")) == _normalize_match_text(title)
+        and _normalize_match_text(existing.get("author")) == _normalize_match_text(author)
+    )
+
+
+class RequestGroupIntegrityError(RuntimeError):
+    """Raised when linked requests do not form a valid one-level group."""
+
+
+def _canonical_id_for_row(conn: sqlite3.Connection, request_id: int) -> Optional[int]:
+    """Return a validated canonical ID, or None when the request does not exist."""
+    row = conn.execute(
+        "SELECT id, canonical_request_id FROM requests WHERE id = ?", (request_id,)
+    ).fetchone()
+    if not row:
+        return None
+    canonical_id = row["canonical_request_id"]
+    if canonical_id is None:
+        return row["id"]
+    if canonical_id == row["id"]:
+        reason = "self-referential canonical request link"
+    else:
+        canonical = conn.execute(
+            "SELECT id, canonical_request_id FROM requests WHERE id = ?", (canonical_id,)
+        ).fetchone()
+        if not canonical:
+            reason = "dangling canonical request link"
+        elif canonical["canonical_request_id"] is not None:
+            if canonical["canonical_request_id"] == row["id"]:
+                reason = "cyclic canonical request link"
+            else:
+                reason = "canonical request points to another linked request"
+        else:
+            return canonical["id"]
+    message = f"Request group integrity error for request {request_id}: {reason}"
+    logger.error(message)
+    raise RequestGroupIntegrityError(message)
+
+
+def _validate_group_descendants(conn: sqlite3.Connection, canonical_id: int) -> None:
+    """Reject malformed links anywhere beneath a canonical group member."""
+    rows = conn.execute(
+        """WITH RECURSIVE descendants(id) AS (
+               SELECT id FROM requests WHERE canonical_request_id = ?
+               UNION
+               SELECT r.id FROM requests r
+               JOIN descendants d ON r.canonical_request_id = d.id
+           )
+           SELECT id FROM descendants""",
+        (canonical_id,),
+    ).fetchall()
+    for row in rows:
+        _canonical_id_for_row(conn, row["id"])
 
 
 _VALID_STATUSES = (
@@ -29,11 +104,16 @@ _VALID_STATUSES = (
 )
 _VALID_CONTENT_TYPES = ("ebook", "audiobook")
 _TERMINAL_STATUSES = {"fulfilled", "denied", "failed", "cancelled"}
+_ACTIVE_GROUP_STATUSES = {
+    "pending", "prerelease_requested", "approved", "downloading", "no_sources_requested",
+}
+CreateRequestOutcome = Literal["created", "joined", "already_joined"]
 
 _CREATE_REQUESTS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS requests (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    canonical_request_id INTEGER REFERENCES requests(id) ON DELETE SET NULL,
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK(status IN ('pending','approved','denied','downloading','fulfilled','failed','cancelled','prerelease_requested','no_sources_requested')),
     content_type    TEXT NOT NULL DEFAULT 'ebook' CHECK(content_type IN ('ebook','audiobook')),
@@ -302,6 +382,63 @@ class RequestDB:
                 """)
             conn.execute("UPDATE schema_version SET version = 8")
 
+        if current_version < 9:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+            if "canonical_request_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE requests ADD COLUMN canonical_request_id "
+                    "INTEGER REFERENCES requests(id) ON DELETE SET NULL"
+                )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requests_canonical_request_id "
+                "ON requests(canonical_request_id)"
+            )
+            conn.execute("UPDATE schema_version SET version = 9")
+
+    def _insert_request(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: int,
+        title: str,
+        content_type: str = "ebook",
+        author: Optional[str] = None,
+        year: Optional[str] = None,
+        cover_url: Optional[str] = None,
+        description: Optional[str] = None,
+        isbn_10: Optional[str] = None,
+        isbn_13: Optional[str] = None,
+        provider: Optional[str] = None,
+        provider_id: Optional[str] = None,
+        series_name: Optional[str] = None,
+        series_position: Optional[float] = None,
+        prefer_alternate_version: bool = False,
+        is_manual_request: bool = False,
+        is_released: Optional[bool] = None,
+        expected_release_date: Optional[str] = None,
+        canonical_request_id: Optional[int] = None,
+        status: str = "pending",
+        admin_note: Optional[str] = None,
+        approved_by: Optional[int] = None,
+        download_task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Insert and return a request using an existing transaction."""
+        cursor = conn.execute(
+            """INSERT INTO requests
+               (user_id, title, content_type, author, year, cover_url, description,
+                isbn_10, isbn_13, provider, provider_id, series_name, series_position,
+                prefer_alternate_version, is_manual_request, is_released, expected_release_date,
+                canonical_request_id, status, admin_note, approved_by, download_task_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, title, content_type, author, year, _sanitize_url(cover_url), description,
+             isbn_10, isbn_13, provider, provider_id, series_name, series_position,
+             1 if prefer_alternate_version else 0,
+             1 if is_manual_request else 0,
+             None if is_released is None else (1 if is_released else 0), expected_release_date,
+             canonical_request_id, status, admin_note, approved_by, download_task_id),
+        )
+        return self._get_request(conn, cursor.lastrowid)
+
     def create_request(
         self,
         user_id: int,
@@ -320,6 +457,7 @@ class RequestDB:
         prefer_alternate_version: bool = False,
         is_manual_request: bool = False,
         is_released: Optional[bool] = None,
+        canonical_request_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a new request. Returns the created request dict."""
         if content_type not in _VALID_CONTENT_TYPES:
@@ -327,22 +465,112 @@ class RequestDB:
         with self._lock:
             conn = self._connect()
             try:
-                safe_cover_url = _sanitize_url(cover_url)
-                cursor = conn.execute(
-                    """INSERT INTO requests
-                       (user_id, title, content_type, author, year, cover_url, description,
-                        isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                        prefer_alternate_version, is_manual_request, is_released)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (user_id, title, content_type, author, year, safe_cover_url, description,
-                     isbn_10, isbn_13, provider, provider_id, series_name, series_position,
-                     1 if prefer_alternate_version else 0,
-                     1 if is_manual_request else 0,
-                     None if is_released is None else (1 if is_released else 0)),
+                if canonical_request_id is not None:
+                    canonical_row = conn.execute(
+                        """WITH RECURSIVE request_group(id, canonical_request_id) AS (
+                               SELECT id, canonical_request_id FROM requests WHERE id = ?
+                               UNION ALL
+                               SELECT r.id, r.canonical_request_id
+                               FROM requests r
+                               JOIN request_group g ON r.id = g.canonical_request_id
+                           )
+                           SELECT id FROM request_group
+                           WHERE canonical_request_id IS NULL""",
+                        (canonical_request_id,),
+                    ).fetchone()
+                    if canonical_row:
+                        canonical_request_id = canonical_row["id"]
+                request = self._insert_request(
+                    conn, user_id=user_id, title=title, content_type=content_type,
+                    author=author, year=year, cover_url=cover_url, description=description,
+                    isbn_10=isbn_10, isbn_13=isbn_13, provider=provider,
+                    provider_id=provider_id, series_name=series_name,
+                    series_position=series_position,
+                    prefer_alternate_version=prefer_alternate_version,
+                    is_manual_request=is_manual_request, is_released=is_released,
+                    canonical_request_id=canonical_request_id,
                 )
                 conn.commit()
-                request_id = cursor.lastrowid
-                return self._get_request(conn, request_id)
+                return request
+            finally:
+                conn.close()
+
+    def create_or_join_request(
+        self,
+        *,
+        user_id: int,
+        title: str,
+        content_type: str = "ebook",
+        author: Optional[str] = None,
+        **metadata: Any,
+    ) -> tuple[Dict[str, Any], CreateRequestOutcome]:
+        """Atomically create an active request or join its canonical group."""
+        if content_type not in _VALID_CONTENT_TYPES:
+            raise ValueError(f"Invalid content_type: {content_type}")
+
+        create_fields = (
+            "year", "cover_url", "description", "isbn_10", "isbn_13", "provider",
+            "provider_id", "series_name", "series_position", "prefer_alternate_version",
+            "is_manual_request", "is_released", "expected_release_date", "status",
+        )
+        create_metadata = {field: metadata[field] for field in create_fields if field in metadata}
+        if create_metadata.get("status", "pending") not in _VALID_STATUSES:
+            raise ValueError(f"Invalid status: {create_metadata['status']}")
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                candidates = conn.execute(
+                    "SELECT * FROM requests WHERE canonical_request_id IS NULL "
+                    "AND content_type = ? AND status IN (?,?,?,?,?) ORDER BY created_at, id",
+                    (content_type, *sorted(_ACTIVE_GROUP_STATUSES)),
+                ).fetchall()
+                canonical = next(
+                    (dict(row) for row in candidates if _same_request_identity(
+                        dict(row), title=title, author=author, content_type=content_type,
+                        provider=metadata.get("provider"), provider_id=metadata.get("provider_id"),
+                    )),
+                    None,
+                )
+                if canonical is None:
+                    result = self._insert_request(
+                        conn, user_id=user_id, title=title, content_type=content_type,
+                        author=author, **create_metadata,
+                    )
+                    outcome: CreateRequestOutcome = "created"
+                else:
+                    existing_member = conn.execute(
+                        "SELECT id FROM requests WHERE user_id = ? "
+                        "AND (id = ? OR canonical_request_id = ?) LIMIT 1",
+                        (user_id, canonical["id"], canonical["id"]),
+                    ).fetchone()
+                    if existing_member:
+                        result = self._get_request(conn, existing_member["id"])
+                        outcome = "already_joined"
+                    else:
+                        result = self._insert_request(
+                            conn, user_id=user_id, title=canonical["title"],
+                            content_type=canonical["content_type"], author=canonical["author"],
+                            year=canonical["year"], cover_url=canonical["cover_url"],
+                            description=canonical["description"], isbn_10=canonical["isbn_10"],
+                            isbn_13=canonical["isbn_13"], provider=canonical["provider"],
+                            provider_id=canonical["provider_id"], series_name=canonical["series_name"],
+                            series_position=canonical["series_position"],
+                            prefer_alternate_version=canonical["prefer_alternate_version"],
+                            is_manual_request=canonical["is_manual_request"],
+                            is_released=canonical["is_released"],
+                            expected_release_date=canonical["expected_release_date"],
+                            canonical_request_id=canonical["id"], status=canonical["status"],
+                            admin_note=canonical["admin_note"], approved_by=canonical["approved_by"],
+                            download_task_id=canonical["download_task_id"],
+                        )
+                        outcome = "joined"
+                conn.commit()
+                return result, outcome
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
@@ -357,7 +585,12 @@ class RequestDB:
     def _get_request(self, conn: sqlite3.Connection, request_id: int) -> Optional[Dict[str, Any]]:
         row = conn.execute(
             """SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name,
-                      a.username AS handled_by_username, a.display_name AS handled_by_display_name
+                      a.username AS handled_by_username, a.display_name AS handled_by_display_name,
+                      1 + (
+                          SELECT COUNT(*) FROM requests linked
+                          WHERE linked.canonical_request_id = COALESCE(r.canonical_request_id, r.id)
+                            AND linked.status NOT IN ('fulfilled','denied','failed','cancelled')
+                      ) AS requester_count
                FROM requests r
                JOIN users u ON r.user_id = u.id
                LEFT JOIN users a ON r.approved_by = a.id
@@ -365,6 +598,29 @@ class RequestDB:
             (request_id,),
         ).fetchone()
         return dict(row) if row else None
+
+    def get_request_group(
+        self, request_id: int, active_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Return a canonical request and all its linked members."""
+        conn = self._connect()
+        try:
+            canonical_id = _canonical_id_for_row(conn, request_id)
+            if canonical_id is None:
+                return []
+            _validate_group_descendants(conn, canonical_id)
+            conditions = ["(id = ? OR canonical_request_id = ?)"]
+            params: list = [canonical_id, canonical_id]
+            if active_only:
+                conditions.append("status != 'cancelled'")
+            rows = conn.execute(
+                f"SELECT * FROM requests WHERE {' AND '.join(conditions)} "
+                "ORDER BY created_at, id",
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
 
     def list_requests(
         self,
@@ -393,6 +649,7 @@ class RequestDB:
                 conditions.append("r.user_id = ?")
                 params.append(user_id)
             else:
+                conditions.append("r.canonical_request_id IS NULL")
                 # Admin view - exclude hidden requests unless explicitly requested.
                 # History should still surface hidden completed rows.
                 if not include_hidden_from_admin:
@@ -410,7 +667,12 @@ class RequestDB:
             params.extend([limit, offset])
             rows = conn.execute(
                 f"""SELECT r.*, u.username AS requester_username, u.display_name AS requester_display_name,
-                           a.username AS handled_by_username, a.display_name AS handled_by_display_name
+                           a.username AS handled_by_username, a.display_name AS handled_by_display_name,
+                           1 + (
+                               SELECT COUNT(*) FROM requests linked
+                               WHERE linked.canonical_request_id = COALESCE(r.canonical_request_id, r.id)
+                                 AND linked.status NOT IN ('fulfilled','denied','failed','cancelled')
+                           ) AS requester_count
                     FROM requests r
                     JOIN users u ON r.user_id = u.id
                     LEFT JOIN users a ON r.approved_by = a.id
@@ -436,6 +698,8 @@ class RequestDB:
             if user_id is not None:
                 conditions.append("user_id = ?")
                 params.append(user_id)
+            else:
+                conditions.append("canonical_request_id IS NULL")
             if status is not None:
                 conditions.append("status = ?")
                 params.append(status)
@@ -458,7 +722,8 @@ class RequestDB:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT status, COUNT(*) AS cnt FROM requests GROUP BY status"
+                    "SELECT status, COUNT(*) AS cnt FROM requests "
+                    "WHERE canonical_request_id IS NULL GROUP BY status"
                 ).fetchall()
             counts: Dict[str, int] = {s: 0 for s in _VALID_STATUSES}
             total = 0
@@ -506,12 +771,19 @@ class RequestDB:
         approved_by: Optional[int] = None,
         download_task_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update request status and optional fields. Returns updated request or None."""
+        """Atomically update every non-cancelled member of a request group."""
         if status not in _VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}")
         with self._lock:
             conn = self._connect()
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+
                 sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
                 params: list = [status]
                 if admin_note is not None:
@@ -526,12 +798,17 @@ class RequestDB:
                 sets.append(
                     "completed_at = CURRENT_TIMESTAMP" if status in _TERMINAL_STATUSES else "completed_at = NULL"
                 )
-                params.append(request_id)
+                params.extend([canonical_id, canonical_id])
                 conn.execute(
-                    f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params
+                    f"UPDATE requests SET {', '.join(sets)} "
+                    "WHERE (id = ? OR canonical_request_id = ?) AND status != 'cancelled'",
+                    params,
                 )
                 conn.commit()
-                return self._get_request(conn, request_id)
+                return self._get_request(conn, canonical_id)
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
@@ -545,11 +822,18 @@ class RequestDB:
         clear_expected_release_date: bool = False,
         hidden_from_admin: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Update request metadata (provider, provider_id, expected_release_date). Returns updated request or None."""
+        """Atomically update shared metadata while retaining row-specific visibility."""
         with self._lock:
             conn = self._connect()
             try:
-                sets = ["updated_at = CURRENT_TIMESTAMP"]
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+
+                sets: list[str] = []
                 params: list = []
                 if provider is not None:
                     sets.append("provider = ?")
@@ -563,42 +847,136 @@ class RequestDB:
                 if is_released is not None:
                     sets.append("is_released = ?")
                     params.append(1 if is_released else 0)
+                if sets:
+                    sets.append("updated_at = CURRENT_TIMESTAMP")
+                    params.extend([canonical_id, canonical_id])
+                    conn.execute(
+                        f"UPDATE requests SET {', '.join(sets)} "
+                        "WHERE (id = ? OR canonical_request_id = ?) AND status != 'cancelled'",
+                        params,
+                    )
                 if hidden_from_admin is not None:
-                    sets.append("hidden_from_admin = ?")
-                    params.append(1 if hidden_from_admin else 0)
-                params.append(request_id)
-                conn.execute(
-                    f"UPDATE requests SET {', '.join(sets)} WHERE id = ?", params
-                )
+                    conn.execute(
+                        "UPDATE requests SET hidden_from_admin = ?, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE id = ?",
+                        (1 if hidden_from_admin else 0, request_id),
+                    )
                 conn.commit()
-                return self._get_request(conn, request_id)
+                return self._get_request(conn, canonical_id)
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
-    def delete_request(self, request_id: int) -> bool:
-        """Delete a request. Returns True if a row was deleted."""
+    def _delete_request(
+        self, request_id: int, user_id: Optional[int] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        """Delete a request group member and return whether it was deleted and its replacement."""
         with self._lock:
             conn = self._connect()
             try:
-                cursor = conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
+                conn.execute("BEGIN IMMEDIATE")
+                target_query = "SELECT * FROM requests WHERE id = ?"
+                target_params: tuple[int, ...] = (request_id,)
+                if user_id is not None:
+                    target_query += " AND user_id = ?"
+                    target_params = (request_id, user_id)
+                target = conn.execute(target_query, target_params).fetchone()
+                if not target:
+                    conn.rollback()
+                    return False, None
+
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return False, None
+                _validate_group_descendants(conn, canonical_id)
+                remaining_canonical_id: Optional[int] = canonical_id
+                if request_id == canonical_id:
+                    active_statuses = tuple(sorted(_ACTIVE_GROUP_STATUSES))
+                    placeholders = ", ".join("?" for _ in active_statuses)
+                    replacement = conn.execute(
+                        "SELECT id FROM requests WHERE canonical_request_id = ? "
+                        f"ORDER BY status NOT IN ({placeholders}), created_at, id LIMIT 1",
+                        (canonical_id, *active_statuses),
+                    ).fetchone()
+                    if replacement:
+                        remaining_canonical_id = replacement["id"]
+                        # Repoint before deletion so the self-referential foreign key
+                        # cannot clear the linked members with ON DELETE SET NULL.
+                        promotion_fields = (
+                            "status", "content_type", "title", "author", "year", "cover_url",
+                            "description", "isbn_10", "isbn_13", "provider", "provider_id",
+                            "series_name", "series_position", "admin_note", "approved_by",
+                            "download_task_id", "prefer_alternate_version", "completed_at",
+                            "is_manual_request", "is_released", "expected_release_date",
+                            "hidden_from_admin",
+                        )
+                        sets = [f"{field} = ?" for field in promotion_fields]
+                        sets.extend(["canonical_request_id = NULL", "updated_at = CURRENT_TIMESTAMP"])
+                        conn.execute(
+                            f"UPDATE requests SET {', '.join(sets)} WHERE id = ?",
+                            [target[field] for field in promotion_fields] + [remaining_canonical_id],
+                        )
+                        conn.execute(
+                            "UPDATE requests SET canonical_request_id = ? "
+                            "WHERE canonical_request_id = ?",
+                            (remaining_canonical_id, canonical_id),
+                        )
+                    else:
+                        remaining_canonical_id = None
+                conn.execute("DELETE FROM requests WHERE id = ?", (request_id,))
                 conn.commit()
-                return cursor.rowcount > 0
+                if remaining_canonical_id is None:
+                    return True, None
+                return True, self._get_request(conn, remaining_canonical_id)
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+    def delete_user_request(
+        self, request_id: int, user_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Delete an owned request and promote a linked member when necessary."""
+        _, remaining = self._delete_request(request_id, user_id)
+        return remaining
+
+    def delete_request(self, request_id: int) -> bool:
+        """Delete a request with group validation and canonical promotion."""
+        was_deleted, _ = self._delete_request(request_id)
+        return was_deleted
+
+    def hide_request_group_from_admin(self, request_id: int) -> Optional[Dict[str, Any]]:
+        """Hide every request in a group and return its canonical request."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+                conn.execute(
+                    "UPDATE requests SET hidden_from_admin = 1 "
+                    "WHERE id = ? OR canonical_request_id = ?",
+                    (canonical_id, canonical_id),
+                )
+                canonical = self._get_request(conn, canonical_id)
+                conn.commit()
+                return canonical
+            except Exception:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
     def hide_request_from_admin(self, request_id: int) -> bool:
         """Hide a request from admin view. Returns True if updated."""
-        with self._lock:
-            conn = self._connect()
-            try:
-                cursor = conn.execute(
-                    "UPDATE requests SET hidden_from_admin = 1 WHERE id = ?",
-                    (request_id,)
-                )
-                conn.commit()
-                return cursor.rowcount > 0
-            finally:
-                conn.close()
+        return self.hide_request_group_from_admin(request_id) is not None
 
     def delete_requests_by_user(self, user_id: int) -> int:
         """Delete all requests for a given user. Returns number of deleted requests."""

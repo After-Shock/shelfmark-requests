@@ -70,6 +70,15 @@ class TestConfigEndpoint:
         # Should have some standard config fields
         assert "supported_formats" in data or "book_languages" in data
 
+    def test_config_returns_release_version(self, api_client: APIClient):
+        """Test that config exposes the project release version."""
+        resp = api_client.get("/api/config")
+        _skip_if_protected(api_client, resp)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["release_version"] == "1.6.0"
+
     def test_config_returns_supported_formats(self, api_client: APIClient):
         """Test that config includes supported formats."""
         resp = api_client.get("/api/config")

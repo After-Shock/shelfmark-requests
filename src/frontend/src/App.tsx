@@ -39,6 +39,7 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { ManualRequestModal } from './components/ManualRequestModal';
 import { DEFAULT_LANGUAGES, DEFAULT_SUPPORTED_FORMATS } from './data/languages';
 import { buildSearchQuery } from './utils/buildSearchQuery';
+import { getRequestOutcomeMessage } from './utils/requestOutcome';
 import { UserCancelledError, isUserCancelledError } from './utils/errors';
 import { withBasePath } from './utils/basePath';
 import { SearchModeProvider } from './contexts/SearchModeContext';
@@ -662,11 +663,8 @@ function App() {
         series_position: book.series_position,
         prefer_alternate_version: preferAlternateVersion || false,
       });
-      if (result?.warning) {
-        showToast('Standard version already in library — request submitted for graphic/dramatized version.', 'info');
-      } else {
-        showToast(`Requested: ${book.title}`, 'success');
-      }
+      const outcome = getRequestOutcomeMessage(result, book.title);
+      showToast(outcome.message, outcome.type);
       setSelectedBook(null);
       handleOpenRequestsSidebar();
     } catch (error) {
@@ -697,11 +695,8 @@ function App() {
         expected_release_date: data.expected_release_date,
       });
       setShowManualRequestModal(false);
-      if (result?.warning) {
-        showToast('Standard version already in library — request submitted for graphic/dramatized version.', 'info');
-      } else {
-        showToast(`Requested: ${data.title}`, 'success');
-      }
+      const outcome = getRequestOutcomeMessage(result, data.title);
+      showToast(outcome.message, outcome.type);
       handleOpenRequestsSidebar();
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Failed to submit request', 'error');
@@ -1041,6 +1036,7 @@ function App() {
       <Footer
         debug={config?.debug}
         isAdmin={isAdmin}
+        version={config?.release_version}
       />
       <ToastContainer toasts={toasts} />
 

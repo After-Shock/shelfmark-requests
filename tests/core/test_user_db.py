@@ -69,6 +69,43 @@ class TestUserDBInitialization:
         db.initialize()  # Should not raise
         assert os.path.exists(db_path)
 
+    def test_initialize_migrates_request_last_viewed_column(self, db_path):
+        from shelfmark.core.user_db import UserDB
+
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT,
+                display_name TEXT,
+                password_hash TEXT,
+                oidc_subject TEXT UNIQUE,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO users (username, email, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?)",
+            ("legacy_user", "legacy@example.invalid", "Legacy User", "legacy_hash", "user"),
+        )
+        conn.commit()
+        conn.close()
+
+        db = UserDB(db_path)
+        db.initialize()
+        db.initialize()
+
+        conn = sqlite3.connect(db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        row = conn.execute(
+            "SELECT username, email, display_name, password_hash, role FROM users WHERE username = ?",
+            ("legacy_user",),
+        ).fetchone()
+        conn.close()
+        assert "requests_last_viewed_at" in columns
+        assert row == ("legacy_user", "legacy@example.invalid", "Legacy User", "legacy_hash", "user")
+
 
 class TestUserCRUD:
     """Tests for user create, read, update, delete operations."""
