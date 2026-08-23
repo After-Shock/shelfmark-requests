@@ -1,9 +1,44 @@
 from shelfmark.metadata_providers import BookMetadata
+from shelfmark.core.models import SearchFilters
 from shelfmark.release_sources.direct_download import DirectDownloadSource
 from shelfmark.core.search_plan import build_release_search_plan
 
 
 class TestDirectDownloadSearchQueries:
+    def test_search_books_allows_bypasser_fallback_for_aa_challenges(self, monkeypatch):
+        import shelfmark.release_sources.direct_download as dd
+
+        captured: dict[str, object] = {}
+
+        def fake_html_get_page(url: str, **kwargs):
+            captured.update(kwargs)
+            return "No files found."
+
+        monkeypatch.setattr(dd.downloader, "html_get_page", fake_html_get_page)
+
+        results = dd.search_books(
+            "My Husband's Wife Alice Feeney",
+            SearchFilters(lang=["en"], format=["epub"], content=[]),
+        )
+
+        assert results == []
+        assert captured["allow_bypasser_fallback"] is True
+
+    def test_get_book_info_allows_bypasser_fallback_for_aa_challenges(self, monkeypatch):
+        import shelfmark.release_sources.direct_download as dd
+
+        captured: dict[str, object] = {}
+
+        def fake_html_get_page(url: str, **kwargs):
+            captured.update(kwargs)
+            return "<html></html>"
+
+        monkeypatch.setattr(dd.downloader, "html_get_page", fake_html_get_page)
+        monkeypatch.setattr(dd, "_parse_book_info_page", lambda *_args: "BOOK")
+
+        assert dd.get_book_info("abc123", fetch_download_count=False) == "BOOK"
+        assert captured["allow_bypasser_fallback"] is True
+
     def test_uses_search_title_for_english_queries(self, monkeypatch):
         captured: list[str] = []
 

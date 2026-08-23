@@ -34,8 +34,11 @@ def test_get_aa_mirrors_falls_back_to_defaults_and_legacy_additional(monkeypatch
     monkeypatch.setattr(mirrors, "_get_config", lambda: dummy)
 
     aa = mirrors.get_aa_mirrors()
-    assert "https://annas-archive.gl" in aa
-    assert "https://annas-archive.li" in aa
+    assert aa[:3] == [
+        "https://annas-archive.gl",
+        "https://annas-archive.pk",
+        "https://annas-archive.gd",
+    ]
+    assert "https://annas-archive.li" not in aa
     assert "https://extra.example" in aa
     assert "https://extra2.example" in aa
-

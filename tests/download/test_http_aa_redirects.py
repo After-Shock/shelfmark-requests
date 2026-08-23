@@ -119,6 +119,40 @@ def test_html_get_page_aa_same_host_redirect_is_followed(monkeypatch):
     assert all(c["allow_redirects"] is False for c in calls)
 
 
+def test_html_get_page_aa_challenge_redirect_switches_to_bypasser(monkeypatch):
+    import shelfmark.download.http as http
+
+    monkeypatch.setattr(http, "_is_cf_bypass_enabled", lambda: True)
+    monkeypatch.setattr(http, "get_proxies", lambda _url: {})
+    monkeypatch.setattr(http, "get_ssl_verify", lambda _url: True)
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(http.network, "get_aa_base_url", lambda: "https://annas-archive.gl")
+    monkeypatch.setattr(http.network, "is_aa_auto_mode", lambda: True)
+
+    request_calls: list[str] = []
+    bypass_calls: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        request_calls.append(url)
+        return _FakeResponse(
+            302,
+            headers={"Location": "https://annas-archive.gl/md5/abc123?&check=1"},
+        )
+
+    def fake_bypass(url: str, _selector, _cancel_flag):
+        bypass_calls.append(url)
+        return "BYPASSED"
+
+    monkeypatch.setattr(http.requests, "get", fake_get)
+    monkeypatch.setattr(http, "get_bypassed_page", fake_bypass)
+
+    url = "https://annas-archive.gl/md5/abc123"
+    selector = _DummySelector(["https://annas-archive.gl"])
+    assert http.html_get_page(url, retry=1, selector=selector) == "BYPASSED"
+    assert request_calls == [url]
+    assert bypass_calls == [f"{url}?&check=1"]
+
+
 def test_html_get_page_locked_aa_does_not_fail_over_on_cross_host_redirect(monkeypatch):
     import shelfmark.download.http as http
 

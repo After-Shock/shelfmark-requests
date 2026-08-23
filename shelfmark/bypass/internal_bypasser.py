@@ -921,6 +921,7 @@ def _store_child_bypass_state(payload: dict[str, Any]) -> None:
 def _prepare_child_browser_env(env_vars: dict[str, str]) -> dict[str, str]:
     """Force writable browser runtime paths for the helper subprocess."""
     home_dir = BROWSER_HOME_DIR
+    app_root = str(Path(__file__).resolve().parents[2])
     config_dir = home_dir / ".config"
     cache_dir = home_dir / ".cache"
     runtime_dir = BROWSER_XDG_RUNTIME_DIR
@@ -935,6 +936,9 @@ def _prepare_child_browser_env(env_vars: dict[str, str]) -> dict[str, str]:
     env_vars["XDG_CONFIG_HOME"] = str(config_dir)
     env_vars["XDG_CACHE_HOME"] = str(cache_dir)
     env_vars["XDG_RUNTIME_DIR"] = str(runtime_dir)
+    env_vars["PYTHONPATH"] = os.pathsep.join(
+        path for path in (app_root, env_vars.get("PYTHONPATH")) if path
+    )
     return env_vars
 
 
@@ -954,6 +958,7 @@ def _get_via_subprocess(url: str, retry: int, cancel_flag: Event | None = None) 
         stdin=subprocess.PIPE,
         text=True,
         env=env_vars,
+        cwd=str(BROWSER_HOME_DIR),
     )
     try:
         proc.communicate(json.dumps(payload), timeout=_BYPASS_SUBPROCESS_TIMEOUT_SECONDS)

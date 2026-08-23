@@ -539,38 +539,6 @@ function App() {
     setShowAdvanced,
   ]);
 
-  // Predictive search: auto-search after 3+ characters with debounce
-  useEffect(() => {
-    // Only trigger if user has typed 3+ characters
-    if (!searchInput || searchInput.trim().length < 3) {
-      return;
-    }
-
-    // Don't auto-search if advanced filters are shown
-    if (showAdvanced) {
-      return;
-    }
-
-    // Debounce: wait 500ms after user stops typing
-    const timeoutId = setTimeout(() => {
-      const query = buildSearchQuery({
-        searchInput,
-        showAdvanced: false,
-        advancedFilters,
-        bookLanguages: config?.book_languages || [],
-        defaultLanguage:
-          config?.default_language && config.default_language.length > 0
-            ? config.default_language
-            : [config?.book_languages?.[0]?.code || 'en'],
-        searchMode: config?.search_mode || 'direct',
-      });
-      handleSearch(query, config);
-    }, 500); // 500ms debounce
-
-    // Cleanup: cancel timeout if user types again
-    return () => clearTimeout(timeoutId);
-  }, [searchInput, config, showAdvanced, advancedFilters, handleSearch]);
-
   const handleSettingsSaved = useCallback(() => {
     loadConfig('settings-saved');
   }, [loadConfig]);
