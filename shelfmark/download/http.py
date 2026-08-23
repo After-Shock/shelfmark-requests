@@ -8,7 +8,7 @@ from io import BytesIO
 from threading import Event, Thread
 from types import ModuleType
 from typing import NoReturn
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from tqdm import tqdm
@@ -251,6 +251,37 @@ def html_get_page(
             return html, response_url
         return html
 
+    def _get_with_bypasser(target_url: str) -> str | tuple[str, str]:
+        if status_callback:
+            status_callback("resolving", "Bypassing protection...")
+        heartbeat_stop = Event()
+        heartbeat_thread: Thread | None = None
+        if status_callback:
+
+            def _heartbeat() -> None:
+                # Keep the download alive during long bypass operations.
+                if cancel_flag and cancel_flag.is_set():
+                    return
+                try:
+                    status_callback("resolving", "Bypassing protection...")
+                except _STATUS_CALLBACK_ERRORS:
+                    return
+
+            heartbeat_thread = Thread(
+                target=_heartbeat, daemon=True, name="BypassHeartbeat"
+            )
+            heartbeat_thread.start()
+        try:
+            result = get_bypassed_page(target_url, selector, cancel_flag)
+            return _result(result or "", target_url)
+        except _BYPASSER_ERRORS as e:
+            logger.warning("Bypasser error: %s: %s", type(e).__name__, e)
+            return _result("", target_url)
+        finally:
+            heartbeat_stop.set()
+            if heartbeat_thread:
+                heartbeat_thread.join(timeout=1)
+
     configured_retry = normalize_positive_int(app_config.MAX_RETRY)
     retry_limit = (
         retry if retry is not None else (configured_retry if configured_retry is not None else 1)
@@ -269,36 +300,7 @@ def html_get_page(
         cookies: dict[str, str] = {}
         try:
             if use_bypasser_now and _is_cf_bypass_enabled():
-                if status_callback:
-                    status_callback("resolving", "Bypassing protection...")
-                heartbeat_stop = Event()
-                heartbeat_thread: Thread | None = None
-                if status_callback:
-
-                    def _heartbeat() -> None:
-                        # Keep the download "alive" during long bypass operations so the orchestrator
-                        # doesn't flag it as stalled.
-                        if cancel_flag and cancel_flag.is_set():
-                            return
-                        try:
-                            status_callback("resolving", "Bypassing protection...")
-                        except _STATUS_CALLBACK_ERRORS:
-                            return
-
-                    heartbeat_thread = Thread(
-                        target=_heartbeat, daemon=True, name="BypassHeartbeat"
-                    )
-                    heartbeat_thread.start()
-                try:
-                    result = get_bypassed_page(current_url, selector, cancel_flag)
-                    return _result(result or "", current_url)
-                except _BYPASSER_ERRORS as e:
-                    logger.warning("Bypasser error: %s: %s", type(e).__name__, e)
-                    return _result("", current_url)
-                finally:
-                    heartbeat_stop.set()
-                    if heartbeat_thread:
-                        heartbeat_thread.join(timeout=1)
+                return _get_with_bypasser(current_url)
 
             logger.debug("GET: %s", current_url)
 
@@ -366,6 +368,22 @@ def html_get_page(
                             current_url,
                         )
                         return _result("", current_url)
+
+                    if (
+                        allow_bypasser_fallback
+                        and not use_bypasser_now
+                        and _is_cf_bypass_enabled()
+                        and parse_qs(urlparse(redirect_url).query).get("check") == ["1"]
+                    ):
+                        logger.info(
+                            "AA challenge redirect detected; switching to bypasser: %s",
+                            redirect_url,
+                        )
+                        if status_callback:
+                            status_callback("resolving", "Bypassing protection...")
+                        current_url = redirect_url
+                        use_bypasser_now = True
+                        return _get_with_bypasser(current_url)
 
                     # Same-host redirect (relative or absolute) - follow manually.
                     redirects_followed += 1
