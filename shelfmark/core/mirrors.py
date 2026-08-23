@@ -20,7 +20,8 @@ def _get_config():
 # Default mirror lists (hardcoded fallbacks)
 DEFAULT_AA_MIRRORS = [
     "https://annas-archive.gl",
-    "https://annas-archive.li",
+    "https://annas-archive.pk",
+    "https://annas-archive.gd",
 ]
 
 DEFAULT_LIBGEN_MIRRORS = [

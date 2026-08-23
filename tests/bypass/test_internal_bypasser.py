@@ -163,3 +163,38 @@ def test_try_with_cached_cookies_uses_ssl_verify(monkeypatch):
 
     assert internal_bypasser._try_with_cached_cookies("https://example.com/book", "example.com") == "ok"
     assert seen["verify"] == "VERIFY_SENTINEL"
+
+
+def test_bypasser_subprocess_runs_from_writable_browser_home(monkeypatch, tmp_path):
+    import json
+    import shelfmark.bypass.internal_bypasser as internal_bypasser
+
+    browser_home = tmp_path / "browser-home"
+    runtime_dir = tmp_path / "runtime"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(internal_bypasser, "BROWSER_HOME_DIR", browser_home)
+    monkeypatch.setattr(internal_bypasser, "BROWSER_XDG_RUNTIME_DIR", runtime_dir)
+    monkeypatch.setenv("PYTHONPATH", "/existing/python/path")
+
+    class FakeProcess:
+        returncode = 0
+
+        def __init__(self, args, **kwargs):
+            captured["args"] = args
+            captured.update(kwargs)
+
+        def communicate(self, stdin, timeout):
+            payload = json.loads(stdin)
+            with open(payload["result_path"], "w") as fh:
+                json.dump({"ok": True, "html": "<html></html>"}, fh)
+            return "", ""
+
+    monkeypatch.setattr(internal_bypasser.subprocess, "Popen", FakeProcess)
+
+    assert internal_bypasser._get_via_subprocess("https://example.com", retry=1) == "<html></html>"
+    assert captured["cwd"] == str(browser_home)
+    assert captured["env"]["HOME"] == str(browser_home)
+    python_paths = captured["env"]["PYTHONPATH"].split(internal_bypasser.os.pathsep)
+    assert python_paths[0] == str(internal_bypasser.Path(internal_bypasser.__file__).parents[2])
+    assert "/existing/python/path" in python_paths
