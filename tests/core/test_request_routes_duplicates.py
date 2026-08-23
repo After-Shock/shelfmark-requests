@@ -100,6 +100,39 @@ def test_second_user_joins_existing_request_and_only_creation_notifies(app):
     assert admin_rows[0]["requester_count"] == 2
 
 
+def test_provider_audiobook_joins_existing_manual_request(app):
+    with patch("shelfmark.core.request_routes.abs_client.find_match", return_value=None), \
+         patch("shelfmark.core.request_routes._send_discord_new_request"), \
+         patch("shelfmark.core.request_routes._send_pushover_new_request"):
+        with app.test_client() as client:
+            login(client, 1)
+            manual = client.post(
+                "/api/requests",
+                json={
+                    "title": "The Eye of the Bedlam Bride",
+                    "author": "Matt Dinniman",
+                    "content_type": "audiobook",
+                    "is_manual_request": True,
+                },
+            )
+            login(client, 2)
+            provider = client.post(
+                "/api/requests",
+                json={
+                    "title": "the eye of the bedlam bride",
+                    "author": "matt dinniman",
+                    "content_type": "audiobook",
+                    "provider": "googlebooks",
+                    "provider_id": "gc_H0QEACAAJ",
+                },
+            )
+
+    assert manual.status_code == 201
+    assert provider.status_code == 200
+    assert provider.get_json()["joined_existing"] is True
+    assert provider.get_json()["canonical_request_id"] == manual.get_json()["id"]
+
+
 def test_same_user_repeat_returns_existing_row(app):
     with app.test_client() as client:
         first = create_request(client, 1)
