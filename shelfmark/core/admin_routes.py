@@ -209,6 +209,50 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
         user_db.delete_invite_code(invite_id)
         return jsonify({"success": True})
 
+    @app.route("/api/admin/password-resets", methods=["GET"])
+    @_require_admin
+    def admin_list_password_resets():
+        """List password reset codes."""
+        return jsonify(user_db.list_password_reset_codes())
+
+    @app.route("/api/admin/password-resets", methods=["POST"])
+    @_require_admin
+    def admin_create_password_reset():
+        """Generate a one-time password reset code for a user."""
+        data = request.get_json() or {}
+        try:
+            user_id = int(data.get("user_id"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "user_id is required"}), 400
+        user = user_db.get_user(user_id=user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        hours = int(data.get("expires_in_hours") or 24)
+        if hours <= 0:
+            return jsonify({"error": "expires_in_hours must be positive"}), 400
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        creator_id = session.get("db_user_id")
+        try:
+            creator_id = int(creator_id) if creator_id is not None else None
+        except (TypeError, ValueError):
+            creator_id = None
+        if creator_id is not None and not user_db.get_user(user_id=creator_id):
+            creator_id = None
+        reset = user_db.create_password_reset_code(
+            user_id=user_id,
+            code=secrets.token_urlsafe(12),
+            created_by=creator_id,
+            expires_at=expires_at,
+        )
+        return jsonify(reset), 201
+
+    @app.route("/api/admin/password-resets/<int:reset_id>", methods=["DELETE"])
+    @_require_admin
+    def admin_delete_password_reset(reset_id: int):
+        """Delete an unused password reset code."""
+        user_db.delete_password_reset_code(reset_id)
+        return jsonify({"success": True})
+
     @app.route("/api/admin/users", methods=["GET"])
     @_require_admin
     def admin_list_users():

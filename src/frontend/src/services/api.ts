@@ -418,6 +418,37 @@ export const deleteInviteCode = async (inviteId: number): Promise<{ success: boo
   });
 };
 
+export interface PasswordResetCode {
+  id: number;
+  user_id: number;
+  username: string;
+  code: string;
+  created_by: number | null;
+  created_at: string;
+  used_at: string | null;
+  expires_at: string;
+}
+
+export const getPasswordResetCodes = async (): Promise<PasswordResetCode[]> => {
+  return fetchJSON<PasswordResetCode[]>(`${API_BASE}/admin/password-resets`);
+};
+
+export const createPasswordResetCode = async (
+  userId: number,
+  expiresInHours = 24,
+): Promise<PasswordResetCode> => {
+  return fetchJSON<PasswordResetCode>(`${API_BASE}/admin/password-resets`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, expires_in_hours: expiresInHours }),
+  });
+};
+
+export const deletePasswordResetCode = async (resetId: number): Promise<{ success: boolean }> => {
+  return fetchJSON<{ success: boolean }>(`${API_BASE}/admin/password-resets/${resetId}`, {
+    method: 'DELETE',
+  });
+};
+
 export interface AdminUser {
   id: number;
   username: string;
@@ -519,6 +550,17 @@ export const registerUser = async (data: {
   };
 }): Promise<{ success: boolean; warnings?: string[] }> => {
   return fetchJSON(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const resetPassword = async (data: {
+  username: string;
+  code: string;
+  password: string;
+}): Promise<{ success: boolean; warnings?: string[] }> => {
+  return fetchJSON(`${API_BASE}/auth/reset-password`, {
     method: 'POST',
     body: JSON.stringify(data),
   });

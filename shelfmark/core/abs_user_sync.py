@@ -102,6 +102,39 @@ def _grant_all_libraries(base_url: str, token: str, username: str) -> Dict[str, 
     return {"status": "error", "message": "Audiobookshelf account created, but granting library access failed"}
 
 
+def update_abs_password(username: str, password: str) -> Dict[str, Any]:
+    """Update an existing Audiobookshelf user's password, best-effort."""
+    base_url, token = _get_credentials()
+    if not base_url or not token:
+        return {"status": "skipped", "message": "Audiobookshelf URL or API token not configured"}
+    if not bool(config.get("ABS_USER_SYNC_ENABLED", False)):
+        return {"status": "skipped", "message": "ABS user sync is disabled"}
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        lookup = http_requests.get(f"{base_url}/api/users/username/{username}", headers=headers, timeout=10)
+        if lookup.status_code == 404:
+            return {"status": "skipped", "message": "No matching Audiobookshelf account"}
+        if lookup.status_code != 200:
+            return {"status": "error", "message": f"ABS user lookup returned status {lookup.status_code}"}
+        user = lookup.json() or {}
+        user_id = user.get("id")
+        if not user_id:
+            return {"status": "error", "message": "Audiobookshelf user had no id"}
+        detail = http_requests.get(f"{base_url}/api/users/{user_id}", headers=headers, timeout=10)
+        if detail.status_code == 200:
+            user = detail.json() or user
+        user["password"] = password
+        resp = http_requests.put(f"{base_url}/api/users/{user_id}", headers=headers, json=user, timeout=15)
+        if resp.status_code in (200, 204):
+            return {"status": "updated", "message": "Audiobookshelf password updated"}
+        if resp.status_code == 403:
+            return {"status": "error", "message": "ABS API token is not an admin token; cannot update password"}
+        return {"status": "error", "message": f"ABS returned status {resp.status_code}"}
+    except http_requests.RequestException as e:
+        logger.error("Audiobookshelf password update for '%s' failed: %s", username, e)
+        return {"status": "error", "message": "Could not reach Audiobookshelf server"}
+
+
 def provision_abs_user(username: str, password: str, role: str = "user") -> Dict[str, Any]:
     """Create a matching user on the Audiobookshelf server.
 

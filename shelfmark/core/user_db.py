@@ -107,6 +107,19 @@ CREATE TABLE IF NOT EXISTS invite_codes (
 
 CREATE INDEX IF NOT EXISTS idx_invite_codes_code
 ON invite_codes (code);
+
+CREATE TABLE IF NOT EXISTS password_reset_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code TEXT UNIQUE NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_at TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_codes_code
+ON password_reset_codes (code);
 """
 
 
@@ -179,6 +192,7 @@ class UserDB:
                 self._migrate_request_delivery_columns(conn)
                 self._migrate_activity_tables(conn)
                 self._migrate_invite_tables(conn)
+                self._migrate_password_reset_tables(conn)
                 conn.commit()
                 # WAL mode must be changed outside an open transaction.
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -399,6 +413,112 @@ class UserDB:
         row = conn.execute("SELECT * FROM invite_codes WHERE id = ?", (invite_id,)).fetchone()
         if not row:
             raise ValueError(f"Invite {invite_id} not found")
+        return dict(row)
+
+    def _migrate_password_reset_tables(self, conn: sqlite3.Connection) -> None:
+        """Ensure password-reset table exists."""
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS password_reset_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                code TEXT UNIQUE NOT NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                used_at TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_password_reset_codes_code
+            ON password_reset_codes (code);
+            """
+        )
+
+    def create_password_reset_code(
+        self,
+        user_id: int,
+        code: str,
+        created_by: Optional[int],
+        expires_at: str,
+    ) -> Dict[str, Any]:
+        """Create a one-time password reset code for a user."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    """INSERT INTO password_reset_codes (user_id, code, created_by, expires_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (user_id, code, created_by, expires_at),
+                )
+                conn.commit()
+                return self._get_password_reset_by_id(conn, int(cursor.lastrowid))
+            except sqlite3.IntegrityError as e:
+                raise ValueError(f"Password reset code could not be created: {e}")
+            finally:
+                conn.close()
+
+    def list_password_reset_codes(self) -> List[Dict[str, Any]]:
+        """List password reset codes, newest first."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """SELECT prc.*, users.username
+                   FROM password_reset_codes prc
+                   JOIN users ON users.id = prc.user_id
+                   ORDER BY prc.used_at IS NOT NULL, prc.created_at DESC, prc.id DESC"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def consume_password_reset_code(self, username: str, code: str) -> Optional[Dict[str, Any]]:
+        """Consume a valid reset code and return the target user."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    """SELECT prc.id AS reset_id, users.*
+                       FROM password_reset_codes prc
+                       JOIN users ON users.id = prc.user_id
+                       WHERE prc.code = ?
+                         AND LOWER(users.username) = LOWER(?)
+                         AND prc.used_at IS NULL
+                         AND prc.expires_at > CURRENT_TIMESTAMP""",
+                    (code, username),
+                ).fetchone()
+                if not row:
+                    return None
+                conn.execute(
+                    "UPDATE password_reset_codes SET used_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (row["reset_id"],),
+                )
+                conn.commit()
+                payload = dict(row)
+                payload.pop("reset_id", None)
+                return payload
+            finally:
+                conn.close()
+
+    def delete_password_reset_code(self, reset_id: int) -> None:
+        """Delete an unused password reset code."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM password_reset_codes WHERE id = ? AND used_at IS NULL", (reset_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def _get_password_reset_by_id(self, conn: sqlite3.Connection, reset_id: int) -> Dict[str, Any]:
+        row = conn.execute(
+            """SELECT prc.*, users.username
+               FROM password_reset_codes prc
+               JOIN users ON users.id = prc.user_id
+               WHERE prc.id = ?""",
+            (reset_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Password reset {reset_id} not found")
         return dict(row)
 
     def create_user(

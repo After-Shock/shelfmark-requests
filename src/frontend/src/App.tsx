@@ -32,6 +32,7 @@ import { Footer } from './components/Footer';
 import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { RegisterPage } from './pages/RegisterPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { SettingsModal } from './components/settings';
 import { AccountModal } from './components/AccountModal';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
@@ -1142,6 +1143,17 @@ function App() {
           )
         }
       />
+      <Route
+        path="/reset-password"
+        element={
+          !isAuthenticated ? (
+            <ResetPasswordPage />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+
       <Route
         path="/login"
         element={

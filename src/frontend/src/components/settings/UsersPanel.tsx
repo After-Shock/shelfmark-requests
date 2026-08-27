@@ -4,6 +4,7 @@ import {
   BookloreOption,
   DownloadDefaults,
   InviteCode,
+  PasswordResetCode,
   getAdminUsers,
   getAdminUser,
   getBookloreOptions,
@@ -14,6 +15,9 @@ import {
   getInviteCodes,
   createInviteCode,
   deleteInviteCode,
+  getPasswordResetCodes,
+  createPasswordResetCode,
+  deletePasswordResetCode,
 } from '../../services/api';
 
 interface UsersPanelProps {
@@ -45,6 +49,8 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
   const [invites, setInvites] = useState<InviteCode[]>([]);
   const [generatingInvite, setGeneratingInvite] = useState(false);
   const [inviteExpiryHours, setInviteExpiryHours] = useState<number | null>(168);
+  const [passwordResets, setPasswordResets] = useState<PasswordResetCode[]>([]);
+  const [resetExpiryHours, setResetExpiryHours] = useState(24);
 
   // Edit view state
   const [editPassword, setEditPassword] = useState('');
@@ -59,12 +65,14 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
     try {
       setLoading(true);
       setLoadError(null);
-      const [data, inviteData] = await Promise.all([
+      const [data, inviteData, resetData] = await Promise.all([
         getAdminUsers(),
         getInviteCodes().catch(() => [] as InviteCode[]),
+        getPasswordResetCodes().catch(() => [] as PasswordResetCode[]),
       ]);
       setUsers(data);
       setInvites(inviteData);
+      setPasswordResets(resetData);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load users';
       setLoadError(msg);
@@ -207,6 +215,26 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
       onShowToast?.('Invite deleted', 'success');
     } catch {
       onShowToast?.('Failed to delete invite', 'error');
+    }
+  };
+
+  const handleGeneratePasswordReset = async (userId: number) => {
+    try {
+      const reset = await createPasswordResetCode(userId, resetExpiryHours);
+      setPasswordResets((prev) => [reset, ...prev]);
+      onShowToast?.('Password reset code generated', 'success');
+    } catch (err) {
+      onShowToast?.((err as Error).message || 'Failed to generate password reset', 'error');
+    }
+  };
+
+  const handleDeletePasswordReset = async (resetId: number) => {
+    try {
+      await deletePasswordResetCode(resetId);
+      setPasswordResets((prev) => prev.filter((reset) => reset.id !== resetId));
+      onShowToast?.('Password reset deleted', 'success');
+    } catch {
+      onShowToast?.('Failed to delete password reset', 'error');
     }
   };
 
@@ -578,6 +606,55 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
         )}
       </div>
 
+      <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-medium">Password Reset Codes</h4>
+            <p className="text-xs opacity-60">Generate one-time codes for users who forgot their password.</p>
+          </div>
+          <select
+            value={resetExpiryHours}
+            onChange={(e) => setResetExpiryHours(Number(e.target.value))}
+            className="px-2 py-1.5 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-xs transition-colors"
+          >
+            <option value="1">1 hour</option>
+            <option value="6">6 hours</option>
+            <option value="24">24 hours</option>
+            <option value="72">3 days</option>
+          </select>
+        </div>
+        {passwordResets.length > 0 ? (
+          <div className="space-y-2">
+            {passwordResets.slice(0, 8).map((reset) => {
+              const used = !!reset.used_at;
+              return (
+                <div key={reset.id} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <span className="opacity-60 mr-2">{reset.username}</span>
+                    <code className={`px-2 py-1 rounded bg-black/10 break-all ${used ? 'opacity-40 line-through' : ''}`}>
+                      {reset.code}
+                    </code>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="opacity-50">{used ? 'Used' : `Expires ${formatInviteDate(reset.expires_at)}`}</span>
+                    {!used && (
+                      <button
+                        onClick={() => handleDeletePasswordReset(reset.id)}
+                        className="px-2 py-1 rounded text-red-400 hover:bg-red-600 hover:text-white transition-colors"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-xs opacity-50">No password reset codes yet. Use a user's Reset Password button below.</p>
+        )}
+      </div>
+
       {showCreateForm && (
         <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
           {users.length === 0 && (
@@ -706,6 +783,14 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
                              hover:bg-[var(--hover-surface)] transition-colors"
                 >
                   Edit
+                </button>
+
+                <button
+                  onClick={() => handleGeneratePasswordReset(user.id)}
+                  className="text-xs px-2 py-1 rounded border border-[var(--border-muted)]
+                             hover:bg-[var(--hover-surface)] transition-colors"
+                >
+                  Reset Password
                 </button>
 
                 {confirmDelete === user.id ? (

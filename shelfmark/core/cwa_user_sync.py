@@ -150,6 +150,31 @@ def _normalize_email(value: Any) -> str | None:
     return email or None
 
 
+def update_cwa_password(username: str, password: str) -> dict[str, Any]:
+    """Update an existing Calibre-Web user's password, best-effort."""
+    if not bool(config.get("CWA_USER_SYNC_ENABLED", False)):
+        return {"status": "skipped", "message": "Calibre-Web user sync is disabled"}
+    db_path = _get_cwa_db_path()
+    if not db_path:
+        return {"status": "skipped", "message": "Calibre-Web database not mounted (/auth/app.db)"}
+    try:
+        conn = sqlite3.connect(db_path, timeout=10)
+        try:
+            cur = conn.execute(
+                "UPDATE user SET password = ? WHERE name = ?",
+                (_hash_cwa_password(password), username),
+            )
+            conn.commit()
+            if cur.rowcount == 0:
+                return {"status": "skipped", "message": "No matching Calibre-Web account"}
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        logger.error("Calibre-Web password update for '%s' failed: %s", username, e)
+        return {"status": "error", "message": f"Could not update Calibre-Web password: {e}"}
+    return {"status": "updated", "message": "Calibre-Web password updated"}
+
+
 def upsert_cwa_user(
     user_db: UserDB,
     cwa_username: str,

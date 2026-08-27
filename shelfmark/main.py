@@ -1926,6 +1926,49 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
     return jsonify({"success": True, "warnings": warnings}), 201
 
 
+@app.route('/api/auth/reset-password', methods=['POST'])
+def api_reset_password() -> Union[Response, Tuple[Response, int]]:
+    """Reset a local user's password using an admin-generated reset code."""
+    if user_db is None:
+        return jsonify({"error": "Password reset not available"}), 503
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    code = (data.get("code") or "").strip()
+    password = data.get("password", "")
+    if not username or not code or not password:
+        return jsonify({"error": "Username, reset code, and new password are required"}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+
+    user = user_db.consume_password_reset_code(username, code)
+    if not user:
+        return jsonify({"error": "Invalid or expired reset code"}), 403
+    if user.get("auth_source") != "builtin":
+        return jsonify({"error": "Password reset is only available for local users"}), 400
+
+    from werkzeug.security import generate_password_hash
+    user_db.update_user(int(user["id"]), password_hash=generate_password_hash(password))
+
+    warnings: list[str] = []
+    try:
+        from shelfmark.core.abs_user_sync import update_abs_password
+        result = update_abs_password(username, password)
+        if result.get("status") == "error":
+            warnings.append(f"Audiobooks: {result.get('message')}")
+    except Exception as e:
+        logger.warning(f"Unexpected error updating ABS password for '{username}': {e}")
+    try:
+        from shelfmark.core.cwa_user_sync import update_cwa_password
+        result = update_cwa_password(username, password)
+        if result.get("status") == "error":
+            warnings.append(f"Ebooks: {result.get('message')}")
+    except Exception as e:
+        logger.warning(f"Unexpected error updating CWA password for '{username}': {e}")
+
+    logger.info(f"Password reset completed for user '{username}'")
+    return jsonify({"success": True, "warnings": warnings})
+
+
 @app.route('/api/auth/logout', methods=['POST'])
 def api_logout() -> Union[Response, Tuple[Response, int]]:
     """

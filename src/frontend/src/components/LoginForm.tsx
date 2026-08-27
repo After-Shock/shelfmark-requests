@@ -234,6 +234,12 @@ export const LoginForm = ({
         </button>
       </form>
 
+      <p className="text-center text-sm mt-3 opacity-70">
+        <a href={withBasePath('/reset-password')} className="font-medium hover:opacity-80 transition-opacity" style={{ color: theme.primary.turquoise }}>
+          Forgot password?
+        </a>
+      </p>
+
       {authMode === 'oidc' && (
         <>
           <div className="flex items-center my-4">
