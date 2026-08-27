@@ -3,6 +3,7 @@ import {
   AdminUser,
   BookloreOption,
   DownloadDefaults,
+  InviteCode,
   getAdminUsers,
   getAdminUser,
   getBookloreOptions,
@@ -10,6 +11,9 @@ import {
   createAdminUser,
   updateAdminUser,
   deleteAdminUser,
+  getInviteCodes,
+  createInviteCode,
+  deleteInviteCode,
 } from '../../services/api';
 
 interface UsersPanelProps {
@@ -38,6 +42,9 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createForm, setCreateForm] = useState({ username: '', email: '', password: '', display_name: '', role: 'user' });
   const [creating, setCreating] = useState(false);
+  const [invites, setInvites] = useState<InviteCode[]>([]);
+  const [generatingInvite, setGeneratingInvite] = useState(false);
+  const [inviteExpiryHours, setInviteExpiryHours] = useState<number | null>(168);
 
   // Edit view state
   const [editPassword, setEditPassword] = useState('');
@@ -52,8 +59,12 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
     try {
       setLoading(true);
       setLoadError(null);
-      const data = await getAdminUsers();
+      const [data, inviteData] = await Promise.all([
+        getAdminUsers(),
+        getInviteCodes().catch(() => [] as InviteCode[]),
+      ]);
       setUsers(data);
+      setInvites(inviteData);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load users';
       setLoadError(msg);
@@ -173,6 +184,29 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
       fetchUsers();
     } catch {
       onShowToast?.('Failed to update user', 'error');
+    }
+  };
+
+  const handleGenerateInvite = async () => {
+    setGeneratingInvite(true);
+    try {
+      const invite = await createInviteCode(inviteExpiryHours);
+      setInvites((prev) => [invite, ...prev]);
+      onShowToast?.('Invite code generated', 'success');
+    } catch (err) {
+      onShowToast?.((err as Error).message || 'Failed to generate invite', 'error');
+    } finally {
+      setGeneratingInvite(false);
+    }
+  };
+
+  const handleDeleteInvite = async (inviteId: number) => {
+    try {
+      await deleteInviteCode(inviteId);
+      setInvites((prev) => prev.filter((invite) => invite.id !== inviteId));
+      onShowToast?.('Invite deleted', 'success');
+    } catch {
+      onShowToast?.('Failed to delete invite', 'error');
     }
   };
 
@@ -485,6 +519,65 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
         </button>
       </div>
 
+      <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-medium">Signup Invites</h4>
+            <p className="text-xs opacity-60">Generate one-time invite codes for self-service registration.</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={inviteExpiryHours ?? ''}
+              onChange={(e) => setInviteExpiryHours(e.target.value ? Number(e.target.value) : null)}
+              className="px-2 py-1.5 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-xs transition-colors"
+              disabled={generatingInvite}
+            >
+              <option value="24">24 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+              <option value="720">30 days</option>
+              <option value="">No expiry</option>
+            </select>
+            <button
+              onClick={handleGenerateInvite}
+              disabled={generatingInvite}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors disabled:opacity-50"
+            >
+              {generatingInvite ? 'Generating...' : 'Generate Invite'}
+            </button>
+          </div>
+        </div>
+        {invites.length > 0 ? (
+          <div className="space-y-2">
+            {invites.slice(0, 8).map((invite) => {
+              const used = !!invite.used_at;
+              return (
+                <div key={invite.id} className="flex items-center justify-between gap-2 text-xs">
+                  <code className={`px-2 py-1 rounded bg-black/10 break-all ${used ? 'opacity-40 line-through' : ''}`}>
+                    {invite.code}
+                  </code>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="opacity-50">
+                      {used ? 'Used' : invite.expires_at ? `Expires ${formatInviteDate(invite.expires_at)}` : 'No expiry'}
+                    </span>
+                    {!used && (
+                      <button
+                        onClick={() => handleDeleteInvite(invite.id)}
+                        className="px-2 py-1 rounded text-red-400 hover:bg-red-600 hover:text-white transition-colors"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-xs opacity-50">No invite codes yet.</p>
+        )}
+      </div>
+
       {showCreateForm && (
         <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
           {users.length === 0 && (
@@ -687,6 +780,13 @@ interface EmailRecipientsEditorProps {
   recipients: Array<{ nickname: string; email: string }>;
   onChange: (recipients: Array<{ nickname: string; email: string }>) => void;
 }
+
+const formatInviteDate = (value: string) => {
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T') + 'Z';
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
 
 const EmailRecipientsEditor = ({ recipients, onChange }: EmailRecipientsEditorProps) => {
   const addRecipient = () => {

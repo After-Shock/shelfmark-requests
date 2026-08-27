@@ -24,15 +24,16 @@ _SERVICE_KEYS = ("audiobookshelf", "calibre_web")
 def normalize_service_selection(data: Any) -> Dict[str, bool]:
     """Normalize a signup service selection from an API payload.
 
-    Accepts None (select all available), a list of keys, or a dict of flags.
-    Missing keys default to True so existing clients get the old behaviour.
+    Accepts None (select none), a list of keys, or a dict of flags.
+    Missing keys default to False so signup creates no external accounts unless
+    the user explicitly selects them.
     """
     if data is None:
-        return {key: True for key in _SERVICE_KEYS}
+        return {key: False for key in _SERVICE_KEYS}
     if isinstance(data, (list, tuple)):
         return {key: key in data for key in _SERVICE_KEYS}
     if isinstance(data, dict):
-        return {key: bool(data.get(key, True)) for key in _SERVICE_KEYS}
+        return {key: bool(data.get(key, False)) for key in _SERVICE_KEYS}
     return {key: True for key in _SERVICE_KEYS}
 
 
@@ -61,7 +62,7 @@ def provision_signup_accounts(
         provision_cwa_user,
     )
 
-    selection = services if services is not None else {key: True for key in _SERVICE_KEYS}
+    selection = services if services is not None else {key: False for key in _SERVICE_KEYS}
     results: Dict[str, Dict[str, Any]] = {}
 
     if selection.get("audiobookshelf") and abs_enabled():

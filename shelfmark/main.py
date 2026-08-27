@@ -1866,6 +1866,13 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
     username = (data.get("username") or "").strip()
     password = data.get("password", "")
     email = (data.get("email") or "").strip() or None
+    invite_code = (data.get("invite_code") or "").strip()
+
+    if not invite_code:
+        return jsonify({"error": "Invite code is required"}), 400
+    invite = user_db.get_invite_code(invite_code)
+    if not invite or invite.get("used_at"):
+        return jsonify({"error": "Invalid or already used invite code"}), 403
 
     if not username:
         return jsonify({"error": "Username is required"}), 400
@@ -1886,6 +1893,10 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
         )
     except ValueError:
         return jsonify({"error": "Username already taken"}), 409
+
+    if not user_db.consume_invite_code(invite_code, int(new_user["id"])):
+        user_db.delete_user(int(new_user["id"]))
+        return jsonify({"error": "Invalid or already used invite code"}), 403
 
     # Mirror the account onto selected services (Audiobookshelf/Calibre-Web)
     # if enabled. Best-effort: a failure here should not block registration.
@@ -2012,6 +2023,7 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
             "display_name": display_name,
             "needs_setup": needs_setup,
             "registration_enabled": registration_enabled,
+            "invite_required": True,
             "signup_services": signup_services,
         }
         

@@ -13,12 +13,17 @@ import shelfmark.core.abs_user_sync as abs_user_sync
 
 
 class FakeResponse:
-    def __init__(self, status_code, text=""):
+    def __init__(self, status_code, text="", payload=None):
         self.status_code = status_code
         self.text = text
+        self._payload = payload or {}
 
     def json(self):
-        return {}
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise abs_user_sync.http_requests.HTTPError(self.text)
 
 
 class FakeConfig:
@@ -73,8 +78,28 @@ def test_creates_user(configured, monkeypatch):
         calls.append({"url": url, "headers": headers, "json": json})
         return FakeResponse(200)
 
-    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(404))
+    gets = []
+    puts = []
+
+    def fake_get(url, **k):
+        gets.append(url)
+        if url.endswith("/api/users/username/alice") and len(gets) == 1:
+            return FakeResponse(404)
+        if url.endswith("/api/users/username/alice"):
+            return FakeResponse(200, payload={"id": "user-1", "librariesAccessible": []})
+        if url.endswith("/api/users/user-1"):
+            return FakeResponse(200, payload={"id": "user-1", "librariesAccessible": []})
+        if url.endswith("/api/libraries"):
+            return FakeResponse(200, payload={"libraries": [{"id": "lib-1"}, {"id": "lib-2"}]})
+        return FakeResponse(404)
+
+    def fake_put(url, headers=None, json=None, timeout=None):
+        puts.append({"url": url, "json": json})
+        return FakeResponse(200)
+
+    monkeypatch.setattr(abs_user_sync.http_requests, "get", fake_get)
     monkeypatch.setattr(abs_user_sync.http_requests, "post", fake_post)
+    monkeypatch.setattr(abs_user_sync.http_requests, "put", fake_put)
 
     result = abs_user_sync.provision_abs_user("alice", "pw1234", role="user")
 
@@ -83,6 +108,8 @@ def test_creates_user(configured, monkeypatch):
     assert calls[0]["url"] == "https://audiobooks.sullyflix.com/api/users"
     assert calls[0]["json"] == {"username": "alice", "password": "pw1234", "type": "user"}
     assert calls[0]["headers"]["Authorization"] == "Bearer test-token"
+    assert puts[0]["url"] == "https://audiobooks.sullyflix.com/api/users/user-1"
+    assert puts[0]["json"]["librariesAccessible"] == ["lib-1", "lib-2"]
 
 
 def test_admin_role_maps_to_admin_type(configured, monkeypatch):

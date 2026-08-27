@@ -391,6 +391,33 @@ export const getReleases = async (
 
 // Admin user management API
 
+export interface InviteCode {
+  id: number;
+  code: string;
+  created_by: number | null;
+  created_at: string;
+  used_by: number | null;
+  used_at: string | null;
+  expires_at: string | null;
+}
+
+export const getInviteCodes = async (): Promise<InviteCode[]> => {
+  return fetchJSON<InviteCode[]>(`${API_BASE}/admin/invites`);
+};
+
+export const createInviteCode = async (expiresInHours?: number | null): Promise<InviteCode> => {
+  return fetchJSON<InviteCode>(`${API_BASE}/admin/invites`, {
+    method: 'POST',
+    body: JSON.stringify(expiresInHours ? { expires_in_hours: expiresInHours } : {}),
+  });
+};
+
+export const deleteInviteCode = async (inviteId: number): Promise<{ success: boolean }> => {
+  return fetchJSON<{ success: boolean }>(`${API_BASE}/admin/invites/${inviteId}`, {
+    method: 'DELETE',
+  });
+};
+
 export interface AdminUser {
   id: number;
   username: string;
@@ -485,6 +512,7 @@ export const registerUser = async (data: {
   username: string;
   password: string;
   email?: string;
+  invite_code: string;
   services?: {
     audiobookshelf?: boolean;
     calibre_web?: boolean;

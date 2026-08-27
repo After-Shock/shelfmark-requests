@@ -94,6 +94,19 @@ CREATE TABLE IF NOT EXISTS activity_dismissals (
 
 CREATE INDEX IF NOT EXISTS idx_activity_dismissals_user_dismissed_at
 ON activity_dismissals (user_id, dismissed_at DESC);
+
+CREATE TABLE IF NOT EXISTS invite_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    used_at TIMESTAMP,
+    expires_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_invite_codes_code
+ON invite_codes (code);
 """
 
 
@@ -165,6 +178,7 @@ class UserDB:
                 self._migrate_requests_last_viewed_column(conn)
                 self._migrate_request_delivery_columns(conn)
                 self._migrate_activity_tables(conn)
+                self._migrate_invite_tables(conn)
                 conn.commit()
                 # WAL mode must be changed outside an open transaction.
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -283,6 +297,109 @@ class UserDB:
         dismissal_column_names = {str(col["name"]) for col in dismissal_columns}
         if "activity_log_id" not in dismissal_column_names:
             conn.execute("ALTER TABLE activity_dismissals ADD COLUMN activity_log_id INTEGER")
+
+    def _migrate_invite_tables(self, conn: sqlite3.Connection) -> None:
+        """Ensure invite-code table exists."""
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS invite_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                used_at TIMESTAMP,
+                expires_at TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_invite_codes_code
+            ON invite_codes (code);
+            """
+        )
+
+    def create_invite_code(
+        self,
+        code: str,
+        created_by: Optional[int] = None,
+        expires_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a signup invite code."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    """INSERT INTO invite_codes (code, created_by, expires_at)
+                       VALUES (?, ?, ?)""",
+                    (code, created_by, expires_at),
+                )
+                conn.commit()
+                return self._get_invite_by_id(conn, int(cursor.lastrowid))
+            except sqlite3.IntegrityError as e:
+                raise ValueError(f"Invite code already exists: {e}")
+            finally:
+                conn.close()
+
+    def list_invite_codes(self) -> List[Dict[str, Any]]:
+        """List invite codes, newest first."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM invite_codes
+                   ORDER BY used_at IS NOT NULL, created_at DESC, id DESC"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_invite_code(self, code: str) -> Optional[Dict[str, Any]]:
+        """Get an invite code row by code."""
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM invite_codes WHERE code = ?", (code,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def consume_invite_code(self, code: str, used_by: int) -> bool:
+        """Mark an unused, unexpired invite code as consumed."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    """SELECT * FROM invite_codes
+                       WHERE code = ?
+                         AND used_at IS NULL
+                         AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)""",
+                    (code,),
+                ).fetchone()
+                if not row:
+                    return False
+                conn.execute(
+                    """UPDATE invite_codes
+                       SET used_by = ?, used_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (used_by, row["id"]),
+                )
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+
+    def delete_invite_code(self, invite_id: int) -> None:
+        """Delete an invite code."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM invite_codes WHERE id = ? AND used_at IS NULL", (invite_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def _get_invite_by_id(self, conn: sqlite3.Connection, invite_id: int) -> Dict[str, Any]:
+        row = conn.execute("SELECT * FROM invite_codes WHERE id = ?", (invite_id,)).fetchone()
+        if not row:
+            raise ValueError(f"Invite {invite_id} not found")
+        return dict(row)
 
     def create_user(
         self,

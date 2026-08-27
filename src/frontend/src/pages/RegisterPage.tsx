@@ -22,6 +22,7 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
   const logoUrl = withBasePath('/logo.svg');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
   const [selectedServices, setSelectedServices] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {};
     for (const option of getServiceOptions(signupServices)) {
-      initial[option.key] = true;
+      initial[option.key] = false;
     }
     return initial;
   });
@@ -51,8 +52,16 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
       setError('Username is required');
       return;
     }
+    if (!inviteCode.trim()) {
+      setError('Invite code is required');
+      return;
+    }
     if (!email.trim()) {
       setError('Email is required');
+      return;
+    }
+    if (serviceOptions.length > 0 && !serviceOptions.some((o) => selectedServices[o.key])) {
+      setError('Select at least one library account to create');
       return;
     }
     if (password.length < 4) {
@@ -70,6 +79,7 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
         username: username.trim(),
         password,
         email: email.trim(),
+        invite_code: inviteCode.trim(),
         services: Object.fromEntries(
           serviceOptions.map((o) => [o.key, selectedServices[o.key] !== false]),
         ) as Record<string, boolean>,
@@ -199,6 +209,27 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
             </div>
 
             <div className="mb-4">
+              <label htmlFor="invite-code" className="block text-sm font-medium mb-2">
+                Invite Code
+              </label>
+              <input
+                type="text"
+                id="invite-code"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                disabled={isLoading}
+                className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 transition-colors"
+                style={{
+                  ...inputStyle,
+                  '--tw-ring-color': theme.primary.turquoise,
+                } as React.CSSProperties}
+                autoCapitalize="none"
+                autoCorrect="off"
+                required
+              />
+            </div>
+
+            <div className="mb-4">
               <label htmlFor="password" className="block text-sm font-medium mb-2">
                 Password
               </label>
@@ -241,7 +272,7 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
             {serviceOptions.length > 0 && (
               <div className="mb-6">
                 <span className="block text-sm font-medium mb-2">
-                  Also create accounts for
+                  Choose library accounts to create
                 </span>
                 <div className="flex gap-2">
                   {serviceOptions.map((option) => {
@@ -311,14 +342,14 @@ function getServiceOptions(
     options.push({
       key: 'audiobookshelf',
       label: 'Audiobookshelf',
-      description: 'Listen to audiobooks',
+      description: 'Audiobook access through ABS',
     });
   }
   if (signupServices?.calibre_web) {
     options.push({
       key: 'calibre_web',
       label: 'Calibre-Web',
-      description: 'Read your ebook library',
+      description: 'Ebook access through Calibre-Web',
     });
   }
   return options;

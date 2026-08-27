@@ -4,8 +4,10 @@ Registers /api/admin/users CRUD endpoints for managing users.
 All endpoints require admin session.
 """
 
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import os
+import secrets
 import sqlite3
 from typing import Any
 
@@ -163,6 +165,49 @@ def _sync_all_cwa_users(user_db: UserDB) -> dict[str, int]:
 
 def register_admin_routes(app: Flask, user_db: UserDB) -> None:
     """Register admin user management routes on the Flask app."""
+
+    @app.route("/api/admin/invites", methods=["GET"])
+    @_require_admin
+    def admin_list_invites():
+        """List signup invite codes."""
+        return jsonify(user_db.list_invite_codes())
+
+    @app.route("/api/admin/invites", methods=["POST"])
+    @_require_admin
+    def admin_create_invite():
+        """Generate a one-time signup invite code."""
+        data = request.get_json() or {}
+        raw_expires_at = (data.get("expires_at") or "").strip() or None
+        expires_in_hours = data.get("expires_in_hours")
+        if expires_in_hours not in (None, ""):
+            try:
+                hours = int(expires_in_hours)
+            except (TypeError, ValueError):
+                return jsonify({"error": "expires_in_hours must be a number"}), 400
+            if hours <= 0:
+                return jsonify({"error": "expires_in_hours must be positive"}), 400
+            raw_expires_at = (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        code = secrets.token_urlsafe(12)
+        creator_id = session.get("db_user_id")
+        try:
+            creator_id = int(creator_id) if creator_id is not None else None
+        except (TypeError, ValueError):
+            creator_id = None
+        if creator_id is not None and not user_db.get_user(user_id=creator_id):
+            creator_id = None
+        invite = user_db.create_invite_code(
+            code=code,
+            created_by=creator_id,
+            expires_at=raw_expires_at,
+        )
+        return jsonify(invite), 201
+
+    @app.route("/api/admin/invites/<int:invite_id>", methods=["DELETE"])
+    @_require_admin
+    def admin_delete_invite(invite_id: int):
+        """Delete an unused signup invite code."""
+        user_db.delete_invite_code(invite_id)
+        return jsonify({"success": True})
 
     @app.route("/api/admin/users", methods=["GET"])
     @_require_admin

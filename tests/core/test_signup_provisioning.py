@@ -196,8 +196,8 @@ def test_get_warnings_includes_errors():
 
 def test_normalize_service_selection():
     assert signup_provisioning.normalize_service_selection(None) == {
-        "audiobookshelf": True,
-        "calibre_web": True,
+        "audiobookshelf": False,
+        "calibre_web": False,
     }
     assert signup_provisioning.normalize_service_selection(["calibre_web"]) == {
         "audiobookshelf": False,
@@ -205,5 +205,5 @@ def test_normalize_service_selection():
     }
     assert signup_provisioning.normalize_service_selection({"audiobookshelf": False}) == {
         "audiobookshelf": False,
-        "calibre_web": True,
+        "calibre_web": False,
     }

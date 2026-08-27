@@ -200,6 +200,7 @@ export interface AuthResponse {
   logout_url?: string;
   needs_setup?: boolean;
   registration_enabled?: boolean;
+  invite_required?: boolean;
   signup_services?: {
     audiobookshelf?: boolean;
     calibre_web?: boolean;
