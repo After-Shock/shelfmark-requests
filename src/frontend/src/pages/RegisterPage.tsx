@@ -341,15 +341,15 @@ function getServiceOptions(
   if (signupServices?.audiobookshelf) {
     options.push({
       key: 'audiobookshelf',
-      label: 'Audiobookshelf',
-      description: 'Audiobook access through ABS',
+      label: 'Audiobooks',
+      description: 'Listen to audiobooks',
     });
   }
   if (signupServices?.calibre_web) {
     options.push({
       key: 'calibre_web',
-      label: 'Calibre-Web',
-      description: 'Ebook access through Calibre-Web',
+      label: 'Ebooks',
+      description: 'Read ebooks',
     });
   }
   return options;
