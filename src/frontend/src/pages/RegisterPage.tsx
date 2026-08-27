@@ -287,9 +287,9 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
                         className="flex-1 py-2 px-3 rounded-lg border text-sm transition-colors disabled:opacity-50"
                         style={{
                           backgroundColor: isSelected
-                            ? theme.primary.turquoise
+                            ? '#7c3aed'
                             : 'var(--input-background)',
-                          borderColor: isSelected ? theme.primary.turquoise : 'var(--border-color)',
+                          borderColor: isSelected ? '#7c3aed' : 'var(--border-color)',
                           color: isSelected ? '#ffffff' : 'var(--text-color)',
                           opacity: isSelected ? 1 : 0.7,
                         }}
