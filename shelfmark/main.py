@@ -1887,6 +1887,24 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
     except ValueError:
         return jsonify({"error": "Username already taken"}), 409
 
+    # Mirror the account onto selected services (Audiobookshelf/Calibre-Web)
+    # if enabled. Best-effort: a failure here should not block registration.
+    from shelfmark.core.signup_provisioning import (
+        get_warnings,
+        normalize_service_selection,
+        provision_signup_accounts,
+    )
+    sync_results: dict = {}
+    try:
+        selection = normalize_service_selection(data.get("services"))
+        sync_results = provision_signup_accounts(
+            username, password, email=email, role="user", services=selection
+        )
+    except Exception as e:
+        logger.warning(f"Unexpected error syncing '{username}' to external services: {e}")
+
+    warnings = get_warnings(sync_results)
+
     # Auto-login the new user
     session['user_id'] = username
     session['db_user_id'] = new_user["id"]
@@ -1894,7 +1912,7 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
     session.permanent = True
 
     logger.info(f"New user registered: '{username}'")
-    return jsonify({"success": True}), 201
+    return jsonify({"success": True, "warnings": warnings}), 201
 
 
 @app.route('/api/auth/logout', methods=['POST'])
@@ -1948,8 +1966,19 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
 
         # Check if self-registration is available
         registration_enabled = False
+        signup_services = {"audiobookshelf": False, "calibre_web": False}
         if auth_mode == "builtin" and not needs_setup:
             registration_enabled = security_config.get("ALLOW_SELF_REGISTRATION", True)
+
+        if registration_enabled:
+            try:
+                from shelfmark.core.abs_user_sync import is_enabled as abs_sync_enabled
+                from shelfmark.core.cwa_user_sync import is_provisioning_enabled as cwa_sync_enabled
+
+                signup_services["audiobookshelf"] = bool(abs_sync_enabled())
+                signup_services["calibre_web"] = bool(cwa_sync_enabled())
+            except Exception:
+                pass
 
         # If no authentication is configured, access is allowed (full admin)
         if auth_mode == "none":
@@ -1983,6 +2012,7 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
             "display_name": display_name,
             "needs_setup": needs_setup,
             "registration_enabled": registration_enabled,
+            "signup_services": signup_services,
         }
         
         # Add logout URL for proxy auth if configured

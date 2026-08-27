@@ -200,6 +200,10 @@ export interface AuthResponse {
   logout_url?: string;
   needs_setup?: boolean;
   registration_enabled?: boolean;
+  signup_services?: {
+    audiobookshelf?: boolean;
+    calibre_web?: boolean;
+  };
 }
 
 // Type guard to check if a book is from a metadata provider

@@ -364,6 +364,12 @@ def general_settings():
             description="Adds a navigation button to your book library (Calibre-Web Automated, Booklore, etc).",
             placeholder="http://calibre-web:8083",
         ),
+        CheckboxField(
+            key="CWA_USER_SYNC_ENABLED",
+            label="Create Calibre-Web Accounts on Signup",
+            description="Automatically create a matching account in Calibre-Web (Automated) when a user signs up here, using the same username and password. Requires your Calibre-Web app.db to be mounted at /auth/app.db (or via CWA_DB_PATH). New users get regular Calibre-Web permissions.",
+            default=False,
+        ),
         TextField(
             key="AUDIOBOOK_LIBRARY_URL",
             label="Audiobook Library URL",
@@ -375,6 +381,12 @@ def general_settings():
             label="Audiobookshelf API Token",
             description="API token for duplicate detection. Find it in ABS Settings → Users → your user → API Token.",
             placeholder="",
+        ),
+        CheckboxField(
+            key="ABS_USER_SYNC_ENABLED",
+            label="Create Audiobookshelf Accounts on Signup",
+            description="Automatically create a matching account on your Audiobookshelf server when a user signs up here, using the same username and password. The API token above must belong to an ABS admin account. New ABS users have no library access until you grant it in ABS Settings → Users.",
+            default=False,
         ),
         HeadingField(
             key="search_defaults_heading",

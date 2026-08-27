@@ -84,6 +84,7 @@ function App() {
     authMode,
     needsSetup,
     registrationEnabled,
+    signupServices,
     loginError,
     isLoggingIn,
     setIsAuthenticated,
@@ -1132,7 +1133,10 @@ function App() {
         path="/register"
         element={
           registrationEnabled && !isAuthenticated ? (
-            <RegisterPage onRegisterComplete={recheckAuth} />
+            <RegisterPage
+              onRegisterComplete={recheckAuth}
+              signupServices={signupServices}
+            />
           ) : (
             <Navigate to="/" replace />
           )

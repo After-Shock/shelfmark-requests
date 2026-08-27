@@ -485,7 +485,11 @@ export const registerUser = async (data: {
   username: string;
   password: string;
   email?: string;
-}): Promise<{ success: boolean }> => {
+  services?: {
+    audiobookshelf?: boolean;
+    calibre_web?: boolean;
+  };
+}): Promise<{ success: boolean; warnings?: string[] }> => {
   return fetchJSON(`${API_BASE}/auth/register`, {
     method: 'POST',
     body: JSON.stringify(data),

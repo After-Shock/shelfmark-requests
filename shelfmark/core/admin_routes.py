@@ -230,6 +230,15 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
             f"(source=manual_admin_create, created_by={session.get('user_id', 'unknown')}, "
             f"username={username}, role={role}, auth_source={AUTH_SOURCE_BUILTIN})"
         )
+
+        # Mirror the account onto configured services (Audiobookshelf/
+        # Calibre-Web) if enabled. Best-effort: failures don't block creation.
+        try:
+            from shelfmark.core.signup_provisioning import provision_signup_accounts
+            provision_signup_accounts(username, password, email=email, role=role)
+        except Exception as e:
+            logger.warning(f"Unexpected error syncing '{username}' to external services: {e}")
+
         return jsonify(
             _serialize_user(
                 user,

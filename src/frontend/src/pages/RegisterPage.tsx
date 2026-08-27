@@ -6,20 +6,46 @@ import { theme } from '../theme';
 
 interface RegisterPageProps {
   onRegisterComplete: () => void;
+  signupServices?: {
+    audiobookshelf?: boolean;
+    calibre_web?: boolean;
+  };
 }
 
-export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
+interface ServiceOption {
+  key: 'audiobookshelf' | 'calibre_web';
+  label: string;
+  description: string;
+}
+
+export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPageProps) => {
   const logoUrl = withBasePath('/logo.svg');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  const serviceOptions = getServiceOptions(signupServices);
+
+  const [selectedServices, setSelectedServices] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const option of getServiceOptions(signupServices)) {
+      initial[option.key] = true;
+    }
+    return initial;
+  });
+
+  const toggleService = (key: string) => {
+    setSelectedServices((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    setWarnings([]);
 
     if (!username.trim()) {
       setError('Username is required');
@@ -40,12 +66,20 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
 
     setIsLoading(true);
     try {
-      await registerUser({
+      const response = await registerUser({
         username: username.trim(),
         password,
         email: email.trim(),
+        services: Object.fromEntries(
+          serviceOptions.map((o) => [o.key, selectedServices[o.key] !== false]),
+        ) as Record<string, boolean>,
       });
-      onRegisterComplete();
+      if (response.warnings && response.warnings.length > 0) {
+        // Registration succeeded but some library accounts failed - show why.
+        setWarnings(response.warnings);
+      } else {
+        onRegisterComplete();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
@@ -58,6 +92,44 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
     borderColor: 'var(--border-color)',
     color: 'var(--text-color)',
   };
+
+  if (warnings.length > 0) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center px-4 py-8"
+        style={{ backgroundColor: 'var(--background-color)', color: 'var(--text-color)' }}
+      >
+        <div className="w-full max-w-md">
+          <div
+            className="rounded-lg shadow-2xl p-8 border"
+            style={{
+              backgroundColor: 'var(--card-background)',
+              borderColor: 'var(--border-color)',
+              color: 'var(--text-color)',
+            }}
+          >
+            <h1 className="text-2xl font-semibold mb-4">Account Created</h1>
+            <p className="text-sm mb-4">
+              Your Shelfmark account is ready. Some library accounts could not be created:
+            </p>
+            <ul className="text-sm mb-6 list-disc list-inside space-y-1 opacity-80">
+              {warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={onRegisterComplete}
+              className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors"
+              style={{ backgroundColor: theme.button.secondary }}
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -146,7 +218,7 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
               />
             </div>
 
-            <div className="mb-6">
+            <div className="mb-4">
               <label htmlFor="confirm-password" className="block text-sm font-medium mb-2">
                 Confirm Password
               </label>
@@ -165,6 +237,40 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
                 required
               />
             </div>
+
+            {serviceOptions.length > 0 && (
+              <div className="mb-6">
+                <span className="block text-sm font-medium mb-2">
+                  Also create accounts for
+                </span>
+                <div className="flex gap-2">
+                  {serviceOptions.map((option) => {
+                    const isSelected = selectedServices[option.key] !== false;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => toggleService(option.key)}
+                        disabled={isLoading}
+                        aria-pressed={isSelected}
+                        className="flex-1 py-2 px-3 rounded-lg border text-sm transition-colors disabled:opacity-50"
+                        style={{
+                          backgroundColor: isSelected
+                            ? theme.primary.turquoise
+                            : 'var(--input-background)',
+                          borderColor: isSelected ? theme.primary.turquoise : 'var(--border-color)',
+                          color: isSelected ? '#ffffff' : 'var(--text-color)',
+                          opacity: isSelected ? 1 : 0.7,
+                        }}
+                      >
+                        <span className="block font-medium">{option.label}</span>
+                        <span className="block text-xs opacity-80">{option.description}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"
@@ -193,3 +299,27 @@ export const RegisterPage = ({ onRegisterComplete }: RegisterPageProps) => {
     </div>
   );
 };
+
+function getServiceOptions(
+  signupServices?: {
+    audiobookshelf?: boolean;
+    calibre_web?: boolean;
+  },
+): ServiceOption[] {
+  const options: ServiceOption[] = [];
+  if (signupServices?.audiobookshelf) {
+    options.push({
+      key: 'audiobookshelf',
+      label: 'Audiobookshelf',
+      description: 'Listen to audiobooks',
+    });
+  }
+  if (signupServices?.calibre_web) {
+    options.push({
+      key: 'calibre_web',
+      label: 'Calibre-Web',
+      description: 'Read your ebook library',
+    });
+  }
+  return options;
+}
