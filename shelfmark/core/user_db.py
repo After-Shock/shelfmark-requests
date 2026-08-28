@@ -653,6 +653,19 @@ class UserDB:
         finally:
             conn.close()
 
+    def update_requests_last_viewed(self, user_id: int) -> None:
+        """Record that a user viewed their request updates."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "UPDATE users SET requests_last_viewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (user_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
     def set_user_settings(self, user_id: int, settings: Dict[str, Any]) -> None:
         """Merge settings into user's existing settings."""
         with self._lock:
