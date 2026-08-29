@@ -41,6 +41,13 @@ class TestABSClientFindMatch:
         ])
         assert client.find_match("The Hobbit", "Tolkien") is not None
 
+    def test_format_suffix_title_match(self):
+        """Format suffixes should still count as the same audiobook."""
+        client = self._client_with_cache([
+            {"id": "1", "title": "The Hobbit (Dramatised)", "author": "J.R.R. Tolkien"},
+        ])
+        assert client.find_match("The Hobbit", "J.R.R. Tolkien") is not None
+
     def test_ratio_fuzzy_title_match(self):
         """Fuzzy match via ratio (not prefix) — e.g. minor typo in title."""
         client = self._client_with_cache([
@@ -49,11 +56,32 @@ class TestABSClientFindMatch:
         # "The Hobbitt" vs "The Hobbit": ratio ~0.941, not a prefix match
         assert client.find_match("The Hobbitt", "Tolkien") is not None
 
+    def test_reordered_series_title_match(self):
+        """Token-equivalent titles should match even when title/series order differs."""
+        client = self._client_with_cache([
+            {"id": "1", "title": "Diary of a Wimpy Kid 19 Hot Mess", "author": "Jeff Kinney"},
+        ])
+        assert client.find_match("Hot Mess: Diary of a Wimpy Kid (19)", "Jeff Kinney") is not None
+
     def test_no_match_different_book(self):
         client = self._client_with_cache([
             {"id": "1", "title": "Lord of the Rings", "author": "Tolkien"},
         ])
         assert client.find_match("Harry Potter", "Rowling") is None
+
+    def test_no_match_similar_sequel_title(self):
+        """Near-neighbor titles should not match just because the strings are similar."""
+        client = self._client_with_cache([
+            {"id": "1", "title": "The Housemaid's Secret", "author": "Freida McFadden"},
+        ])
+        assert client.find_match("The Housemaid", "Freida McFadden") is None
+
+    def test_no_match_prefix_to_different_book(self):
+        """Prefix-only matches should fail when the suffix changes the work identity."""
+        client = self._client_with_cache([
+            {"id": "1", "title": "The Housemaid Is Watching", "author": "Freida McFadden"},
+        ])
+        assert client.find_match("The Housemaid", "Freida McFadden") is None
 
     def test_no_match_low_author_similarity(self):
         client = self._client_with_cache([

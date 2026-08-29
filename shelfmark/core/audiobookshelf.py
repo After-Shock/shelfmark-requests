@@ -14,11 +14,70 @@ from shelfmark.core.config import config
 logger = logging.getLogger(__name__)
 
 _REFRESH_INTERVAL = 3600  # 1 hour
+_TITLE_STOP_WORDS = {"a", "an", "and", "of", "the"}
+_BENIGN_SUFFIX_TOKENS = {
+    "adaptation",
+    "audio",
+    "audiobook",
+    "book",
+    "dramatized",
+    "dramatised",
+    "edition",
+    "enhanced",
+    "novel",
+    "unabridged",
+}
 
 
 def _normalize(s: str) -> str:
     """Lowercase and strip punctuation for fuzzy comparison."""
     return re.sub(r'[^\w\s]', '', s.lower()).strip()
+
+
+def _title_tokens(s: str) -> list[str]:
+    """Split a title into normalized tokens, dropping common filler words."""
+    return [token for token in _normalize(s).split() if token and token not in _TITLE_STOP_WORDS]
+
+
+def _is_boundary_prefix_match(query_title: str, item_title: str) -> bool:
+    """Return True when the item only adds benign suffix tokens to the query title."""
+    norm_query = _normalize(query_title)
+    norm_item = _normalize(item_title)
+    if not norm_query or not norm_item:
+        return False
+    if norm_query == norm_item:
+        return True
+    if not norm_item.startswith(f"{norm_query} "):
+        return False
+
+    suffix_tokens = [
+        token for token in norm_item[len(norm_query):].strip().split()
+        if token and token not in _TITLE_STOP_WORDS
+    ]
+    return bool(suffix_tokens) and set(suffix_tokens) <= _BENIGN_SUFFIX_TOKENS
+
+
+def _titles_match(query_title: str, item_title: str) -> bool:
+    """Return True when two titles are close enough to represent the same work."""
+    norm_query = _normalize(query_title)
+    norm_item = _normalize(item_title)
+    if not norm_query or not norm_item:
+        return False
+
+    if _is_boundary_prefix_match(query_title, item_title):
+        return True
+
+    query_tokens = set(_title_tokens(query_title))
+    item_tokens = set(_title_tokens(item_title))
+    if query_tokens and item_tokens:
+        if query_tokens == item_tokens:
+            return True
+
+    # Allow small typos only when the titles have the same token structure.
+    if len(_normalize(query_title).split()) == len(_normalize(item_title).split()):
+        return difflib.SequenceMatcher(None, norm_query, norm_item).ratio() >= 0.92
+
+    return False
 
 
 class ABSClient:
@@ -103,18 +162,13 @@ class ABSClient:
             with self._cache_lock:
                 cache = list(self._cache)
 
-        norm_title = _normalize(title)
         norm_author = _normalize(author or '')
 
         for item in cache:
-            item_title = _normalize(item.get('title', ''))
+            item_title = item.get('title', '')
             item_author = _normalize(item.get('author', ''))
 
-            title_ratio = difflib.SequenceMatcher(None, norm_title, item_title).ratio()
-            # Also accept when the query title is a leading substring of the stored title
-            # (e.g. "The Hobbit" matching "The Hobbit A Novel")
-            title_prefix_match = item_title.startswith(norm_title) or norm_title.startswith(item_title)
-            if title_ratio < 0.85 and not title_prefix_match:
+            if not _titles_match(title, item_title):
                 continue
 
             if not norm_author or not item_author:
