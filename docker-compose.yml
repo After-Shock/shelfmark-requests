@@ -43,6 +43,10 @@ services:
       - /media/bank/ebookimport:/books
       - ./.local/log:/var/log/shelfmark
       - ./.local/tmp:/tmp/shelfmark
+      # Calibre-Web's user database, for CWA user sync and signup provisioning.
+      # Without it CWA_USER_SYNC_ENABLED has no effect and provisioning reports
+      # "Calibre-Web database not mounted".
+      - /opt/calibre-web/config/app.db:/auth/app.db
       # Required for torrent / usenet - path must match your download client's volume exactly
       # - /path/to/downloads:/path/to/downloads
 
