@@ -323,8 +323,15 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
         # Mirror the account onto configured services (Audiobookshelf/
         # Calibre-Web) if enabled. Best-effort: failures don't block creation.
         try:
-            from shelfmark.core.signup_provisioning import provision_signup_accounts
-            provision_signup_accounts(username, password, email=email, role=role)
+            from shelfmark.core.signup_provisioning import (
+                ALL_SERVICES,
+                provision_signup_accounts,
+                record_provisioned_services,
+            )
+            sync_results = provision_signup_accounts(
+                username, password, email=email, role=role, services=ALL_SERVICES
+            )
+            record_provisioned_services(user_db, int(user["id"]), sync_results)
         except Exception as e:
             logger.warning(f"Unexpected error syncing '{username}' to external services: {e}")
 
@@ -370,6 +377,7 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
 
         # Handle optional password update
         password = data.get("password", "")
+        password_warnings: list[str] = []
         if password:
             if not capabilities["canSetPassword"]:
                 return jsonify({
@@ -378,7 +386,8 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
                 }), 400
             if len(password) < 4:
                 return jsonify({"error": "Password must be at least 4 characters"}), 400
-            user_db.update_user(user_id, password_hash=generate_password_hash(password))
+            from shelfmark.core.signup_provisioning import get_warnings, set_password
+            password_warnings = get_warnings(set_password(user_db, user, password))
 
         # Update user fields
         user_fields = {}
@@ -465,6 +474,8 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
             security_config=security_config,
         )
         result["settings"] = user_db.get_user_settings(user_id)
+        if password_warnings:
+            result["warnings"] = password_warnings
         logger.info(f"Admin updated user {user_id}")
         return jsonify(result)
 

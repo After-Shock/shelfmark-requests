@@ -207,3 +207,210 @@ def test_normalize_service_selection():
         "audiobookshelf": False,
         "calibre_web": False,
     }
+
+def test_all_services_provisions_everything(monkeypatch):
+    """ALL_SERVICES is what callers with no per-service UI (admin create) pass."""
+    calls = []
+
+    import shelfmark.core.abs_user_sync as abs_module
+    import shelfmark.core.cwa_user_sync as cwa_module
+
+    monkeypatch.setattr(abs_module, "is_enabled", lambda: True)
+    monkeypatch.setattr(
+        abs_module,
+        "provision_abs_user",
+        lambda username, password, role="user": calls.append(("abs", username))
+        or {"status": "created", "message": "ok"},
+    )
+    monkeypatch.setattr(cwa_module, "is_provisioning_enabled", lambda: True)
+    monkeypatch.setattr(
+        cwa_module,
+        "provision_cwa_user",
+        lambda username, password, email=None, role="user": calls.append(("cwa", username))
+        or {"status": "created", "message": "ok"},
+    )
+
+    signup_provisioning.provision_signup_accounts(
+        "carol", "pw1234", services=signup_provisioning.ALL_SERVICES
+    )
+    assert sorted(calls) == [("abs", "carol"), ("cwa", "carol")]
+
+
+def test_set_password_writes_hash_and_syncs_both_services(monkeypatch):
+    """Password changes must hit the local DB and both external services."""
+    from werkzeug.security import check_password_hash
+
+    import shelfmark.core.abs_user_sync as abs_module
+    import shelfmark.core.cwa_user_sync as cwa_module
+
+    synced = []
+    monkeypatch.setattr(
+        abs_module,
+        "update_abs_password",
+        lambda username, password: synced.append(("abs", username, password))
+        or {"status": "updated", "message": "ok"},
+    )
+    monkeypatch.setattr(
+        cwa_module,
+        "update_cwa_password",
+        lambda username, password: synced.append(("cwa", username, password))
+        or {"status": "error", "message": "db not mounted"},
+    )
+
+    written = {}
+
+    class FakeUserDB:
+        def update_user(self, user_id, **fields):
+            written.update({"id": user_id, **fields})
+
+    results = signup_provisioning.set_password(
+        FakeUserDB(),
+        {"id": 7, "username": "dave", "provisioned_services": "audiobookshelf,calibre_web"},
+        "newpw1234",
+    )
+
+    assert written["id"] == 7
+    assert check_password_hash(written["password_hash"], "newpw1234")
+    assert sorted(synced) == [
+        ("abs", "dave", "newpw1234"),
+        ("cwa", "dave", "newpw1234"),
+    ]
+    # A failing service surfaces as a warning, never as an exception.
+    assert signup_provisioning.get_warnings(results) == ["Calibre-Web: db not mounted"]
+
+
+def test_set_password_survives_a_throwing_service(monkeypatch):
+    import shelfmark.core.abs_user_sync as abs_module
+    import shelfmark.core.cwa_user_sync as cwa_module
+
+    def boom(username, password):
+        raise RuntimeError("ABS exploded")
+
+    monkeypatch.setattr(abs_module, "update_abs_password", boom)
+    monkeypatch.setattr(
+        cwa_module,
+        "update_cwa_password",
+        lambda username, password: {"status": "updated", "message": "ok"},
+    )
+
+    class FakeUserDB:
+        def update_user(self, user_id, **fields):
+            pass
+
+    results = signup_provisioning.set_password(
+        FakeUserDB(),
+        {"id": 1, "username": "erin", "provisioned_services": "audiobookshelf,calibre_web"},
+        "newpw1234",
+    )
+    assert results["audiobookshelf"]["status"] == "error"
+    assert results["calibre_web"]["status"] == "updated"
+
+
+def test_normalize_service_selection_fails_closed():
+    """A malformed payload must select nothing, never everything."""
+    for junk in ("yes", 1, object()):
+        assert signup_provisioning.normalize_service_selection(junk) == {
+            "audiobookshelf": False,
+            "calibre_web": False,
+        }
+
+
+def test_validate_signup_username():
+    # Email-address usernames are a real pattern in production, so they stay legal.
+    for ok in ("dave", "d_a-v.e", "a1", "katie.erb15@gmail.com", "d+tag@x.io", "x" * 64):
+        assert signup_provisioning.validate_signup_username(ok) is None
+    for bad in ("a", "x" * 65, "eve/../admin", "eve?x=1", "eve#1", "ev e", "ev\\e", ""):
+        assert signup_provisioning.validate_signup_username(bad) is not None
+
+
+def test_abs_lookup_url_encodes_username():
+    """A '/' in a username must not change which ABS path is requested."""
+    import shelfmark.core.abs_user_sync as abs_module
+
+    assert abs_module._user_by_name_url("http://abs", "dave") == (
+        "http://abs/api/users/username/dave"
+    )
+    assert abs_module._user_by_name_url("http://abs", "eve/../admin") == (
+        "http://abs/api/users/username/eve%2F..%2Fadmin"
+    )
+    assert abs_module._user_by_name_url("http://abs", "eve?x=1") == (
+        "http://abs/api/users/username/eve%3Fx%3D1"
+    )
+
+
+def _password_sync_spy(monkeypatch):
+    """Patch both password updaters and return the list they append to."""
+    import shelfmark.core.abs_user_sync as abs_module
+    import shelfmark.core.cwa_user_sync as cwa_module
+
+    synced = []
+    monkeypatch.setattr(
+        abs_module,
+        "update_abs_password",
+        lambda username, password: synced.append("abs") or {"status": "updated", "message": "ok"},
+    )
+    monkeypatch.setattr(
+        cwa_module,
+        "update_cwa_password",
+        lambda username, password: synced.append("cwa") or {"status": "updated", "message": "ok"},
+    )
+    return synced
+
+
+class _FakeUserDB:
+    def __init__(self, user):
+        self.user = dict(user)
+
+    def get_user(self, user_id=None, username=None):
+        return dict(self.user)
+
+    def update_user(self, user_id, **fields):
+        self.user.update(fields)
+
+
+def test_set_password_leaves_unprovisioned_users_alone(monkeypatch):
+    """A user who predates provisioning must never have external accounts touched."""
+    synced = _password_sync_spy(monkeypatch)
+    db = _FakeUserDB({"id": 3, "username": "legacy", "provisioned_services": None})
+
+    results = signup_provisioning.set_password(db, db.user, "newpw1234")
+
+    assert synced == []          # nothing reached Audiobookshelf or Calibre-Web
+    assert results == {}
+    assert db.user["password_hash"]  # the local password still changed
+
+
+def test_set_password_only_touches_recorded_services(monkeypatch):
+    """Provisioned for ABS only -> Calibre-Web is left alone."""
+    synced = _password_sync_spy(monkeypatch)
+    db = _FakeUserDB({"id": 4, "username": "abs-only", "provisioned_services": "audiobookshelf"})
+
+    signup_provisioning.set_password(db, db.user, "newpw1234")
+
+    assert synced == ["abs"]
+
+
+def test_record_provisioned_services_ignores_pre_existing_accounts():
+    """'exists' means we did not create it, so we must not claim ownership."""
+    db = _FakeUserDB({"id": 5, "username": "carol", "provisioned_services": None})
+
+    signup_provisioning.record_provisioned_services(db, 5, {
+        "audiobookshelf": {"status": "created", "message": "ok"},
+        "calibre_web": {"status": "exists", "message": "already there"},
+    })
+    assert db.user["provisioned_services"] == "audiobookshelf"
+
+    # A later run that creates the other account merges, never replaces.
+    signup_provisioning.record_provisioned_services(db, 5, {
+        "calibre_web": {"status": "created", "message": "ok"},
+    })
+    assert db.user["provisioned_services"] == "audiobookshelf,calibre_web"
+
+
+def test_record_provisioned_services_noop_when_nothing_created():
+    db = _FakeUserDB({"id": 6, "username": "dan", "provisioned_services": None})
+    signup_provisioning.record_provisioned_services(db, 6, {
+        "audiobookshelf": {"status": "error", "message": "unreachable"},
+        "calibre_web": {"status": "skipped", "message": "disabled"},
+    })
+    assert db.user["provisioned_services"] is None

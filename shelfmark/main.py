@@ -1876,6 +1876,13 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
 
     if not username:
         return jsonify({"error": "Username is required"}), 400
+    # New signups only - the username is mirrored onto Audiobookshelf and
+    # Calibre-Web, so it has to be safe there too. Existing accounts are not
+    # re-checked against this rule and are unaffected.
+    from shelfmark.core.signup_provisioning import validate_signup_username
+    username_error = validate_signup_username(username)
+    if username_error:
+        return jsonify({"error": username_error}), 400
     if not password or len(password) < 4:
         return jsonify({"error": "Password must be at least 4 characters"}), 400
     if user_db.get_user(username=username):
@@ -1904,6 +1911,7 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
         get_warnings,
         normalize_service_selection,
         provision_signup_accounts,
+        record_provisioned_services,
     )
     sync_results: dict = {}
     try:
@@ -1911,6 +1919,7 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
         sync_results = provision_signup_accounts(
             username, password, email=email, role="user", services=selection
         )
+        record_provisioned_services(user_db, int(new_user["id"]), sync_results)
     except Exception as e:
         logger.warning(f"Unexpected error syncing '{username}' to external services: {e}")
 
@@ -1946,24 +1955,8 @@ def api_reset_password() -> Union[Response, Tuple[Response, int]]:
     if user.get("auth_source") != "builtin":
         return jsonify({"error": "Password reset is only available for local users"}), 400
 
-    from werkzeug.security import generate_password_hash
-    user_db.update_user(int(user["id"]), password_hash=generate_password_hash(password))
-
-    warnings: list[str] = []
-    try:
-        from shelfmark.core.abs_user_sync import update_abs_password
-        result = update_abs_password(username, password)
-        if result.get("status") == "error":
-            warnings.append(f"Audiobooks: {result.get('message')}")
-    except Exception as e:
-        logger.warning(f"Unexpected error updating ABS password for '{username}': {e}")
-    try:
-        from shelfmark.core.cwa_user_sync import update_cwa_password
-        result = update_cwa_password(username, password)
-        if result.get("status") == "error":
-            warnings.append(f"Ebooks: {result.get('message')}")
-    except Exception as e:
-        logger.warning(f"Unexpected error updating CWA password for '{username}': {e}")
+    from shelfmark.core.signup_provisioning import get_warnings, set_password
+    warnings = get_warnings(set_password(user_db, user, password))
 
     logger.info(f"Password reset completed for user '{username}'")
     return jsonify({"success": True, "warnings": warnings})

@@ -4,7 +4,7 @@ from functools import wraps
 from typing import Any, Callable, Mapping
 
 from flask import Flask, jsonify, request, session
-from werkzeug.security import generate_password_hash
+from shelfmark.core.signup_provisioning import get_warnings, set_password
 
 from shelfmark.config.env import CWA_DB_PATH
 from shelfmark.core.admin_settings_routes import (
@@ -244,6 +244,7 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
         auth_source = capabilities["authSource"]
 
         password = data.get("password", "")
+        password_warnings: list[str] = []
         if password:
             if not capabilities["canSetPassword"]:
                 return jsonify(
@@ -254,7 +255,7 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
                 ), 400
             if len(password) < MIN_PASSWORD_LENGTH:
                 return jsonify({"error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters"}), 400
-            user_db.update_user(user_id, password_hash=generate_password_hash(password))
+            password_warnings = get_warnings(set_password(user_db, user, password))
 
         user_fields: dict[str, Any] = {}
         if "email" in data:
@@ -350,5 +351,7 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
 
         result = _serialize_self_user(updated, _get_auth_mode())
         result["settings"] = user_db.get_user_settings(user_id)
+        if password_warnings:
+            result["warnings"] = password_warnings
         logger.info(f"User {user_id} updated their own account")
         return jsonify(result)

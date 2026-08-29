@@ -10,6 +10,7 @@ Audiobookshelf server, since user creation is an admin-only API call.
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 import requests as http_requests
 
@@ -17,6 +18,16 @@ from shelfmark.core.config import config
 from shelfmark.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _user_by_name_url(base_url: str, username: str) -> str:
+    """Build the ABS lookup URL for a username.
+
+    The username is percent-encoded with no safe characters: a name containing
+    '/', '?' or '#' would otherwise change the path being requested, and a
+    bogus 404 there reads as "no such user" and triggers a duplicate create.
+    """
+    return f"{base_url}/api/users/username/{quote(username, safe='')}"
 
 
 def _get_credentials() -> tuple[Optional[str], Optional[str]]:
@@ -37,7 +48,7 @@ def _abs_user_exists(base_url: str, token: str, username: str) -> Optional[bool]
     headers = {"Authorization": f"Bearer {token}"}
     try:
         resp = http_requests.get(
-            f"{base_url}/api/users/username/{username}",
+            _user_by_name_url(base_url, username),
             headers=headers,
             timeout=10,
         )
@@ -71,7 +82,7 @@ def _grant_all_libraries(base_url: str, token: str, username: str) -> Dict[str, 
     present on the user object when possible, and default to librariesAccessible.
     """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    lookup = http_requests.get(f"{base_url}/api/users/username/{username}", headers=headers, timeout=10)
+    lookup = http_requests.get(_user_by_name_url(base_url, username), headers=headers, timeout=10)
     if lookup.status_code != 200:
         return {"status": "error", "message": "Audiobookshelf account created, but user lookup failed while granting libraries"}
 
@@ -111,7 +122,7 @@ def update_abs_password(username: str, password: str) -> Dict[str, Any]:
         return {"status": "skipped", "message": "ABS user sync is disabled"}
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
-        lookup = http_requests.get(f"{base_url}/api/users/username/{username}", headers=headers, timeout=10)
+        lookup = http_requests.get(_user_by_name_url(base_url, username), headers=headers, timeout=10)
         if lookup.status_code == 404:
             return {"status": "skipped", "message": "No matching Audiobookshelf account"}
         if lookup.status_code != 200:

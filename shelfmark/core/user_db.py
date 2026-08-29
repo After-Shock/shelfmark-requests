@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS users (
     oidc_subject  TEXT UNIQUE,
     auth_source   TEXT NOT NULL DEFAULT 'builtin',
     role          TEXT NOT NULL DEFAULT 'user',
+    provisioned_services TEXT,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -193,6 +194,7 @@ class UserDB:
                 self._migrate_activity_tables(conn)
                 self._migrate_invite_tables(conn)
                 self._migrate_password_reset_tables(conn)
+                self._migrate_provisioned_services_column(conn)
                 conn.commit()
                 # WAL mode must be changed outside an open transaction.
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -217,6 +219,19 @@ class UserDB:
         conn.execute(
             "UPDATE users SET auth_source = 'builtin' WHERE auth_source IS NULL OR auth_source = ''"
         )
+
+    def _migrate_provisioned_services_column(self, conn: sqlite3.Connection) -> None:
+        """Ensure users.provisioned_services exists.
+
+        Deliberately NOT backfilled. A NULL here means "Shelfmark never created
+        external accounts for this user", which is the truth for every account
+        that predates signup provisioning - and it is what stops us from
+        overwriting an Audiobookshelf/Calibre-Web password we did not set.
+        """
+        columns = conn.execute("PRAGMA table_info(users)").fetchall()
+        column_names = {str(col["name"]) for col in columns}
+        if "provisioned_services" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN provisioned_services TEXT")
 
     def _migrate_requests_last_viewed_column(self, conn: sqlite3.Connection) -> None:
         """Ensure legacy user databases support request-count tracking."""
@@ -596,6 +611,7 @@ class UserDB:
         "oidc_subject",
         "auth_source",
         "role",
+        "provisioned_services",
     }
 
     def update_user(self, user_id: int, **kwargs) -> None:

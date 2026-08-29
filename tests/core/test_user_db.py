@@ -230,3 +230,56 @@ class TestUserSettings:
         user_db.set_user_settings(user["id"], {"key1": "new"})
         settings = user_db.get_user_settings(user["id"])
         assert settings["key1"] == "new"
+
+
+def test_provisioned_services_migration_leaves_existing_users_untouched(tmp_path):
+    """The new column is additive: legacy rows survive intact and stay NULL.
+
+    NULL is what keeps a pre-existing user's Audiobookshelf/Calibre-Web
+    password from being overwritten on their next password change.
+    """
+    import sqlite3
+
+    from shelfmark.core.user_db import UserDB
+
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT,
+            display_name TEXT,
+            password_hash TEXT,
+            oidc_subject TEXT UNIQUE,
+            auth_source TEXT NOT NULL DEFAULT 'builtin',
+            role TEXT NOT NULL DEFAULT 'user',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    conn.executemany(
+        "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
+        [
+            ("oldtimer", "old@example.com", "hash-a", "user"),
+            ("katie.erb15@gmail.com", None, "hash-b", "user"),
+            ("theadmin", None, "hash-c", "admin"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    db = UserDB(str(db_path))
+    db.initialize()
+
+    rows = {u["username"]: u for u in db.list_users()}
+    assert set(rows) == {"oldtimer", "katie.erb15@gmail.com", "theadmin"}
+    for user in rows.values():
+        assert user["provisioned_services"] is None
+    # Nothing else about the legacy rows moved.
+    assert rows["oldtimer"]["email"] == "old@example.com"
+    assert rows["oldtimer"]["password_hash"] == "hash-a"
+    assert rows["theadmin"]["role"] == "admin"
+
+    # Idempotent: re-initializing an already-migrated db is a no-op.
+    db.initialize()
+    assert db.get_user(username="oldtimer")["provisioned_services"] is None
