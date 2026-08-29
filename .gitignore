@@ -233,3 +233,8 @@ AGENTS.md
 .claude/
 .playwright-mcp/
 frontend-dist/
+
+# Runtime config directory (bind-mounted to /config in the container).
+# Holds live secrets and user data - secret_key, settings.json (API tokens,
+# webhook URLs), users.db and the cover cache. Never commit these.
+/config/
