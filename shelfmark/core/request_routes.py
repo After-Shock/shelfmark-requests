@@ -775,6 +775,91 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         return jsonify(updated)
 
 
+# Top search hit is often a dead md5 even when other copies download fine, so
+# keep a few spares per request and fall through on download failure.
+_MAX_RELEASE_ATTEMPTS = 3
+_release_retries: dict[int, dict] = {}
+_retry_lock = threading.Lock()
+
+
+def _set_request_status(
+    request_db: RequestDB,
+    user_db: UserDB,
+    request_id: int,
+    status: str,
+    **kwargs,
+) -> None:
+    """Update status only if the request still exists."""
+    if request_db.get_request(request_id) is not None:
+        updated = request_db.update_request_status(request_id, status, **kwargs)
+        _broadcast_request_update(updated)
+        if status in {"fulfilled", "failed"}:
+            _send_group_status_notifications(request_db, user_db, request_id, status)
+        if status == "fulfilled" and updated:
+            _send_discord_book_available(updated)
+
+
+def _queue_next_release(request_db: RequestDB, request_id: int) -> bool:
+    """Queue the next untried release candidate for a request.
+
+    Returns True if a download was queued, False if nothing is left to try.
+    """
+    from shelfmark.download import orchestrator as backend
+
+    with _retry_lock:
+        state = _release_retries.get(request_id)
+        if not state or not state["candidates"]:
+            _release_retries.pop(request_id, None)
+            return False
+        release_data = state["candidates"].pop(0)
+        state["attempted"] += 1
+        attempt = state["attempted"]
+        remaining = len(state["candidates"])
+        user_db = state["user_db"]
+        success, error_msg = backend.queue_release(
+            release_data, priority=0,
+            user_id=state["admin_user_id"],
+            username=state["admin_username"],
+            user_overrides=state["user_overrides"],
+        )
+        if not remaining:
+            _release_retries.pop(request_id, None)
+
+    if not success:
+        logger.warning(
+            "Request #%s: failed to queue release %s/%s: %s",
+            request_id, attempt, _MAX_RELEASE_ATTEMPTS, error_msg,
+        )
+        return _queue_next_release(request_db, request_id)
+
+    task_id = release_data.get("source_id", "")
+    _set_request_status(request_db, user_db, request_id, "downloading", download_task_id=task_id)
+    logger.info(
+        "Request #%s: download queued (task=%s, release %s/%s)",
+        request_id, task_id, attempt, _MAX_RELEASE_ATTEMPTS,
+    )
+    return True
+
+
+def retry_next_release(request_db: RequestDB, request_id: int) -> bool:
+    """Try the next release candidate after a download failed. False = give up."""
+    if not _acquire_download_slot(request_id):
+        return False
+    try:
+        return _queue_next_release(request_db, request_id)
+    except Exception as exc:
+        logger.warning("Request #%s: release retry failed: %s", request_id, exc)
+        return False
+    finally:
+        _release_download_slot(request_id)
+
+
+def forget_release_retries(request_id: int) -> None:
+    """Drop leftover retry candidates once a request reaches a terminal state."""
+    with _retry_lock:
+        _release_retries.pop(request_id, None)
+
+
 def _auto_download_request(
     request_db: RequestDB,
     user_db: UserDB,
@@ -789,14 +874,7 @@ def _auto_download_request(
     'downloading' or 'failed' depending on the outcome.
     """
     def _safe_update_status(status: str, **kwargs) -> None:
-        """Update status only if the request still exists."""
-        if request_db.get_request(request_id) is not None:
-            updated = request_db.update_request_status(request_id, status, **kwargs)
-            _broadcast_request_update(updated)
-            if status in {"fulfilled", "failed"}:
-                _send_group_status_notifications(request_db, user_db, request_id, status)
-            if status == "fulfilled" and updated:
-                _send_discord_book_available(updated)
+        _set_request_status(request_db, user_db, request_id, status, **kwargs)
 
     try:
         from shelfmark.download import orchestrator as backend
@@ -847,35 +925,42 @@ def _auto_download_request(
             _safe_update_status("failed", admin_note=f"Not found on {searched}. Book may not be available for download yet.")
             return
 
-        # Pick the first (best) release
-        release = all_releases[0]
-
-        # Get admin's user settings for download overrides
+        # Keep the best few releases (deduped by md5) so a dead top hit doesn't
+        # fail the whole request.
         user_overrides = user_db.get_user_settings(admin_user_id) if admin_user_id else {}
 
         from dataclasses import asdict
-        release_data = asdict(release)
-        release_data["author"] = book.authors[0] if book.authors else None
-        release_data["year"] = str(book.publish_year) if book.publish_year else None
-        release_data["preview"] = book.cover_url
-        release_data["content_type"] = content_type
-        release_data["series_name"] = book.series_name
-        release_data["series_position"] = book.series_position
+        candidates = []
+        seen_source_ids = set()
+        for release in all_releases:
+            release_data = asdict(release)
+            source_id = release_data.get("source_id", "")
+            if source_id in seen_source_ids:
+                continue
+            seen_source_ids.add(source_id)
+            release_data["author"] = book.authors[0] if book.authors else None
+            release_data["year"] = str(book.publish_year) if book.publish_year else None
+            release_data["preview"] = book.cover_url
+            release_data["content_type"] = content_type
+            release_data["series_name"] = book.series_name
+            release_data["series_position"] = book.series_position
+            candidates.append(release_data)
+            if len(candidates) >= _MAX_RELEASE_ATTEMPTS:
+                break
 
-        success, error_msg = backend.queue_release(
-            release_data, priority=0,
-            user_id=admin_user_id,
-            username=admin_username,
-            user_overrides=user_overrides,
-        )
+        with _retry_lock:
+            _release_retries[request_id] = {
+                "candidates": candidates,
+                "user_overrides": user_overrides,
+                "admin_user_id": admin_user_id,
+                "admin_username": admin_username,
+                "user_db": user_db,
+                "attempted": 0,
+            }
 
-        if success:
-            task_id = release_data.get("source_id", "")
-            _safe_update_status("downloading", download_task_id=task_id)
-            logger.info(f"Request #{request_id}: download queued (task={task_id})")
-        else:
-            _safe_update_status("failed", admin_note=error_msg or "Failed to queue download")
-            logger.warning(f"Request #{request_id}: failed to queue download: {error_msg}")
+        if not _queue_next_release(request_db, request_id):
+            _safe_update_status("failed", admin_note="Failed to queue download")
+            logger.warning(f"Request #{request_id}: no release could be queued")
 
     except Exception as e:
         logger.error(f"Auto-download error for request #{request_id}: {e}")

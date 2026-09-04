@@ -1192,6 +1192,8 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
     if request_db is None:
         return
     try:
+        from shelfmark.core import request_routes
+
         reqs = request_db.get_requests_by_download_task(task_id)
         if not reqs:
             return
@@ -1199,6 +1201,7 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
             req_id = req["id"]
             if status == QueueStatus.COMPLETE:
                 request_db.update_request_status(req_id, status="fulfilled")
+                request_routes.forget_release_retries(req_id)
                 logger.info("Request #%s marked fulfilled after download %s completed", req_id, task_id)
                 try:
                     from shelfmark.core.discord_notifications import send_discord_book_available
@@ -1213,6 +1216,11 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
                 except Exception as _discord_exc:
                     logger.warning("Discord book-available notification failed for request #%s: %s", req_id, _discord_exc)
             elif status == QueueStatus.ERROR:
+                if request_routes.retry_next_release(request_db, req_id):
+                    logger.info(
+                        "Request #%s: download %s errored, trying next release", req_id, task_id
+                    )
+                    continue
                 request_db.update_request_status(req_id, status="failed")
                 logger.info("Request #%s marked failed after download %s errored", req_id, task_id)
     except Exception as exc:
