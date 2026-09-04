@@ -388,6 +388,22 @@ def html_get_page(
                     # Same-host redirect (relative or absolute) - follow manually.
                     redirects_followed += 1
                     if redirects_followed > _MAX_REDIRECTS:
+                        # DDoS-Guard answers AA /slow_download/ URLs with a
+                        # redirect-to-self cookie handshake that this stateless
+                        # loop can never satisfy. Same situation as a 403: hand
+                        # it to the bypasser instead of burning the retry budget.
+                        if (
+                            allow_bypasser_fallback
+                            and not use_bypasser_now
+                            and _is_cf_bypass_enabled()
+                        ):
+                            logger.info(
+                                "Redirect loop on %s; switching to bypasser", current_url
+                            )
+                            if status_callback:
+                                status_callback("resolving", "Bypassing protection...")
+                            use_bypasser_now = True
+                            return _get_with_bypasser(current_url)
                         _raise_too_many_redirects(f"Too many redirects for {current_url}")
                     current_url = redirect_url
                     continue
