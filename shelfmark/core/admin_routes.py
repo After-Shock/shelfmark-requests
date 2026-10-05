@@ -35,6 +35,7 @@ from shelfmark.core.auth_modes import (
 from shelfmark.core.cwa_user_sync import sync_cwa_users_from_rows
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.settings_registry import load_config_file
+from shelfmark.core.request_db import RequestDB
 from shelfmark.core.user_db import UserDB
 
 logger = setup_logger(__name__)
@@ -163,7 +164,7 @@ def _sync_all_cwa_users(user_db: UserDB) -> dict[str, int]:
     return sync_cwa_users_from_rows(user_db, rows)
 
 
-def register_admin_routes(app: Flask, user_db: UserDB) -> None:
+def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | None = None) -> None:
     """Register admin user management routes on the Flask app."""
 
     @app.route("/api/admin/invites", methods=["GET"])
@@ -543,6 +544,10 @@ def register_admin_routes(app: Flask, user_db: UserDB) -> None:
         # Auth mode resolution automatically falls back to "none" when no
         # local password admin remains.
 
+        # Delete requests first so shared groups promote a new owner instead of
+        # the FK cascade orphaning linked members into separate requests.
+        if request_db is not None:
+            request_db.delete_requests_by_user(user_id)
         user_db.delete_user(user_id)
         logger.info(f"Admin deleted user {user_id}: {user['username']}")
         return jsonify({"success": True})

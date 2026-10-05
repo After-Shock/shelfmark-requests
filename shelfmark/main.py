@@ -131,15 +131,15 @@ try:
     from shelfmark.core.oidc_routes import register_oidc_routes
     from shelfmark.core.admin_routes import register_admin_routes
     from shelfmark.core.self_user_routes import register_self_user_routes
-    register_oidc_routes(app, user_db)
-    register_admin_routes(app, user_db)
-    register_self_user_routes(app, user_db)
     # Custom request layer (our fork addition)
     from shelfmark.core.request_db import RequestDB
     from shelfmark.core.prerelease_requests import run_prerelease_request_loop
     from shelfmark.core.request_routes import _broadcast_request_update, register_request_routes
     request_db = RequestDB(_user_db_path)
     request_db.initialize()
+    register_oidc_routes(app, user_db)
+    register_admin_routes(app, user_db, request_db)
+    register_self_user_routes(app, user_db)
     register_request_routes(app, request_db, user_db)
     if not app.config.get("TESTING"):
         threading.Thread(
@@ -1198,6 +1198,10 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
         if not reqs:
             return
         for req in reqs:
+            # Status updates already cover the whole group; linked rows would
+            # re-run retries (with no retry state) and duplicate notifications.
+            if req.get("canonical_request_id") is not None:
+                continue
             req_id = req["id"]
             if status == QueueStatus.COMPLETE:
                 request_db.update_request_status(req_id, status="fulfilled")

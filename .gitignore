@@ -238,3 +238,8 @@ frontend-dist/
 # Holds live secrets and user data - secret_key, settings.json (API tokens,
 # webhook URLs), users.db and the cover cache. Never commit these.
 /config/
+
+# tsc emit leftovers (vite loads vite.config.js before .ts)
+src/frontend/vite.config.js
+src/frontend/vite.config.d.ts
+src/frontend/*.tsbuildinfo

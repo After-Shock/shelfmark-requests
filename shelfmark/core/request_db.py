@@ -26,9 +26,12 @@ def _normalize_match_text(value: Optional[str]) -> str:
 def _same_request_identity(
     existing: Dict[str, Any], *, title: str, author: Optional[str],
     content_type: str, provider: Optional[str], provider_id: Optional[str],
+    prefer_alternate_version: Any = False,
 ) -> bool:
     """Return whether an active canonical request represents the same item."""
     if existing["content_type"] != content_type:
+        return False
+    if bool(existing.get("prefer_alternate_version")) != bool(prefer_alternate_version):
         return False
     if provider and provider_id and existing.get("provider") and existing.get("provider_id"):
         return (
@@ -530,6 +533,7 @@ class RequestDB:
                     (dict(row) for row in candidates if _same_request_identity(
                         dict(row), title=title, author=author, content_type=content_type,
                         provider=metadata.get("provider"), provider_id=metadata.get("provider_id"),
+                        prefer_alternate_version=metadata.get("prefer_alternate_version"),
                     )),
                     None,
                 )
@@ -979,15 +983,15 @@ class RequestDB:
         return self.hide_request_group_from_admin(request_id) is not None
 
     def delete_requests_by_user(self, user_id: int) -> int:
-        """Delete all requests for a given user. Returns number of deleted requests."""
-        with self._lock:
-            conn = self._connect()
-            try:
-                cursor = conn.execute("DELETE FROM requests WHERE user_id = ?", (user_id,))
-                conn.commit()
-                return cursor.rowcount
-            finally:
-                conn.close()
+        """Delete all requests for a user, promoting linked members of groups they own."""
+        conn = self._connect()
+        try:
+            ids = [row["id"] for row in conn.execute(
+                "SELECT id FROM requests WHERE user_id = ?", (user_id,)
+            ).fetchall()]
+        finally:
+            conn.close()
+        return sum(self.delete_request(request_id) for request_id in ids)
 
     def get_requests_by_download_task(self, task_id: str) -> List[Dict[str, Any]]:
         """Get all requests linked to a download task ID."""

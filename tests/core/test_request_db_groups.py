@@ -289,7 +289,7 @@ def test_joined_request_copies_canonical_metadata_and_status(request_db, two_use
 
     joined, outcome = request_db.create_or_join_request(
         user_id=two_users[1], title="Dune: Deluxe", author="F. Herbert",
-        provider="googlebooks", provider_id="gb-1",
+        provider="googlebooks", provider_id="gb-1", prefer_alternate_version=True,
     )
 
     assert outcome == "joined"
@@ -740,3 +740,44 @@ def test_malformed_group_operation_matrix_preserves_all_rows(
 
     assert str(error.value) in logged
     assert _request_snapshots(db, request_ids) == before
+
+
+def test_alternate_audiobook_does_not_join_standard_request(request_db, two_users):
+    standard, _ = request_db.create_or_join_request(
+        user_id=two_users[0], title="Dracula", author="Bram Stoker",
+        content_type="audiobook", prefer_alternate_version=False,
+    )
+    alternate, outcome = request_db.create_or_join_request(
+        user_id=two_users[1], title="Dracula", author="Bram Stoker",
+        content_type="audiobook", prefer_alternate_version=True,
+    )
+    assert outcome == "created"
+    assert alternate["id"] != standard["id"]
+    assert alternate["prefer_alternate_version"]
+
+    with request_db._connect() as conn:
+        third = _create_user(conn, "third")
+    _, outcome = request_db.create_or_join_request(
+        user_id=third, title="Dracula", author="Bram Stoker",
+        content_type="audiobook", prefer_alternate_version=True,
+    )
+    assert outcome == "joined"
+
+
+def test_delete_requests_by_user_promotes_shared_group(grouped_requests):
+    db, canonical, linked = grouped_requests
+    with db._connect() as conn:
+        third = _create_user(conn, "third")
+    _, outcome = db.create_or_join_request(user_id=third, title="Dune", author="Frank Herbert")
+    assert outcome == "joined"
+
+    assert db.delete_requests_by_user(canonical["user_id"]) == 1
+    with db._connect() as conn:
+        conn.execute("DELETE FROM users WHERE id = ?", (canonical["user_id"],))
+        rows = conn.execute(
+            "SELECT id, canonical_request_id FROM requests WHERE title = 'Dune' ORDER BY id"
+        ).fetchall()
+
+    canonicals = [row["id"] for row in rows if row["canonical_request_id"] is None]
+    assert canonicals == [linked["id"]]
+    assert all(row["canonical_request_id"] == linked["id"] for row in rows if row["id"] != linked["id"])
