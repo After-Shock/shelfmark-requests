@@ -9,8 +9,9 @@ from unittest.mock import MagicMock, patch
 from datetime import timedelta
 import pytest
 import sys
+import types
 
-from shelfmark.release_sources.prowlarr.clients import DownloadStatus
+from shelfmark.download.clients import DownloadStatus
 
 
 class MockTorrentStatus:
@@ -76,11 +77,11 @@ class TestTransmissionClientIsConfigured:
             "TRANSMISSION_URL": "http://localhost:9091",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
-        from shelfmark.release_sources.prowlarr.clients.transmission import (
+        from shelfmark.download.clients.transmission import (
             TransmissionClient,
         )
 
@@ -93,11 +94,11 @@ class TestTransmissionClientIsConfigured:
             "TRANSMISSION_URL": "http://localhost:9091",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
-        from shelfmark.release_sources.prowlarr.clients.transmission import (
+        from shelfmark.download.clients.transmission import (
             TransmissionClient,
         )
 
@@ -110,11 +111,11 @@ class TestTransmissionClientIsConfigured:
             "TRANSMISSION_URL": "",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
-        from shelfmark.release_sources.prowlarr.clients.transmission import (
+        from shelfmark.download.clients.transmission import (
             TransmissionClient,
         )
 
@@ -133,7 +134,7 @@ class TestTransmissionClientTestConnection:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -144,15 +145,96 @@ class TestTransmissionClientTestConnection:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
             TransmissionClient()
             assert mock_transmission_rpc.Client.call_args.kwargs.get("protocol") == "https"
+
+    def test_init_applies_certificate_validation_to_session(self, monkeypatch):
+        """Test Transmission client applies verify mode onto transmission-rpc session."""
+        config_values = {
+            "TRANSMISSION_URL": "https://localhost:9091",
+            "TRANSMISSION_USERNAME": "admin",
+            "TRANSMISSION_PASSWORD": "password",
+            "TRANSMISSION_CATEGORY": "test",
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.transmission.config.get",
+            make_config_getter(config_values),
+        )
+
+        mock_http_session = MagicMock()
+        mock_client_instance = MagicMock()
+        mock_client_instance._http_session = mock_http_session
+
+        mock_transmission_rpc = create_mock_transmission_rpc_module()
+        mock_transmission_rpc.Client.return_value = mock_client_instance
+
+        with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
+
+            from shelfmark.download.clients import transmission as transmission_module
+
+            monkeypatch.setattr(transmission_module, "get_ssl_verify", lambda _url: False)
+            transmission_module.TransmissionClient()
+
+            assert mock_http_session.verify is False
+
+    def test_init_disables_verify_before_constructor_bootstrap(self, monkeypatch):
+        """verify=False must be in place before transmission-rpc constructor bootstraps RPC session."""
+        config_values = {
+            "TRANSMISSION_URL": "https://localhost:9091",
+            "TRANSMISSION_USERNAME": "admin",
+            "TRANSMISSION_PASSWORD": "password",
+            "TRANSMISSION_CATEGORY": "test",
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.transmission.config.get",
+            make_config_getter(config_values),
+        )
+
+        transmission_pkg = types.ModuleType("transmission_rpc")
+        transmission_pkg.__path__ = []  # Mark as package for submodule imports.
+        transmission_client_mod = types.ModuleType("transmission_rpc.client")
+
+        def _base_session_factory():
+            return types.SimpleNamespace(verify=True)
+
+        transmission_client_mod.requests = types.SimpleNamespace(Session=_base_session_factory)
+
+        def _fake_client_ctor(**_kwargs):
+            bootstrap_session = transmission_client_mod.requests.Session()
+            if bootstrap_session.verify is not False:
+                raise RuntimeError("verify not disabled during constructor bootstrap")
+            client = MagicMock()
+            client._http_session = bootstrap_session
+            client.get_session.return_value = MockSession(version="4.0.5")
+            return client
+
+        transmission_pkg.Client = _fake_client_ctor
+        transmission_pkg.client = transmission_client_mod
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "transmission_rpc": transmission_pkg,
+                "transmission_rpc.client": transmission_client_mod,
+            },
+        ):
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
+
+            from shelfmark.download.clients import transmission as transmission_module
+
+            monkeypatch.setattr(transmission_module, "get_ssl_verify", lambda _url: False)
+            client = transmission_module.TransmissionClient()
+            assert client._client._http_session.verify is False
 
     def test_test_connection_success(self, monkeypatch):
         """Test successful connection."""
@@ -163,7 +245,7 @@ class TestTransmissionClientTestConnection:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -175,10 +257,10 @@ class TestTransmissionClientTestConnection:
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
             # Force reimport to use mock
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -197,7 +279,7 @@ class TestTransmissionClientTestConnection:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -208,10 +290,10 @@ class TestTransmissionClientTestConnection:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -234,7 +316,7 @@ class TestTransmissionClientGetStatus:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -246,10 +328,10 @@ class TestTransmissionClientGetStatus:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -270,7 +352,7 @@ class TestTransmissionClientGetStatus:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -286,10 +368,10 @@ class TestTransmissionClientGetStatus:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -309,7 +391,7 @@ class TestTransmissionClientGetStatus:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -320,10 +402,10 @@ class TestTransmissionClientGetStatus:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -342,7 +424,7 @@ class TestTransmissionClientGetStatus:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -354,10 +436,10 @@ class TestTransmissionClientGetStatus:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -375,7 +457,7 @@ class TestTransmissionClientGetStatus:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -387,10 +469,10 @@ class TestTransmissionClientGetStatus:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -412,7 +494,7 @@ class TestTransmissionClientAddDownload:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -424,10 +506,10 @@ class TestTransmissionClientAddDownload:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -447,7 +529,7 @@ class TestTransmissionClientAddDownload:
             "TRANSMISSION_CATEGORY": "mybooks",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -459,10 +541,10 @@ class TestTransmissionClientAddDownload:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -473,6 +555,43 @@ class TestTransmissionClientAddDownload:
             # Verify labels were passed
             call_kwargs = mock_client_instance.add_torrent.call_args
             assert call_kwargs.kwargs.get("labels") == ["mybooks"]
+
+    def test_add_download_uses_configured_download_dir(self, monkeypatch):
+        """Test that add_download passes configured download directory."""
+        config_values = {
+            "TRANSMISSION_URL": "http://localhost:9091",
+            "TRANSMISSION_USERNAME": "admin",
+            "TRANSMISSION_PASSWORD": "password",
+            "TRANSMISSION_CATEGORY": "mybooks",
+            "TRANSMISSION_DOWNLOAD_DIR": "/downloads/books",
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.transmission.config.get",
+            make_config_getter(config_values),
+        )
+
+        mock_torrent = MockTorrent(hash_string="abc123")
+        mock_client_instance = MagicMock()
+        mock_client_instance.add_torrent.return_value = mock_torrent
+
+        mock_transmission_rpc = create_mock_transmission_rpc_module()
+        mock_transmission_rpc.Client.return_value = mock_client_instance
+
+        with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
+
+            from shelfmark.download.clients.transmission import (
+                TransmissionClient,
+            )
+
+            client = TransmissionClient()
+            magnet = "magnet:?xt=urn:btih:abc123&dn=test"
+            client.add_download(magnet, "Test")
+
+            call_kwargs = mock_client_instance.add_torrent.call_args
+            assert call_kwargs.kwargs.get("labels") == ["mybooks"]
+            assert call_kwargs.kwargs.get("download_dir") == "/downloads/books"
 
 
 class TestTransmissionClientRemove:
@@ -487,7 +606,7 @@ class TestTransmissionClientRemove:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -497,10 +616,10 @@ class TestTransmissionClientRemove:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -521,7 +640,7 @@ class TestTransmissionClientRemove:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -532,10 +651,10 @@ class TestTransmissionClientRemove:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -557,7 +676,7 @@ class TestTransmissionClientFindExisting:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -573,10 +692,10 @@ class TestTransmissionClientFindExisting:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 
@@ -598,7 +717,7 @@ class TestTransmissionClientFindExisting:
             "TRANSMISSION_CATEGORY": "test",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.transmission.config.get",
+            "shelfmark.download.clients.transmission.config.get",
             make_config_getter(config_values),
         )
 
@@ -609,10 +728,10 @@ class TestTransmissionClientFindExisting:
         mock_transmission_rpc.Client.return_value = mock_client_instance
 
         with patch.dict("sys.modules", {"transmission_rpc": mock_transmission_rpc}):
-            if "shelfmark.release_sources.prowlarr.clients.transmission" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.transmission"]
+            if "shelfmark.download.clients.transmission" in sys.modules:
+                del sys.modules["shelfmark.download.clients.transmission"]
 
-            from shelfmark.release_sources.prowlarr.clients.transmission import (
+            from shelfmark.download.clients.transmission import (
                 TransmissionClient,
             )
 

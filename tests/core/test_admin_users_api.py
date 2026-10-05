@@ -370,28 +370,17 @@ class TestAdminUserUpdateEndpoint:
         assert resp.json["email"] == "alice@admin.com"
         assert resp.json["display_name"] == "Admin Alice"
 
-    def test_update_user_settings(self, admin_client, user_db):
+    def test_update_rejects_unknown_settings(self, admin_client, user_db):
         user = user_db.create_user(username="alice")
 
         resp = admin_client.put(
             f"/api/admin/users/{user['id']}",
-            json={"settings": {"booklore_library_id": 3}},
+            json={"role": "admin", "settings": {"destination": None}},
         )
-        assert resp.status_code == 200
-        settings = user_db.get_user_settings(user["id"])
-        assert settings["booklore_library_id"] == 3
-
-    def test_update_settings_merges(self, admin_client, user_db):
-        user = user_db.create_user(username="alice")
-        user_db.set_user_settings(user["id"], {"existing_key": "keep"})
-
-        resp = admin_client.put(
-            f"/api/admin/users/{user['id']}",
-            json={"settings": {"new_key": "added"}},
-        )
-        assert resp.status_code == 200
-        assert resp.json["settings"]["existing_key"] == "keep"
-        assert resp.json["settings"]["new_key"] == "added"
+        assert resp.status_code == 400
+        assert "Unknown setting: destination" in resp.json["details"]
+        assert user_db.get_user(user_id=user["id"])["role"] == "user"
+        assert user_db.get_user_settings(user["id"]) == {}
 
     def test_update_response_includes_settings(self, admin_client, user_db):
         user = user_db.create_user(username="alice")
@@ -513,7 +502,7 @@ class TestAdminDownloadDefaults:
 
     @pytest.fixture(autouse=True)
     def setup_config(self, tmp_path, monkeypatch):
-        """Create a temporary downloads config file."""
+        """Create a temporary security config file."""
         import json
         from pathlib import Path
 
@@ -522,37 +511,27 @@ class TestAdminDownloadDefaults:
         monkeypatch.setattr("shelfmark.config.env.CONFIG_DIR", Path(config_dir))
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
-        config = {
-            "BOOKS_OUTPUT_MODE": "folder",
-            "DESTINATION": "/books",
-            "BOOKLORE_LIBRARY_ID": "2",
-            "BOOKLORE_PATH_ID": "5",
-            "EMAIL_RECIPIENTS": [{"nickname": "kindle", "email": "me@kindle.com"}],
-        }
-        (plugins_dir / "downloads.json").write_text(json.dumps(config))
+        config = {"OIDC_ADMIN_GROUP": "shelfmark-admins", "OIDC_USE_ADMIN_GROUP": False}
+        (plugins_dir / "security.json").write_text(json.dumps(config))
 
-    def test_returns_download_defaults(self, admin_client):
+    def test_returns_oidc_defaults(self, admin_client):
         resp = admin_client.get("/api/admin/download-defaults")
         assert resp.status_code == 200
         data = resp.json
-        assert data["BOOKS_OUTPUT_MODE"] == "folder"
-        assert data["DESTINATION"] == "/books"
-        assert data["BOOKLORE_LIBRARY_ID"] == "2"
-        assert data["BOOKLORE_PATH_ID"] == "5"
-        assert data["EMAIL_RECIPIENTS"] == [{"nickname": "kindle", "email": "me@kindle.com"}]
+        assert data["OIDC_ADMIN_GROUP"] == "shelfmark-admins"
+        assert data["OIDC_USE_ADMIN_GROUP"] is False
+        assert data["OIDC_AUTO_PROVISION"] is True
 
     def test_returns_defaults_when_no_config(self, admin_client, tmp_path):
-        """If no downloads config file exists, return sensible defaults."""
-
-        config_path = tmp_path / "plugins" / "downloads.json"
-        if config_path.exists():
-            os.remove(config_path)
+        """If no security config file exists, return sensible defaults."""
+        os.remove(tmp_path / "plugins" / "security.json")
 
         resp = admin_client.get("/api/admin/download-defaults")
         assert resp.status_code == 200
         data = resp.json
-        assert "BOOKS_OUTPUT_MODE" in data
-        assert "DESTINATION" in data
+        assert data["OIDC_ADMIN_GROUP"] == ""
+        assert data["OIDC_USE_ADMIN_GROUP"] is True
+        assert data["OIDC_AUTO_PROVISION"] is True
 
     def test_requires_admin(self, regular_client):
         resp = regular_client.get("/api/admin/download-defaults")

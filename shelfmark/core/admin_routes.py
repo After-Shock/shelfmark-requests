@@ -387,8 +387,6 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
                 }), 400
             if len(password) < 4:
                 return jsonify({"error": "Password must be at least 4 characters"}), 400
-            from shelfmark.core.signup_provisioning import get_warnings, set_password
-            password_warnings = get_warnings(set_password(user_db, user, password))
 
         # Update user fields
         user_fields = {}
@@ -440,15 +438,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         # Auth mode resolution automatically falls back to "none" when no
         # local password admin remains.
 
-        # Avoid unnecessary writes for no-op field updates.
-        for field in ("role", "email", "display_name"):
-            if field in user_fields and user_fields[field] == user.get(field):
-                user_fields.pop(field)
-
-        if user_fields:
-            user_db.update_user(user_id, **user_fields)
-
-        # Update per-user settings
+        validated_settings = None
         if "settings" in data:
             if not isinstance(data["settings"], dict):
                 return jsonify({"error": "Settings must be an object"}), 400
@@ -460,6 +450,21 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
                     "details": validation_errors,
                 }), 400
 
+        # Everything is validated; write nothing before this point so a 400 never
+        # leaves a partial update behind.
+        if password:
+            from shelfmark.core.signup_provisioning import get_warnings, set_password
+            password_warnings = get_warnings(set_password(user_db, user, password))
+
+        # Avoid unnecessary writes for no-op field updates.
+        for field in ("role", "email", "display_name"):
+            if field in user_fields and user_fields[field] == user.get(field):
+                user_fields.pop(field)
+
+        if user_fields:
+            user_db.update_user(user_id, **user_fields)
+
+        if validated_settings is not None:
             user_db.set_user_settings(user_id, validated_settings)
             # Ensure runtime reads see updated per-user overrides immediately.
             try:

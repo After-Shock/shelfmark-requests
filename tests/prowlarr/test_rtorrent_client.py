@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import sys
 
-from shelfmark.release_sources.prowlarr.clients import DownloadStatus
+from shelfmark.download.clients import DownloadStatus
 
 
 def make_config_getter(values):
@@ -38,11 +38,11 @@ class TestRTorrentClientIsConfigured:
             "RTORRENT_URL": "http://localhost:8080/RPC2",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
-        from shelfmark.release_sources.prowlarr.clients.rtorrent import RTorrentClient
+        from shelfmark.download.clients.rtorrent import RTorrentClient
 
         assert RTorrentClient.is_configured() is True
 
@@ -53,11 +53,11 @@ class TestRTorrentClientIsConfigured:
             "RTORRENT_URL": "http://localhost:8080/RPC2",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
-        from shelfmark.release_sources.prowlarr.clients.rtorrent import RTorrentClient
+        from shelfmark.download.clients.rtorrent import RTorrentClient
 
         assert RTorrentClient.is_configured() is False
 
@@ -68,17 +68,47 @@ class TestRTorrentClientIsConfigured:
             "RTORRENT_URL": "",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
-        from shelfmark.release_sources.prowlarr.clients.rtorrent import RTorrentClient
+        from shelfmark.download.clients.rtorrent import RTorrentClient
 
         assert RTorrentClient.is_configured() is False
 
 
 class TestRTorrentClientTestConnection:
     """Tests for RTorrentClient.test_connection()."""
+
+    def test_init_https_disabled_verification_uses_unverified_transport(self, monkeypatch):
+        """HTTPS rTorrent with verify disabled should use a SafeTransport with custom SSL context."""
+        config_values = {
+            "RTORRENT_URL": "https://localhost:8080/RPC2",
+            "RTORRENT_USERNAME": "",
+            "RTORRENT_PASSWORD": "",
+            "RTORRENT_DOWNLOAD_DIR": "/downloads",
+            "RTORRENT_LABEL": "cwabd",
+        }
+        monkeypatch.setattr(
+            "shelfmark.download.clients.rtorrent.config.get",
+            make_config_getter(config_values),
+        )
+
+        mock_rpc = MagicMock()
+        mock_xmlrpc = create_mock_xmlrpc_module()
+        mock_xmlrpc.ServerProxy.return_value = mock_rpc
+
+        with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
+
+            from shelfmark.download.clients import rtorrent as rtorrent_module
+
+            monkeypatch.setattr(rtorrent_module, "get_ssl_verify", lambda _url: False)
+            rtorrent_module.RTorrentClient()
+
+            assert mock_xmlrpc.SafeTransport.called is True
+            assert "transport" in mock_xmlrpc.ServerProxy.call_args.kwargs
 
     def test_test_connection_success(self, monkeypatch):
         """Test successful connection."""
@@ -90,7 +120,7 @@ class TestRTorrentClientTestConnection:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -101,10 +131,10 @@ class TestRTorrentClientTestConnection:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -124,7 +154,7 @@ class TestRTorrentClientTestConnection:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -135,10 +165,10 @@ class TestRTorrentClientTestConnection:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -158,7 +188,7 @@ class TestRTorrentClientTestConnection:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -169,10 +199,10 @@ class TestRTorrentClientTestConnection:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -196,7 +226,7 @@ class TestRTorrentClientAddDownload:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -213,15 +243,15 @@ class TestRTorrentClientAddDownload:
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
             with patch(
-                "shelfmark.release_sources.prowlarr.clients.torrent_utils.extract_torrent_info",
+                "shelfmark.download.clients.torrent_utils.extract_torrent_info",
                 return_value=mock_torrent_info,
             ):
-                if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
+                if "shelfmark.download.clients.rtorrent" in sys.modules:
                     del sys.modules[
-                        "shelfmark.release_sources.prowlarr.clients.rtorrent"
+                        "shelfmark.download.clients.rtorrent"
                     ]
 
-                from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+                from shelfmark.download.clients.rtorrent import (
                     RTorrentClient,
                 )
 
@@ -247,7 +277,7 @@ class TestRTorrentClientAddDownload:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -264,15 +294,15 @@ class TestRTorrentClientAddDownload:
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
             with patch(
-                "shelfmark.release_sources.prowlarr.clients.torrent_utils.extract_torrent_info",
+                "shelfmark.download.clients.torrent_utils.extract_torrent_info",
                 return_value=mock_torrent_info,
             ):
-                if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
+                if "shelfmark.download.clients.rtorrent" in sys.modules:
                     del sys.modules[
-                        "shelfmark.release_sources.prowlarr.clients.rtorrent"
+                        "shelfmark.download.clients.rtorrent"
                     ]
 
-                from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+                from shelfmark.download.clients.rtorrent import (
                     RTorrentClient,
                 )
 
@@ -293,7 +323,7 @@ class TestRTorrentClientAddDownload:
             "RTORRENT_URL": "http://localhost:8080/RPC2",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -309,15 +339,15 @@ class TestRTorrentClientAddDownload:
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
             with patch(
-                "shelfmark.release_sources.prowlarr.clients.rtorrent.extract_torrent_info",
+                "shelfmark.download.clients.rtorrent.extract_torrent_info",
                 return_value=mock_torrent_info,
             ):
-                if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
+                if "shelfmark.download.clients.rtorrent" in sys.modules:
                     del sys.modules[
-                        "shelfmark.release_sources.prowlarr.clients.rtorrent"
+                        "shelfmark.download.clients.rtorrent"
                     ]
 
-                from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+                from shelfmark.download.clients.rtorrent import (
                     RTorrentClient,
                 )
 
@@ -341,7 +371,7 @@ class TestRTorrentClientGetStatus:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -363,10 +393,10 @@ class TestRTorrentClientGetStatus:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -388,33 +418,35 @@ class TestRTorrentClientGetStatus:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
         mock_rpc = MagicMock()
-        mock_rpc.d.multicall.filtered.return_value = [
+        mock_rpc.d.multicall.filtered.side_effect = [
             [
-                "abc123def456",
-                4,
-                1048576000,
-                1048576000,
-                0,
-                2048000,
-                "cwabd",
-                1,
-            ]
+                [
+                    "abc123def456",
+                    4,
+                    1048576000,
+                    1048576000,
+                    0,
+                    2048000,
+                    "cwabd",
+                    1,
+                ]
+            ],
+            [["/downloads/test-torrent"]],
         ]
-        mock_rpc.d.get_base_path.return_value = "/downloads/test-torrent"
 
         mock_xmlrpc = create_mock_xmlrpc_module()
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -437,7 +469,7 @@ class TestRTorrentClientGetStatus:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -448,10 +480,10 @@ class TestRTorrentClientGetStatus:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -471,7 +503,7 @@ class TestRTorrentClientGetStatus:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -493,10 +525,10 @@ class TestRTorrentClientGetStatus:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -520,7 +552,7 @@ class TestRTorrentClientRemove:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -530,10 +562,10 @@ class TestRTorrentClientRemove:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -554,7 +586,7 @@ class TestRTorrentClientRemove:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -564,10 +596,10 @@ class TestRTorrentClientRemove:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -588,7 +620,7 @@ class TestRTorrentClientRemove:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
@@ -599,10 +631,10 @@ class TestRTorrentClientRemove:
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -625,21 +657,21 @@ class TestRTorrentClientGetDownloadPath:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
         mock_rpc = MagicMock()
-        mock_rpc.d.get_base_path.return_value = "/downloads/test-file"
+        mock_rpc.d.multicall.filtered.return_value = [["/downloads/test-file"]]
 
         mock_xmlrpc = create_mock_xmlrpc_module()
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
@@ -658,21 +690,21 @@ class TestRTorrentClientGetDownloadPath:
             "RTORRENT_LABEL": "cwabd",
         }
         monkeypatch.setattr(
-            "shelfmark.release_sources.prowlarr.clients.rtorrent.config.get",
+            "shelfmark.download.clients.rtorrent.config.get",
             make_config_getter(config_values),
         )
 
         mock_rpc = MagicMock()
-        mock_rpc.d.get_base_path.side_effect = Exception("Torrent not found")
+        mock_rpc.d.multicall.filtered.return_value = []
 
         mock_xmlrpc = create_mock_xmlrpc_module()
         mock_xmlrpc.ServerProxy.return_value = mock_rpc
 
         with patch.dict("sys.modules", {"xmlrpc.client": mock_xmlrpc}):
-            if "shelfmark.release_sources.prowlarr.clients.rtorrent" in sys.modules:
-                del sys.modules["shelfmark.release_sources.prowlarr.clients.rtorrent"]
+            if "shelfmark.download.clients.rtorrent" in sys.modules:
+                del sys.modules["shelfmark.download.clients.rtorrent"]
 
-            from shelfmark.release_sources.prowlarr.clients.rtorrent import (
+            from shelfmark.download.clients.rtorrent import (
                 RTorrentClient,
             )
 
