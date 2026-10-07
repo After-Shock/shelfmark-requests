@@ -19,6 +19,7 @@ DEFAULT_BASE_URL = "http://localhost:8084"
 DEFAULT_TIMEOUT = 10
 POLL_INTERVAL = 2
 DOWNLOAD_TIMEOUT = 300  # 5 minutes max for downloads
+AA_TIMEOUT = 300  # Anna's Archive requests can wait on a Cloudflare bypass
 
 
 @dataclass

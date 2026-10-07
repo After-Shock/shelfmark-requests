@@ -8,7 +8,7 @@ Run with: docker exec test-cwabd python3 -m pytest tests/e2e/ -v -m e2e
 
 import pytest
 
-from .conftest import APIClient, DownloadTracker
+from .conftest import AA_TIMEOUT, APIClient, DownloadTracker
 
 
 def _skip_if_protected(api_client: APIClient, resp, *, allow_admin_only: bool = False) -> None:
@@ -311,7 +311,9 @@ class TestDownloadFlow:
 
     def test_download_invalid_id_returns_error(self, api_client: APIClient):
         """Test that invalid ID returns appropriate error."""
-        resp = api_client.get("/api/download", params={"id": "nonexistent-id-12345"})
+        resp = api_client.get(
+            "/api/download", params={"id": "nonexistent-id-12345"}, timeout=AA_TIMEOUT
+        )
         _skip_if_protected(api_client, resp)
 
         # Should return 404 or error status
@@ -436,7 +438,7 @@ class TestLegacySearchEndpoint:
 
     def test_legacy_search_returns_results(self, api_client: APIClient):
         """Test legacy search with a query."""
-        resp = api_client.get("/api/search", params={"query": "Pride Prejudice"})
+        resp = api_client.get("/api/search", params={"query": "Pride Prejudice"}, timeout=AA_TIMEOUT)
 
         # May return results or 503 if source unavailable
         if resp.status_code == 200:
@@ -457,7 +459,7 @@ class TestLegacyInfoEndpoint:
 
     def test_legacy_info_invalid_id(self, api_client: APIClient):
         """Test legacy info with invalid ID."""
-        resp = api_client.get("/api/info", params={"id": "invalid-id-xyz"})
+        resp = api_client.get("/api/info", params={"id": "invalid-id-xyz"}, timeout=AA_TIMEOUT)
         _skip_if_protected(api_client, resp)
 
         # Should return 404 or error

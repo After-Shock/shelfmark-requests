@@ -75,22 +75,7 @@ class TestProwlarrConfiguration:
         assert resp.status_code == 200
         data = resp.json()
 
-        # Settings may have nested structure with groups/tabs
-        if isinstance(data, dict):
-            # Could have groups containing tabs, or be flat
-            if "groups" in data:
-                # Nested: look in groups for prowlarr tabs
-                all_tab_names = []
-                for group in data.get("groups", []):
-                    if isinstance(group, dict):
-                        for tab in group.get("tabs", []):
-                            if isinstance(tab, dict):
-                                all_tab_names.append(tab.get("name") or tab.get("id", ""))
-                tab_names = all_tab_names
-            else:
-                tab_names = list(data.keys())
-        else:
-            tab_names = [t.get("name") or t.get("id") for t in data if isinstance(t, dict)]
+        tab_names = [tab["name"] for tab in data["tabs"]]
 
         # Prowlarr settings should exist (may be under different name)
         prowlarr_tabs = [n for n in tab_names if n and "prowlarr" in n.lower()]

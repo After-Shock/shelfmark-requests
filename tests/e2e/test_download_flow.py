@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from .conftest import APIClient, DownloadTracker, DOWNLOAD_TIMEOUT
+from .conftest import AA_TIMEOUT, APIClient, DownloadTracker, DOWNLOAD_TIMEOUT
 
 
 def _find_available_provider(api_client: APIClient) -> str | None:
@@ -253,7 +253,7 @@ class TestLegacyDownloadFlow:
         search_resp = api_client.get(
             "/api/search",
             params={"query": "Frankenstein Mary Shelley"},
-            timeout=30,
+            timeout=AA_TIMEOUT,
         )
 
         if search_resp.status_code == 503:
@@ -271,14 +271,14 @@ class TestLegacyDownloadFlow:
         assert book_id, "Result missing ID"
 
         # Get book info
-        info_resp = api_client.get("/api/info", params={"id": book_id})
+        info_resp = api_client.get("/api/info", params={"id": book_id}, timeout=AA_TIMEOUT)
 
         if info_resp.status_code != 200:
             pytest.skip(f"Info endpoint failed: {info_resp.status_code}")
 
         # Queue download (legacy endpoint)
         download_tracker.track(book_id)
-        download_resp = api_client.get("/api/download", params={"id": book_id})
+        download_resp = api_client.get("/api/download", params={"id": book_id}, timeout=AA_TIMEOUT)
 
         if download_resp.status_code != 200:
             pytest.skip(f"Download queue failed: {download_resp.status_code}")
