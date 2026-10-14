@@ -1206,7 +1206,7 @@ def download_settings():
             key="TEMPLATE_AUDIOBOOK_ORGANIZE",
             label="Path Template",
             description="Use / to create folders. Variables: {Author}, {Title}, {Year}, {User}, {Series}, {SeriesPosition}, {Subtitle}, {PartNumber}. Use arbitrary prefix/suffix: {Vol. SeriesPosition - } outputs 'Vol. 2 - ' when set, nothing when empty.",
-            default="{Author}/{Title}",
+            default="{Author}/{Title}/{Title}{ - Part }{PartNumber}",
             placeholder="{Author}/{Series/}{Title}{ - Part }{PartNumber}",
             show_when={"field": "FILE_ORGANIZATION_AUDIOBOOK", "value": "organize"},
             universal_only=True,

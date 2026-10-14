@@ -2,6 +2,7 @@
 
 import os
 import re
+import unicodedata
 from pathlib import Path
 from typing import Dict, Optional, Union, Mapping
 
@@ -188,6 +189,27 @@ def parse_naming_template(
     return result
 
 
+def _folder_key(name: str) -> str:
+    """Compare folder names ignoring case, accents, spacing and punctuation ("B.K. Borison" == "B. K. Borison")."""
+    decomposed = unicodedata.normalize("NFKD", name)
+    return "".join(c for c in decomposed.casefold() if c.isalnum())
+
+
+def _existing_dir_name(base: Path, name: str) -> str:
+    """Return the name of an existing folder in base that matches name, else name itself."""
+    key = _folder_key(name)
+    if not key or (base / name).is_dir():
+        return name
+    try:
+        for entry in os.scandir(base):
+            if entry.is_dir() and _folder_key(entry.name) == key:
+                logger.info(f"Using existing folder '{entry.name}' for '{name}'")
+                return entry.name
+    except OSError as e:
+        logger.debug(f"Cannot list {base} for existing folders: {e}")
+    return name
+
+
 def build_library_path(
     base_path: str,
     template: str,
@@ -205,6 +227,13 @@ def build_library_path(
     relative = relative.replace('..', '')
 
     base = Path(base_path).resolve()
+
+    # Reuse an existing top-level folder (usually the author) that differs only in
+    # formatting, so "B. K. Borison" lands in an existing "B.K. Borison" folder.
+    top, sep, rest = relative.partition("/")
+    if sep:
+        relative = f"{_existing_dir_name(base, top)}/{rest}"
+
     full_path = (base / relative).resolve()
 
     # Verify the path is within the base directory

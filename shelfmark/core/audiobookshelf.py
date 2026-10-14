@@ -186,16 +186,16 @@ class ABSClient:
 
         for item in cache:
             item_title = item.get('title', '')
-            item_author = _normalize(item.get('author', ''))
+            # ABS often lists the narrator too ("Therese Plummer/Eowyn Ivey"), so match any name.
+            item_authors = [_normalize(a) for a in re.split(r'[/,;&]', item.get('author', '') or '') if a.strip()]
 
             if not _titles_match(title, item_title):
                 continue
 
-            if not norm_author or not item_author:
+            if not norm_author or not item_authors:
                 return item
 
-            author_ratio = difflib.SequenceMatcher(None, norm_author, item_author).ratio()
-            if author_ratio >= 0.70:
+            if any(difflib.SequenceMatcher(None, norm_author, a).ratio() >= 0.70 for a in item_authors):
                 return item
 
         return None

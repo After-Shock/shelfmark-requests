@@ -366,6 +366,27 @@ class TestArbitraryPrefixSuffix:
 class TestBuildLibraryPath:
     """Tests for complete library path building."""
 
+    @pytest.mark.parametrize("existing, author", [
+        ("B.K. Borison", "B. K. Borison"),
+        ("A. K. Caggiano", "A.K. Caggiano"),
+        ("George R. R. Martin", "george r.r. martin"),
+        ("Eowyn Ivey", "Éowyn Ivey"),
+    ])
+    def test_reuses_existing_author_folder_with_different_formatting(self, tmp_path, existing, author):
+        (tmp_path / existing).mkdir()
+        (tmp_path / "Other Author").mkdir()
+
+        path = build_library_path(str(tmp_path), "{Author}/{Title}", {"Author": author, "Title": "Book"})
+
+        assert path == tmp_path.resolve() / existing / "Book"
+
+    def test_prefers_exact_author_folder_and_creates_new_authors(self, tmp_path):
+        (tmp_path / "BK Borison").mkdir()
+        (tmp_path / "B.K. Borison").mkdir()
+
+        assert build_library_path(str(tmp_path), "{Author}/{Title}", {"Author": "B.K. Borison", "Title": "X"}).parent.name == "B.K. Borison"
+        assert build_library_path(str(tmp_path), "{Author}/{Title}", {"Author": "New Author", "Title": "X"}).parent.name == "New Author"
+
     def test_basic_path(self):
         """Test basic path building."""
         path = build_library_path(

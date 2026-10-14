@@ -83,6 +83,13 @@ class TestABSClientFindMatch:
         ])
         assert client.find_match("The Housemaid", "Freida McFadden") is None
 
+    def test_matches_author_listed_with_narrator(self):
+        client = self._client_with_cache([
+            {"id": "1", "title": "The Snow Child", "author": "Therese Plummer/Eowyn Ivey"},
+        ])
+        assert client.find_match("The Snow Child", "Eowyn Ivey") is not None
+        assert client.find_match("The Snow Child", "Someone Else") is None
+
     def test_no_match_low_author_similarity(self):
         client = self._client_with_cache([
             {"id": "1", "title": "The Hobbit", "author": "Someone Else"},
