@@ -47,8 +47,12 @@ services:
       # Without it CWA_USER_SYNC_ENABLED has no effect and provisioning reports
       # "Calibre-Web database not mounted".
       - /opt/calibre-web/config/app.db:/auth/app.db
-      # Required for torrent / usenet - path must match your download client's volume exactly
-      # - /path/to/downloads:/path/to/downloads
+      # Torrent downloads: same path as the local qBittorrent container, so no
+      # remote path mapping is needed.
+      - /mnt/unionfs/downloads/torrents:/mnt/unionfs/downloads/torrents
+      # UnRaid NFS share: audiobook library (/UnRaid/audiobooks, read by
+      # Audiobookshelf) and the drop folder for a remote (Windows) qBittorrent.
+      - /media/UnRaid:/UnRaid
 
 networks:
   saltbox:
