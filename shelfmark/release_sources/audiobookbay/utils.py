@@ -3,6 +3,22 @@
 import re
 from typing import Optional
 
+# WordPress texturizes punctuation on output only, so ABB's search matches the
+# stored ASCII form and ANDs its terms: one curly apostrophe in a query empties
+# the whole result set. Map typographic forms back before searching/comparing.
+_ASCII_PUNCTUATION = str.maketrans({
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'", "\u2032": "'", "\u00b4": "'", "`": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"', "\u2033": '"',
+    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2015": "-",
+    "\u2212": "-", "\ufe58": "-", "\ufe63": "-", "\uff0d": "-",
+    "\u2026": "...",
+})
+
+
+def normalize_search_punctuation(text: str) -> str:
+    """Replace typographic punctuation with the ASCII forms ABB stores."""
+    return text.translate(_ASCII_PUNCTUATION) if text else text
+
 
 def normalize_hostname(raw: Optional[str]) -> str:
     """Normalize a user-supplied hostname for URL construction.

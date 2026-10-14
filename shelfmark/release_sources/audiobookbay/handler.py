@@ -13,6 +13,13 @@ from shelfmark.release_sources.audiobookbay import scraper
 from shelfmark.release_sources.audiobookbay.utils import normalize_hostname
 
 logger = setup_logger(__name__)
+DEFAULT_ABB_HOSTNAME = "audiobookbay.lu"
+
+
+def _detail_url_matches_host(detail_url: str, hostname: str) -> bool:
+    """Only fetch https detail pages on the configured ABB host (queued URLs come from the client)."""
+    parsed = urlparse(detail_url)
+    return parsed.scheme.lower() == "https" and normalize_hostname(parsed.hostname).lower().rstrip(".") == hostname.lower().rstrip(".")
 
 
 @register_handler("audiobookbay")
@@ -52,9 +59,11 @@ class AudiobookBayHandler(ExternalClientHandler):
             logger.warning(f"Missing details URL for AudiobookBay task: {task.task_id}")
             return None
 
-        hostname = normalize_hostname(config.get("ABB_HOSTNAME", ""))
-        if not hostname:
-            hostname = normalize_hostname(urlparse(detail_url).hostname)
+        hostname = normalize_hostname(config.get("ABB_HOSTNAME", "")) or DEFAULT_ABB_HOSTNAME
+        if not _detail_url_matches_host(detail_url, hostname):
+            status_callback("error", "Invalid AudiobookBay details URL")
+            logger.warning(f"Rejected AudiobookBay details URL with invalid scheme or host: {detail_url}")
+            return None
 
         status_callback("resolving", "Extracting magnet link")
         magnet_link = scraper.extract_magnet_link(detail_url, hostname)
