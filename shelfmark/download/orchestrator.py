@@ -22,7 +22,7 @@ from shelfmark.core.utils import transform_cover_url, is_audiobook as check_audi
 from shelfmark.download.fs import run_blocking_io
 from shelfmark.download.postprocess.pipeline import is_torrent_source, safe_cleanup_path
 from shelfmark.download.postprocess.router import post_process_download
-from shelfmark.release_sources import direct_download, get_handler, get_source_display_name
+from shelfmark.release_sources import HANDOFF_COMPLETE, direct_download, get_handler, get_source_display_name
 from shelfmark.release_sources.direct_download import SearchUnavailable
 
 logger = setup_logger(__name__)
@@ -386,8 +386,8 @@ def _download_task(task_id: str, cancel_flag: Event) -> Optional[str]:
         )
 
         # Handler returns temp path - orchestrator handles post-processing
-        if not temp_path:
-            return None
+        if not temp_path or temp_path == HANDOFF_COMPLETE:
+            return temp_path
 
         temp_file = Path(temp_path)
         if not run_blocking_io(temp_file.exists):
@@ -580,7 +580,8 @@ def _process_single_download(task_id: str, cancel_flag: Event) -> None:
             return
 
         if download_path:
-            book_queue.update_download_path(task_id, download_path)
+            if download_path != HANDOFF_COMPLETE:
+                book_queue.update_download_path(task_id, download_path)
             # Only update status if not already set (e.g., by archive extraction callback)
             task = book_queue.get_task(task_id)
             if not task or task.status != QueueStatus.COMPLETE:

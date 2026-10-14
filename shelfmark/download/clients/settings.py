@@ -10,6 +10,7 @@ from shelfmark.core.settings_registry import (
     PasswordField,
     ActionButton,
     SelectField,
+    CheckboxField,
     TagListField,
 )
 from shelfmark.core.utils import normalize_http_url
@@ -604,6 +605,13 @@ def prowlarr_clients_settings():
             description="Server-side directory where torrents are downloaded (optional, uses rTorrent default if not specified)",
             placeholder="/downloads",
             show_when={"field": "PROWLARR_TORRENT_CLIENT", "value": "rtorrent"},
+        ),
+        CheckboxField(
+            key="TORRENT_HANDOFF_ONLY",
+            label="Hand Off Only",
+            description="Send the torrent to the client and finish. Shelfmark won't wait for it or import files, so use this when the client's download folder isn't mounted here (e.g. qBittorrent on another machine).",
+            default=False,
+            show_when={"field": "PROWLARR_TORRENT_CLIENT", "notEmpty": True},
         ),
         # Note: Torrent client download path must be mounted identically in both containers.
         # Torrents are always copied (not moved) to preserve seeding capability.

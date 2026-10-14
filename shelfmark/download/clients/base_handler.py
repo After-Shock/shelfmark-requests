@@ -19,7 +19,7 @@ from shelfmark.download.clients import (
     list_configured_clients,
 )
 from shelfmark.download.fs import run_blocking_io
-from shelfmark.release_sources import DownloadHandler
+from shelfmark.release_sources import HANDOFF_COMPLETE, DownloadHandler
 
 logger = setup_logger(__name__)
 
@@ -503,10 +503,13 @@ class ExternalClientHandler(DownloadHandler, ABC):
             status_callback("resolving", f"Checking {client.name}")
             category = self._get_category_for_task(client, task)
             existing = client.find_existing(request.url, category=category)
+            handoff_only = request.protocol == "torrent" and config.get("TORRENT_HANDOFF_ONLY", False)
 
             if existing:
                 download_id, existing_status = existing
                 logger.info(f"Found existing download in {client.name}: {download_id}")
+                if handoff_only:
+                    return self._complete_handoff(client, download_id, status_callback)
 
                 # If already complete, skip straight to file handling
                 if existing_status.complete:
@@ -560,6 +563,8 @@ class ExternalClientHandler(DownloadHandler, ABC):
                     return None
 
                 logger.info(f"Added to {client.name}: {download_id} for '{request.release_name}'")
+                if handoff_only:
+                    return self._complete_handoff(client, download_id, status_callback)
 
             # Poll for progress
             return self._poll_and_complete(
@@ -576,6 +581,16 @@ class ExternalClientHandler(DownloadHandler, ABC):
             logger.error(f"External client download error: {e}")
             status_callback("error", str(e))
             return None
+
+    @staticmethod
+    def _complete_handoff(
+        client: DownloadClient,
+        download_id: str,
+        status_callback: Callable[[str, Optional[str]], None],
+    ) -> str:
+        """Finish without polling or importing; the client owns the download now."""
+        status_callback("complete", f"Sent to {client.name} ({download_id})")
+        return HANDOFF_COMPLETE
 
     def _poll_and_complete(
         self,

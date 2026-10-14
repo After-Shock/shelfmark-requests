@@ -267,6 +267,11 @@ class ReleaseSource(ABC):
         return _default_column_config()
 
 
+# Returned by a handler that handed the release to an external client and has
+# no local file to post-process.
+HANDOFF_COMPLETE = "handoff://complete"
+
+
 class DownloadHandler(ABC):
     """Interface for executing downloads.
 
@@ -367,3 +372,4 @@ from shelfmark.release_sources import direct_download  # noqa: F401, E402
 from shelfmark.release_sources import prowlarr  # noqa: F401, E402
 from shelfmark.release_sources import irc  # noqa: F401, E402
 from shelfmark.release_sources import annasarchive  # noqa: F401, E402
+from shelfmark.release_sources import audiobookbay  # noqa: F401, E402

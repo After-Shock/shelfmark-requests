@@ -537,7 +537,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>/approve", methods=["POST"])
     @_require_admin
     def approve_request_route(request_id):
-        """Approve a request. Audiobooks stay at 'approved', ebooks trigger auto-download."""
+        """Approve a request and trigger auto-download."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
@@ -565,13 +565,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         _send_group_status_notifications(request_db, user_db, request_id, "approved")
 
-        # For audiobooks, just stay at "approved" status - admin will manually manage
-        content_type = req.get("content_type", "ebook")
-        if content_type == "audiobook":
-            logger.info(f"Request #{request_id} is audiobook - staying at 'approved' for manual management")
-            return jsonify(updated)
-
-        # For ebooks, start auto-download in background thread.
+        # Start auto-download in background thread.
         # Resolve linked route IDs to the live canonical before reserving work.
         admin_username = session.get("user_id")
         download_request = _resolve_canonical_request(request_db, updated)
@@ -750,13 +744,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         _broadcast_request_update(updated)
 
-        # For audiobooks, just stay at "approved" status - admin will manually manage
-        content_type = updated.get("content_type", "ebook")
-        if content_type == "audiobook":
-            logger.info(f"Request #{request_id} is audiobook - staying at 'approved' for manual management")
-            return jsonify(updated)
-
-        # For ebooks, start auto-download in background thread.
+        # Start auto-download in background thread.
         # Resolve linked route IDs to the live canonical before reserving work.
         admin_username = session.get("user_id")
         download_request = _resolve_canonical_request(request_db, updated)
@@ -903,9 +891,12 @@ def _auto_download_request(
 
         # Search for releases
         content_type = req.get("content_type", "ebook")
-        sources_to_search = [src["name"] for src in list_available_sources() if src["enabled"]]
+        sources_to_search = [
+            src["name"] for src in list_available_sources()
+            if src["enabled"] and content_type in src["supported_content_types"]
+        ]
         if not sources_to_search:
-            _safe_update_status("failed", admin_note="No download sources are enabled. Check settings.")
+            _safe_update_status("failed", admin_note=f"No {content_type} download sources are enabled. Check settings.")
             return
 
         all_releases = []

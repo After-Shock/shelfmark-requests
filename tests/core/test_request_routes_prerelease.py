@@ -562,7 +562,7 @@ class TestAdminPrereleaseTransitions:
         request_db.update_request_metadata.assert_not_called()
         thread_cls.return_value.start.assert_called_once()
 
-    def test_approve_manual_audiobook_with_future_metadata_stays_approved(self, app):
+    def test_approve_manual_audiobook_with_future_metadata_stays_approved_and_auto_downloads(self, app):
         request_db = app.request_db
         pending_request = {
             "id": 1,
@@ -613,7 +613,7 @@ class TestAdminPrereleaseTransitions:
         )
         mock_broadcast.assert_called_once_with(approved_with_metadata)
         mock_notify.assert_called_once()
-        thread_cls.return_value.start.assert_not_called()
+        thread_cls.return_value.start.assert_called_once()
 
     def test_activate_prerelease_request_moves_to_pending(self, app):
         request_db = app.request_db
