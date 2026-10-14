@@ -143,6 +143,26 @@ class ABSClient:
             logger.warning("Failed to refresh ABS library cache: %s", exc)
             return 0
 
+    def scan_libraries(self) -> bool:
+        """Ask ABS to rescan every book library. ABS scans in the background."""
+        url, token = self._get_credentials()
+        if not url or not token:
+            return False
+
+        headers = {'Authorization': f'Bearer {token}'}
+        try:
+            resp = http_requests.get(f'{url}/api/libraries', headers=headers, timeout=10)
+            resp.raise_for_status()
+            for lib in resp.json().get('libraries', []):
+                if lib.get('mediaType') == 'book':
+                    http_requests.post(
+                        f"{url}/api/libraries/{lib['id']}/scan", headers=headers, timeout=30
+                    ).raise_for_status()
+            return True
+        except Exception as exc:
+            logger.warning("Failed to start ABS library scan: %s", exc)
+            return False
+
     def find_match(self, title: str, author: str) -> Optional[dict[str, Any]]:
         """Return first ABS item fuzzy-matching title+author, or None (fail open).
 

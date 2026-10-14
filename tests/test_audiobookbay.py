@@ -1,7 +1,7 @@
 """AudiobookBay query normalization and detail-URL validation (upstream #1242, #972)."""
 
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from shelfmark.core.config import config
 from shelfmark.core.models import DownloadTask
@@ -62,3 +62,42 @@ def test_auto_download_only_keeps_releases_of_the_requested_title():
     assert _release_matches_title("The Snow Child: A Novel", "The Snow Child")
     assert not _release_matches_title("Dune", "Dune Messiah")
     assert not _release_matches_title(None, "Dune")
+
+
+def _auto_download_note(releases=None, search_error=False):
+    from types import SimpleNamespace
+    from shelfmark.core import request_routes
+
+    source = MagicMock()
+    if search_error:
+        source.search.side_effect = RuntimeError("ABB down")
+    else:
+        source.search.return_value = [SimpleNamespace(title=t) for t in (releases or [])]
+    book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"])
+    calls = []
+    with patch("shelfmark.release_sources.list_available_sources", return_value=[
+        {"name": "audiobookbay", "enabled": True, "supported_content_types": ["audiobook"]},
+        {"name": "direct_download", "enabled": True, "supported_content_types": ["ebook"]},
+    ]), patch("shelfmark.release_sources.get_source", return_value=source), patch(
+        "shelfmark.metadata_providers.is_provider_registered", return_value=True
+    ), patch("shelfmark.metadata_providers.get_provider_kwargs", return_value={}), patch(
+        "shelfmark.metadata_providers.get_provider", return_value=MagicMock(get_book=MagicMock(return_value=book))
+    ), patch("shelfmark.core.search_plan.build_release_search_plan"), patch.object(
+        request_routes, "_set_request_status", side_effect=lambda *a, **k: calls.append((a[3], k))
+    ):
+        request_routes._auto_download_request(
+            MagicMock(), MagicMock(), 362,
+            {"provider": "googlebooks", "provider_id": "x", "content_type": "audiobook"},
+        )
+    assert calls and calls[-1][0] == "failed"
+    return calls[-1][1]["admin_note"]
+
+
+def test_audiobook_with_no_matching_release_reports_no_automation_resources():
+    note = _auto_download_note(releases=["Black Woods, Blue Sky"])
+    assert note == "No automation resources found: no AudiobookBay release matches 'The Snow Child'."
+
+
+def test_audiobook_search_failure_is_not_reported_as_unavailable():
+    note = _auto_download_note(search_error=True)
+    assert note == "Search failed on AudiobookBay. Try again later."

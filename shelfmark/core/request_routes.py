@@ -926,8 +926,17 @@ def _auto_download_request(
             all_releases = [r for r in all_releases if _release_matches_title(book.title, r.title)]
 
         if not all_releases:
-            searched = ", ".join(s for s in sources_to_search if s not in source_errors) or "all sources"
-            _safe_update_status("failed", admin_note=f"Not found on {searched}. Book may not be available for download yet.")
+            from shelfmark.release_sources import get_source_display_name
+
+            searched = [get_source_display_name(s) for s in sources_to_search if s not in source_errors]
+            if not searched:
+                failed = ", ".join(get_source_display_name(s) for s in source_errors)
+                note = f"Search failed on {failed}. Try again later."
+            elif content_type == "audiobook":
+                note = f"No automation resources found: no {', '.join(searched)} release matches '{book.title}'."
+            else:
+                note = f"Not found on {', '.join(searched)}. Book may not be available for download yet."
+            _safe_update_status("failed", admin_note=note)
             return
 
         # Keep the best few releases (deduped by md5) so a dead top hit doesn't

@@ -1,6 +1,7 @@
 """Shared download handler for external torrent/usenet clients."""
 
 import shutil
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from pathlib import Path
 from threading import Event
 from typing import Callable, Optional
 
+from shelfmark.core.audiobookshelf import abs_client
 from shelfmark.core.config import config
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.models import DownloadTask
@@ -28,6 +30,8 @@ POLL_INTERVAL = 2
 # How long to wait for completed files to appear (seconds)
 COMPLETED_PATH_RETRY_INTERVAL = 5
 COMPLETED_PATH_MAX_ATTEMPTS = 12  # 12 attempts * 5s = 60s grace period
+ABS_SCAN_WAIT_SECONDS = 600
+ABS_SCAN_POLL_SECONDS = 15
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,30 @@ def _diagnose_path_issue(path: str) -> str:
         f"Ensure both containers have matching volume mounts for this directory, "
         f"or configure Remote Path Mappings in Settings > Advanced."
     )
+
+
+def _scan_abs_then_remove_torrent(
+    client: DownloadClient, download_id: str, title: str, author: Optional[str]
+) -> None:
+    """Rescan Audiobookshelf; once the imported book shows up, drop the torrent and its files.
+
+    The book is already copied into the library, so the torrent's own copy is only
+    seed data. If ABS never lists the book, keep the torrent so nothing is lost.
+    """
+    if not abs_client.scan_libraries():
+        return
+    deadline = time.monotonic() + ABS_SCAN_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(ABS_SCAN_POLL_SECONDS)
+        abs_client.refresh()
+        if abs_client.find_match(title, author or ""):
+            try:
+                client.remove(download_id, delete_files=True)
+                logger.info(f"'{title}' is in Audiobookshelf; removed torrent {download_id} from {client.name}")
+            except Exception as e:
+                logger.warning(f"'{title}' is in Audiobookshelf but removing torrent {download_id} failed: {e}")
+            return
+    logger.warning(f"'{title}' not found in Audiobookshelf after scanning; keeping torrent {download_id}")
 
 
 class ExternalClientHandler(DownloadHandler, ABC):
@@ -140,6 +168,15 @@ class ExternalClientHandler(DownloadHandler, ABC):
             return
 
         client, download_id, protocol = client_ref
+        if protocol == "torrent":
+            if is_audiobook(task.content_type) and abs_client.is_configured():
+                threading.Thread(
+                    target=_scan_abs_then_remove_torrent,
+                    args=(client, download_id, task.title, task.author),
+                    daemon=True,
+                    name=f"abs-scan-{task.task_id}",
+                ).start()
+            return
         if protocol != "usenet":
             return
 
