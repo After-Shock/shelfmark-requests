@@ -376,3 +376,19 @@ def test_windows_path_case_insensitive_matching():
 
             assert result == str(local_file)
             assert task.original_download_path == str(local_file)
+
+
+def test_unc_share_path_remaps_case_insensitively():
+    """A Windows qBittorrent saving to \\\\server\\share reports UNC paths in any case."""
+    from shelfmark.core.path_mappings import parse_remote_path_mappings, remap_remote_to_local_with_match
+
+    mappings = parse_remote_path_mappings(
+        [{"host": "qbittorrent", "remotePath": r"\\192.168.0.7\Media", "localPath": "/UnRaid"}]
+    )
+
+    remapped, matched = remap_remote_to_local_with_match(
+        mappings=mappings, host="qbittorrent", remote_path=r"\\192.168.0.7\media\torrents\Some Book"
+    )
+
+    assert matched
+    assert remapped == Path("/UnRaid/torrents/Some Book")

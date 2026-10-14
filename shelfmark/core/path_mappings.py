@@ -35,8 +35,8 @@ def _normalize_prefix(path: str) -> str:
 
 
 def _is_windows_path(path: str) -> bool:
-    """Check if a path looks like a Windows path (has a drive letter like C:/)."""
-    return len(path) >= 2 and path[1] == ":" and path[0].isalpha()
+    """Check if a path looks like a Windows path (drive letter like C:/ or UNC //server/share)."""
+    return (len(path) >= 2 and path[1] == ":" and path[0].isalpha()) or path.startswith("//")
 
 
 def _normalize_host(host: str) -> str:
