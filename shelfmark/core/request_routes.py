@@ -848,6 +848,15 @@ def forget_release_retries(request_id: int) -> None:
         _release_retries.pop(request_id, None)
 
 
+def _release_matches_title(book_title: str | None, release_title: str | None) -> bool:
+    """True when a release is the requested work, also trying the title without its subtitle."""
+    from shelfmark.core.audiobookshelf import _titles_match
+
+    if not book_title or not release_title:
+        return False
+    return any(_titles_match(t, release_title) for t in {book_title, book_title.split(":")[0]})
+
+
 def _auto_download_request(
     request_db: RequestDB,
     user_db: UserDB,
@@ -910,6 +919,11 @@ def _auto_download_request(
             except Exception as e:
                 logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
                 source_errors.append(source_name)
+
+        if content_type == "audiobook":
+            # ABB also matches descriptions ("from the author of ..."), so its top
+            # hits are often the author's other books. Only grab the requested title.
+            all_releases = [r for r in all_releases if _release_matches_title(book.title, r.title)]
 
         if not all_releases:
             searched = ", ".join(s for s in sources_to_search if s not in source_errors) or "all sources"

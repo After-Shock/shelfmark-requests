@@ -44,3 +44,21 @@ def test_detail_url_on_other_host_or_scheme_is_rejected():
         assert result is None, url
         assert statuses[-1] == ("error", "Invalid AudiobookBay details URL")
         extract.assert_not_called()
+
+
+def test_auto_download_only_keeps_releases_of_the_requested_title():
+    from shelfmark.core.request_routes import _release_matches_title
+
+    abb_results = [
+        "Black Woods, Blue Sky",
+        "The Snow Child",
+        "To the Bright Edge of the World",
+        "The Snow Child (Unabridged)",
+    ]
+    assert [t for t in abb_results if _release_matches_title("The Snow Child", t)] == [
+        "The Snow Child",
+        "The Snow Child (Unabridged)",
+    ]
+    assert _release_matches_title("The Snow Child: A Novel", "The Snow Child")
+    assert not _release_matches_title("Dune", "Dune Messiah")
+    assert not _release_matches_title(None, "Dune")
