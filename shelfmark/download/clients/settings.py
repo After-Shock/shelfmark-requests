@@ -56,6 +56,7 @@ def _test_qbittorrent_connection(current_values: Optional[Dict[str, Any]] = None
     raw_url = current_values.get("QBITTORRENT_URL") or config.get("QBITTORRENT_URL", "")
     username = current_values.get("QBITTORRENT_USERNAME") or config.get("QBITTORRENT_USERNAME", "")
     password = current_values.get("QBITTORRENT_PASSWORD") or config.get("QBITTORRENT_PASSWORD", "")
+    api_key = current_values.get("QBITTORRENT_API_KEY") or config.get("QBITTORRENT_API_KEY", "")
 
     if not raw_url:
         return {"success": False, "message": "qBittorrent URL is required"}
@@ -67,10 +68,19 @@ def _test_qbittorrent_connection(current_values: Optional[Dict[str, Any]] = None
         if not url:
             return {"success": False, "message": "qBittorrent URL is invalid"}
 
-        client = Client(host=url, username=username, password=password, VERIFY_WEBUI_CERTIFICATE=get_ssl_verify(url))
+        client = Client(
+            host=url,
+            username=username,
+            password=password,
+            api_key=api_key or None,
+            VERIFY_WEBUI_CERTIFICATE=get_ssl_verify(url),
+            # Same scheme rule as QBittorrentClient: keep an explicit https://.
+            FORCE_SCHEME_FROM_HOST=url.lower().startswith("https://"),
+        )
         client.auth_log_in()
         api_version = client.app.web_api_version
-        return {"success": True, "message": f"Connected to qBittorrent (API v{api_version})"}
+        used = " using the API key" if api_key else ""
+        return {"success": True, "message": f"Connected to qBittorrent (API v{api_version}){used}"}
     except ImportError:
         return {"success": False, "message": "qbittorrent-api package not installed"}
     except Exception as e:
@@ -413,6 +423,12 @@ def prowlarr_clients_settings():
             key="QBITTORRENT_PASSWORD",
             label="Password",
             description="qBittorrent Web UI password",
+            show_when={"field": "PROWLARR_TORRENT_CLIENT", "value": "qbittorrent"},
+        ),
+        PasswordField(
+            key="QBITTORRENT_API_KEY",
+            label="API Key",
+            description="Found in qBittorrent: Options > Web UI > API Key (qBittorrent 5.2.0+). Used instead of the username and password when set.",
             show_when={"field": "PROWLARR_TORRENT_CLIENT", "value": "qbittorrent"},
         ),
         ActionButton(
