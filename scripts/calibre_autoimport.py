@@ -1,8 +1,10 @@
-"""Import new Shelfmark ebooks into Calibre and run Modify ePub on them.
+"""Import new Shelfmark ebooks into Calibre, fill missing metadata, run Modify ePub.
 
 Runs inside the linuxserver/calibre container and goes through Calibre's
-content server, so it is safe while the GUI has the library open. Modify ePub
-uses the options last saved in its GUI dialog. Host crontab:
+content server, so it is safe while the GUI has the library open. Metadata is
+downloaded with Calibre's sources but only fills empty fields (and the cover if
+there is none). Modify ePub uses the options last saved in its GUI dialog, after
+the metadata step so the jacket picks it up. Host crontab:
 
   */5 * * * * docker exec -u abc calibre flock -n /tmp/autoimport.lock calibre-debug -e /config/autoimport.py >> /opt/calibre/autoimport.log 2>&1
 
@@ -11,6 +13,7 @@ duplicates are moved to duplicates/. Names listed in the ignore file are left
 alone (the backlog that was imported by hand before this script existed).
 """
 
+import io
 import os
 import re
 import shutil
@@ -18,7 +21,9 @@ import subprocess
 import tempfile
 import time
 
+from calibre.ebooks.metadata.opf2 import OPF, metadata_to_opf
 from calibre.utils.config import JSONConfig
+from calibre.utils.date import is_date_undefined
 from calibre.utils.logging import Log
 
 IMPORT_DIR = "/ebookimport"
@@ -26,6 +31,7 @@ DUPLICATES_DIR = os.path.join(IMPORT_DIR, "duplicates")
 LIBRARY = "http://localhost:8081"
 IGNORE_FILE = "/config/autoimport.ignore"
 SETTLE_SECONDS = 120  # skip files Shelfmark may still be writing
+FETCH_ATTEMPTS = 3
 
 
 def calibredb(*args):
@@ -35,22 +41,86 @@ def calibredb(*args):
     ).stdout
 
 
-def modify_epub_in_library(book_id, title):
+def export_book(book_id, tdir):
+    os.makedirs(tdir)
+    calibredb("export", "--single-dir", "--to-dir", tdir, "--template", "book",
+              "--formats", "epub", str(book_id))
+    paths = {ext: os.path.join(tdir, f"book.{ext}") for ext in ("epub", "opf", "jpg")}
+    return {ext: path if os.path.exists(path) else None for ext, path in paths.items()}
+
+
+def read_opf(data, tdir):
+    return OPF(io.BytesIO(data), tdir).to_book_metadata()
+
+
+def fill_missing_metadata(book_id, exported, tdir):
+    with open(exported["opf"], "rb") as f:
+        mi = read_opf(f.read(), tdir)
+    cover = os.path.join(tdir, "fetched-cover.jpg")
+    args = ["fetch-ebook-metadata", "--opf", "--timeout", "60", "--title", mi.title,
+            "--authors", " & ".join(mi.authors), "--cover", cover]
+    if mi.identifiers.get("isbn"):
+        args += ["--isbn", mi.identifiers["isbn"]]
+    for attempt in range(FETCH_ATTEMPTS):
+        if attempt:
+            time.sleep(20)  # Google Books intermittently answers "0 results"
+        result = subprocess.run(args, capture_output=True, cwd="/tmp")
+        if not result.returncode and b"<package" in result.stdout:
+            break
+    else:
+        print("  no metadata found online")
+        return False
+    found = read_opf(result.stdout, tdir)
+
+    filled = []
+    for field in ("comments", "tags", "publisher", "series", "languages"):
+        if not getattr(mi, field) and getattr(found, field):
+            setattr(mi, field, getattr(found, field))
+            filled.append(field)
+    if "series" in filled:
+        mi.series_index = found.series_index
+    if is_date_undefined(mi.pubdate) and not is_date_undefined(found.pubdate):
+        mi.pubdate = found.pubdate
+        filled.append("pubdate")
+    for key, value in found.identifiers.items():
+        if key not in mi.identifiers:
+            mi.set_identifier(key, value)
+            filled.append(key)
+    if filled:
+        mi.cover = None
+        merged = os.path.join(tdir, "merged.opf")
+        with open(merged, "wb") as f:
+            f.write(metadata_to_opf(mi))
+        calibredb("set_metadata", str(book_id), merged)
+    if not exported["jpg"] and os.path.exists(cover):
+        calibredb("set_metadata", str(book_id), "--field", f"cover:{cover}")
+        filled.append("cover")
+    print(f"  filled missing metadata: {', '.join(filled) or 'none missing'}")
+    return bool(filled)
+
+
+def modify_epub_in_library(book_id, title, exported):
     from calibre_plugins.modify_epub.modify import modify_epub
 
     options = JSONConfig("gui").get("modify epub plugin:options dialog:settings")
     if not options:
         print(f"  no saved Modify ePub options; skipped modify for {title}")
         return
+    if modify_epub(Log(Log.WARN), title, exported["epub"], exported["opf"], exported["jpg"], options):
+        calibredb("add_format", str(book_id), exported["epub"])
+        print(f"  modified epub for book {book_id}")
+
+
+def process_book(book_id, title):
     with tempfile.TemporaryDirectory() as tdir:
-        calibredb("export", "--single-dir", "--to-dir", tdir, "--template", "book",
-                  "--formats", "epub", str(book_id))
-        paths = {ext: os.path.join(tdir, f"book.{ext}") for ext in ("epub", "opf", "jpg")}
-        opf = paths["opf"] if os.path.exists(paths["opf"]) else None
-        cover = paths["jpg"] if os.path.exists(paths["jpg"]) else None
-        if modify_epub(Log(Log.WARN), title, paths["epub"], opf, cover, options):
-            calibredb("add_format", str(book_id), paths["epub"])
-            print(f"  modified epub for book {book_id}")
+        exported = export_book(book_id, os.path.join(tdir, "before"))
+        try:
+            if fill_missing_metadata(book_id, exported, tdir):
+                # Re-export so Modify ePub embeds the downloaded metadata and cover
+                exported = export_book(book_id, os.path.join(tdir, "after"))
+        except Exception as e:
+            print(f"  metadata download failed for book {book_id}: {e}")
+        modify_epub_in_library(book_id, title, exported)
 
 
 def main():
@@ -81,9 +151,9 @@ def main():
         book_id = int(match.group(1))
         print(f"{stamp} added {name} as book {book_id}")
         try:
-            modify_epub_in_library(book_id, name)
+            process_book(book_id, name)
         except Exception as e:
-            print(f"  modify failed for book {book_id}: {e}")
+            print(f"  post-import step failed for book {book_id}: {e}")
         os.remove(path)
 
 
