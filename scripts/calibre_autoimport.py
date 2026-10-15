@@ -1,0 +1,90 @@
+"""Import new Shelfmark ebooks into Calibre and run Modify ePub on them.
+
+Runs inside the linuxserver/calibre container and goes through Calibre's
+content server, so it is safe while the GUI has the library open. Modify ePub
+uses the options last saved in its GUI dialog. Host crontab:
+
+  */5 * * * * docker exec -u abc calibre flock -n /tmp/autoimport.lock calibre-debug -e /config/autoimport.py >> /opt/calibre/autoimport.log 2>&1
+
+Imported files are deleted from the import folder; files Calibre rejects as
+duplicates are moved to duplicates/. Names listed in the ignore file are left
+alone (the backlog that was imported by hand before this script existed).
+"""
+
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+
+from calibre.utils.config import JSONConfig
+from calibre.utils.logging import Log
+
+IMPORT_DIR = "/ebookimport"
+DUPLICATES_DIR = os.path.join(IMPORT_DIR, "duplicates")
+LIBRARY = "http://localhost:8081"
+IGNORE_FILE = "/config/autoimport.ignore"
+SETTLE_SECONDS = 120  # skip files Shelfmark may still be writing
+
+
+def calibredb(*args):
+    return subprocess.run(
+        ["calibredb", *args, "--with-library", LIBRARY],
+        capture_output=True, text=True, check=True, cwd="/tmp",
+    ).stdout
+
+
+def modify_epub_in_library(book_id, title):
+    from calibre_plugins.modify_epub.modify import modify_epub
+
+    options = JSONConfig("gui").get("modify epub plugin:options dialog:settings")
+    if not options:
+        print(f"  no saved Modify ePub options; skipped modify for {title}")
+        return
+    with tempfile.TemporaryDirectory() as tdir:
+        calibredb("export", "--single-dir", "--to-dir", tdir, "--template", "book",
+                  "--formats", "epub", str(book_id))
+        paths = {ext: os.path.join(tdir, f"book.{ext}") for ext in ("epub", "opf", "jpg")}
+        opf = paths["opf"] if os.path.exists(paths["opf"]) else None
+        cover = paths["jpg"] if os.path.exists(paths["jpg"]) else None
+        if modify_epub(Log(Log.WARN), title, paths["epub"], opf, cover, options):
+            calibredb("add_format", str(book_id), paths["epub"])
+            print(f"  modified epub for book {book_id}")
+
+
+def main():
+    try:
+        with open(IGNORE_FILE) as f:
+            ignored = set(f.read().splitlines())
+    except FileNotFoundError:
+        ignored = set()
+
+    for name in sorted(os.listdir(IMPORT_DIR)):
+        path = os.path.join(IMPORT_DIR, name)
+        if (name in ignored or not name.lower().endswith(".epub") or not os.path.isfile(path)
+                or time.time() - os.path.getmtime(path) < SETTLE_SECONDS):
+            continue
+        stamp = time.strftime("%F %T")
+        try:
+            out = calibredb("add", path)
+        except subprocess.CalledProcessError as e:
+            # Content server down (GUI closed?) - leave the file for the next run
+            print(f"{stamp} add failed for {name}: {e.stderr.strip()}")
+            continue
+        match = re.search(r"Added book ids: (\d+)", out)
+        if not match:
+            os.makedirs(DUPLICATES_DIR, exist_ok=True)
+            shutil.move(path, os.path.join(DUPLICATES_DIR, name))
+            print(f"{stamp} duplicate, moved to duplicates/: {name}")
+            continue
+        book_id = int(match.group(1))
+        print(f"{stamp} added {name} as book {book_id}")
+        try:
+            modify_epub_in_library(book_id, name)
+        except Exception as e:
+            print(f"  modify failed for book {book_id}: {e}")
+        os.remove(path)
+
+
+main()
