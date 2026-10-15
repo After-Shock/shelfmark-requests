@@ -211,6 +211,18 @@ def process_folder_output(
             len(final_paths),
         )
 
+    if task.isbn:
+        from shelfmark.download.postprocess.epub import embed_isbn
+
+        for path in final_paths:
+            if path.suffix.lower() != ".epub":
+                continue
+            try:
+                if embed_isbn(path, task.isbn):
+                    logger.info("Task %s: wrote ISBN %s into %s", task.task_id, task.isbn, path.name)
+            except Exception as e:
+                logger.warning("Task %s: could not write ISBN into %s: %s", task.task_id, path.name, e)
+
     script_context = CustomScriptContext(
         task=task,
         phase="post_transfer",

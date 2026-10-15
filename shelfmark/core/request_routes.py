@@ -958,6 +958,9 @@ def _auto_download_request(
             release_data["content_type"] = content_type
             release_data["series_name"] = book.series_name
             release_data["series_position"] = book.series_position
+            release_data["isbn"] = (
+                book.isbn_13 or book.isbn_10 or req.get("isbn_13") or req.get("isbn_10")
+            )
             candidates.append(release_data)
             if len(candidates) >= _MAX_RELEASE_ATTEMPTS:
                 break

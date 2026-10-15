@@ -82,6 +82,7 @@ class DownloadTask:
     series_name: Optional[str] = None
     series_position: Optional[float] = None  # Float for novellas (e.g., 1.5)
     subtitle: Optional[str] = None  # Book subtitle for naming templates
+    isbn: Optional[str] = None  # Written into EPUBs so library metadata lookups match by ISBN
 
     # Hardlinking support
     original_download_path: Optional[str] = None  # Path in download client (for hardlinking)

@@ -205,6 +205,7 @@ def queue_release(
         series_name = release_data.get('series_name') or extra.get('series_name')
         series_position = release_data.get('series_position') or extra.get('series_position')
         subtitle = release_data.get('subtitle') or extra.get('subtitle')
+        isbn = release_data.get('isbn') or extra.get('isbn')
 
         books_output_mode = str(
             config.get("BOOKS_OUTPUT_MODE", "folder", user_id=user_id) or "folder"
@@ -236,6 +237,7 @@ def queue_release(
             series_name=series_name,
             series_position=series_position,
             subtitle=subtitle,
+            isbn=isbn,
             search_mode=SearchMode.UNIVERSAL,
             output_mode=output_mode,
             output_args=output_args,
