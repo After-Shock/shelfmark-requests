@@ -219,6 +219,7 @@ export const downloadRelease = async (release: {
   series_name?: string;
   series_position?: number;
   subtitle?: string;
+  isbn?: string;  // Written into EPUBs so Calibre matches metadata by ISBN
   search_author?: string;
   email_recipient?: string;
 }): Promise<void> => {

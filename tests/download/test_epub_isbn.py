@@ -65,3 +65,18 @@ def test_hardlinked_original_is_not_modified(tmp_path):
     os.link(original, library)
     assert embed_isbn(library, "9780316175678")
     assert "isbn" in _opf(library) and "isbn" not in _opf(original)
+
+
+def test_queued_release_keeps_isbn_for_post_processing(monkeypatch):
+    from unittest.mock import MagicMock
+
+    import shelfmark.download.orchestrator as orchestrator
+
+    mock_queue = MagicMock()
+    monkeypatch.setattr(orchestrator, "book_queue", mock_queue)
+    monkeypatch.setattr(orchestrator, "ws_manager", MagicMock())
+    ok, _ = orchestrator.queue_release(
+        {"source": "direct_download", "source_id": "abc", "title": "Book", "isbn": "9780316175678"}
+    )
+    assert ok
+    assert mock_queue.add.call_args[0][0].isbn == "9780316175678"

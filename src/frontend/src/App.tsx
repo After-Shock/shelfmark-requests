@@ -727,6 +727,8 @@ function App() {
         setReleaseBook({
           ...book,
           description: fullBook.description || book.description,
+          isbn_10: book.isbn_10 || fullBook.isbn_10,
+          isbn_13: book.isbn_13 || fullBook.isbn_13,
           series_name: fullBook.series_name,
           series_position: fullBook.series_position,
           series_count: fullBook.series_count,
@@ -769,6 +771,7 @@ function App() {
         series_name: book.series_name,
         series_position: book.series_position,
         subtitle: book.subtitle,
+        isbn: book.isbn_13 || book.isbn_10,
         email_recipient: emailRecipient,
       });
       await fetchStatus();
