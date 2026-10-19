@@ -1268,18 +1268,29 @@ def get_bypassed_page(
     if cached_result:
         return cached_result
 
+    def _next_mirror_url() -> str | None:
+        _check_cancellation(cancel_flag, "Bypass cancelled")
+        new_base, action = sel.next_mirror_or_rotate_dns()
+        return sel.rewrite(url) if action in ("mirror", "dns") and new_base else None
+
     try:
         response_html = get(attempt_url, cancel_flag=cancel_flag)
     except BypassCancelledError:
         raise
     except _CDP_OPERATION_ERRORS + _REQUEST_OPERATION_ERRORS:
-        _check_cancellation(cancel_flag, "Bypass cancelled")
-        new_base, action = sel.next_mirror_or_rotate_dns()
-        if action in ("mirror", "dns") and new_base:
-            attempt_url = sel.rewrite(url)
-            response_html = get(attempt_url, cancel_flag=cancel_flag)
-        else:
+        attempt_url = _next_mirror_url()
+        if not attempt_url:
             raise
+        response_html = get(attempt_url, cancel_flag=cancel_flag)
+    else:
+        # A mirror whose DDoS-Guard challenge can't be solved comes back empty
+        # rather than raising; move to the next AA mirror instead of retrying it.
+        aa_hosts = {urlparse(u).hostname for u in sel.aa_urls}
+        if not response_html.strip() and hostname in aa_hosts:
+            next_url = _next_mirror_url()
+            if next_url:
+                logger.info("Bypass failed on %s; trying %s", hostname, urlparse(next_url).hostname)
+                response_html = get(next_url, cancel_flag=cancel_flag)
 
     if not response_html.strip():
         msg = "Failed to bypass Cloudflare"
