@@ -68,3 +68,10 @@ def test_direct_download_falls_back_to_isbn_when_title_search_is_empty():
 
     assert queries == ["Anathema Keri Lake", "9780000000001"]
     assert releases == ["hit"]
+
+
+def test_release_title_with_series_suffix_matches():
+    from shelfmark.core.request_routes import _release_matches_title
+
+    assert _release_matches_title("The ice beyond", "The Ice Beyond (The Empress of Thorns Book 1)")
+    assert not _release_matches_title("The Ice Beyond", "Ice Cold Player (Beyond the Ice Book 1)")

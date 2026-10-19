@@ -918,9 +918,12 @@ def forget_release_retries(request_id: int) -> None:
 def _release_matches_title(book_title: str | None, release_title: str | None) -> bool:
     """True when a release is the requested work, also trying the title without its subtitle."""
     from shelfmark.core.audiobookshelf import _titles_match
+    from shelfmark.core.search_plan import _SERIES_SUFFIX
 
     if not book_title or not release_title:
         return False
+    # "The Ice Beyond (The Empress of Thorns Book 1)" is still "The Ice Beyond"
+    release_title = _SERIES_SUFFIX.sub("", release_title) or release_title
     return any(_titles_match(t, release_title) for t in {book_title, book_title.split(":")[0]})
 
 
