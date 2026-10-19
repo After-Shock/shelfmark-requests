@@ -550,7 +550,8 @@ class TestAdminPrereleaseTransitions:
                  patch("shelfmark.core.request_routes._broadcast_request_update"), \
                  patch("shelfmark.core.request_routes._acquire_download_slot", return_value=True), \
                  patch("shelfmark.core.request_routes.threading.Thread") as thread_cls, \
-                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider):
+                 patch("shelfmark.metadata_providers.get_configured_provider", return_value=provider), \
+                 patch("shelfmark.metadata_providers.get_enabled_providers", return_value=["googlebooks"]):
                 resp = client.post("/api/requests/1/approve")
 
         assert resp.status_code == 200

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -79,8 +80,17 @@ def _pick_search_author(book: BookMetadata) -> str:
     return first
 
 
+# "Anathema (The Eating Woods, #1)" -> "Anathema": providers append series info
+# that release sites don't have in their titles, so searches with it find nothing.
+_SERIES_SUFFIX = re.compile(
+    r"\s*[(\[][^()\[\]]*(?:#\s*\d|\bbook\s+\d|\bseries\b|\bvol(?:ume)?\.?\s*\d)[^()\[\]]*[)\]]\s*$",
+    re.IGNORECASE,
+)
+
+
 def _pick_search_title(book: BookMetadata) -> str:
-    return book.search_title or book.title
+    title = book.search_title or book.title
+    return _SERIES_SUFFIX.sub("", title or "") or title
 
 
 def build_release_search_plan(

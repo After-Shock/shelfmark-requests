@@ -1215,6 +1215,20 @@ class DirectDownloadSource(ReleaseSource):
             except Exception as e:
                 logger.error(f"Search error: {e}")
 
+        if not all_results and expand_search and not plan.manual_query:
+            for isbn in plan.isbn_candidates:
+                filters = SearchFilters(isbn=[isbn], lang=lang_filter or None)
+                try:
+                    all_results = search_books(isbn, filters)
+                except SearchUnavailable:
+                    raise
+                except Exception as e:
+                    logger.error(f"ISBN search error: {e}")
+                if all_results:
+                    logger.info(f"Found {len(all_results)} releases via ISBN fallback")
+                    self._last_search_type = "isbn"
+                    return [_book_info_to_release(bi) for bi in all_results]
+
         logger.info(f"Found {len(all_results)} releases via title+author")
         return [_book_info_to_release(bi) for bi in all_results]
 

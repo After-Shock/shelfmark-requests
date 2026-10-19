@@ -95,22 +95,48 @@ def _backfill_missing_metadata(request_db: RequestDB, request_id: int, req: dict
         from shelfmark.metadata_providers import (
             MetadataSearchOptions,
             get_configured_provider,
+            get_enabled_providers,
+            get_provider,
+            get_provider_kwargs,
         )
 
-        provider = get_configured_provider(content_type=req.get("content_type", "ebook"))
-        if not provider:
-            logger.warning(f"Request #{request_id} metadata search skipped: no provider available")
-            return req
+        configured = get_configured_provider(content_type=req.get("content_type", "ebook"))
+
+        def providers():
+            # A provider outage (Google Books 503s) shouldn't fail the request when
+            # another enabled provider can identify the book.
+            if configured:
+                yield configured
+            for name in get_enabled_providers():
+                if configured and name == configured.name:
+                    continue
+                try:
+                    candidate = get_provider(name, **get_provider_kwargs(name))
+                    if candidate.is_available():
+                        yield candidate
+                except Exception as e:
+                    logger.warning(f"Metadata provider {name} unavailable: {e}")
 
         title = req.get("title", "")
         author = req.get("author", "")
         search_attempts = [f"{title} {author}".strip(), title] if author else [title]
         results = []
-        for attempt in search_attempts:
-            results = provider.search(MetadataSearchOptions(query=attempt))
+        provider = None
+        for provider in providers():
+            for attempt in search_attempts:
+                try:
+                    results = provider.search(MetadataSearchOptions(query=attempt))
+                except Exception as e:
+                    logger.warning(f"Request #{request_id} metadata search on {provider.name} failed: {e}")
+                    results = []
+                if results:
+                    break
             if results:
                 break
 
+        if provider is None:
+            logger.warning(f"Request #{request_id} metadata search skipped: no provider available")
+            return req
         if not results:
             logger.warning(f"Request #{request_id} metadata search returned no results for '{title}'")
             return req
