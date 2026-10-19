@@ -31,10 +31,13 @@ def test_promote_due_prerelease_requests_moves_due_rows_to_pending():
     user_db.get_user.return_value = {"id": 3, "email": "reader@example.com"}
     request_db.get_request_group.return_value = [request_db.update_request_status.return_value]
 
-    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
+    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify, \
+         patch("shelfmark.core.prerelease_requests.send_new_request_pushover") as mock_push:
         promoted = promote_due_prerelease_requests(request_db, user_db)
 
     assert [row["id"] for row in promoted] == [10]
+    assert mock_push.call_args.kwargs["heading"] == "Pre-release Now Active"
+    assert mock_push.call_args.kwargs["title"] == "Due Book"
     request_db.update_request_metadata.assert_called_once_with(
         10,
         is_released=True,

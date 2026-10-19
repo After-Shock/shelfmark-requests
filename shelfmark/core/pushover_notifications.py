@@ -35,8 +35,9 @@ def send_new_request_pushover(
     author: Optional[str] = None,
     requester: Optional[str] = None,
     content_type: str = "ebook",
+    heading: str = "New Request",
 ) -> bool:
-    """Send a Pushover notification to the admin when a new request is created.
+    """Send a Pushover notification to the admin about a request (new by default).
 
     Args:
         title: Book title.
@@ -67,7 +68,7 @@ def send_new_request_pushover(
         payload = urllib.parse.urlencode({
             "token": api_token,
             "user": user_key,
-            "title": "New Request",
+            "title": heading,
             "message": message,
             "priority": "0",
         }).encode()
@@ -80,7 +81,7 @@ def send_new_request_pushover(
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
 
-        logger.info(f"Pushover notification sent for new request: {title!r}")
+        logger.info(f"Pushover notification sent ({heading}): {title!r}")
         return True
 
     except Exception as e:

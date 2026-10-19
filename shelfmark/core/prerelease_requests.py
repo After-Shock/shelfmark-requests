@@ -8,6 +8,7 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from shelfmark.core.logger import setup_logger
+from shelfmark.core.pushover_notifications import send_new_request_pushover
 from shelfmark.core.request_notifications import send_request_notification
 
 logger = setup_logger(__name__)
@@ -99,6 +100,14 @@ def promote_due_prerelease_requests(
         if on_request_update is not None:
             on_request_update(updated)
         _notify_group_activated(request_db, user_db, updated["id"])
+        requester = (user_db.get_user(user_id=updated["user_id"]) or {}).get("username") if updated.get("user_id") else None
+        send_new_request_pushover(
+            title=updated.get("title", "Unknown"),
+            author=updated.get("author"),
+            requester=requester,
+            content_type=updated.get("content_type", "ebook"),
+            heading="Pre-release Now Active",
+        )
     return promoted
 
 
