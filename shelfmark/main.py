@@ -142,6 +142,13 @@ try:
     register_self_user_routes(app, user_db)
     register_request_routes(app, request_db, user_db)
     if not app.config.get("TESTING"):
+        from shelfmark.core.request_routes import resume_interrupted_requests
+        threading.Thread(
+            target=resume_interrupted_requests,
+            args=(request_db, user_db),
+            daemon=True,
+            name="resume-interrupted-requests",
+        ).start()
         threading.Thread(
             target=run_prerelease_request_loop,
             args=(request_db, user_db),
@@ -1227,6 +1234,19 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
                     continue
                 request_db.update_request_status(req_id, status="failed")
                 logger.info("Request #%s marked failed after download %s errored", req_id, task_id)
+            elif status == QueueStatus.CANCELLED:
+                # Without this the request stays "downloading" forever.
+                task = backend.book_queue.get_task(task_id)
+                stalled = "stalled" in str(getattr(task, "status_message", "") or "").lower()
+                if stalled and request_routes.retry_next_release(request_db, req_id):
+                    logger.info("Request #%s: download %s stalled, trying next release", req_id, task_id)
+                    continue
+                note = (
+                    "Download stalled and no other releases were left to try."
+                    if stalled else "Download was cancelled. Retry to search again."
+                )
+                request_db.update_request_status(req_id, status="failed", admin_note=note)
+                logger.info("Request #%s marked failed after download %s was cancelled", req_id, task_id)
     except Exception as exc:
         logger.warning("Failed to sync request_db for task %s: %s", task_id, exc)
 

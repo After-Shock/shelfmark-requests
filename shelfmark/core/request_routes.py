@@ -868,6 +868,26 @@ def retry_next_release(request_db: RequestDB, request_id: int) -> bool:
         _release_download_slot(request_id)
 
 
+def resume_interrupted_requests(request_db: RequestDB, user_db: UserDB) -> None:
+    """Restart requests that a Shelfmark restart left "approved" or "downloading".
+
+    Their search thread or download task died with the old process, so they would
+    otherwise sit in that state forever. A torrent already in the client is picked
+    up again by the download handler instead of being added twice.
+    """
+    # ponytail: resumes one request at a time; fine for a handful after a restart
+    for status in ("approved", "downloading"):
+        for req in request_db.list_requests(status=status, limit=500, include_hidden_from_admin=True):
+            if req.get("canonical_request_id") is not None or not _acquire_download_slot(req["id"]):
+                continue
+            admin_id = req.get("approved_by")
+            admin = user_db.get_user(user_id=admin_id) if admin_id else None
+            logger.info("Request #%s was %s when Shelfmark restarted; resuming", req["id"], status)
+            _auto_download_request(
+                request_db, user_db, req["id"], req, admin_id, (admin or {}).get("username")
+            )
+
+
 def forget_release_retries(request_id: int) -> None:
     """Drop leftover retry candidates once a request reaches a terminal state."""
     with _retry_lock:

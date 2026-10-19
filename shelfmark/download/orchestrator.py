@@ -643,8 +643,8 @@ def concurrent_download_loop() -> None:
                     last_active = _last_activity.get(task_id, current_time)
                     if current_time - last_active > STALL_TIMEOUT:
                         logger.warning(f"Download stalled for {task_id}, cancelling")
-                        book_queue.cancel_download(task_id)
                         book_queue.update_status_message(task_id, f"Download stalled (no activity for {STALL_TIMEOUT}s)")
+                        book_queue.cancel_download(task_id)
                         stalled_tasks.add(task_id)
 
             # Start new downloads if we have capacity
