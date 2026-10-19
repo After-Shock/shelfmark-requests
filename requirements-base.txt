@@ -15,3 +15,4 @@ emoji
 rarfile
 qbittorrent-api>=2026.5.3
 transmission-rpc
+curl_cffi>=0.16

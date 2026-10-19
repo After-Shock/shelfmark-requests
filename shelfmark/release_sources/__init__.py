@@ -22,6 +22,33 @@ class ReleaseProtocol(str, Enum):
 
 
 @dataclass
+class BrowseRecord:
+    """Source-native browse/search record used before normalization to Release."""
+
+    id: str
+    title: str
+    source: str
+    preview: Optional[str] = None
+    author: Optional[str] = None
+    publisher: Optional[str] = None
+    year: Optional[str] = None
+    language: Optional[str] = None
+    content: Optional[str] = None
+    format: Optional[str] = None
+    size: Optional[str] = None
+    downloads: Optional[int] = None
+    info: Optional[Dict[str, List[str]]] = None
+    description: Optional[str] = None
+    download_urls: List[str] = field(default_factory=list)
+    download_path: Optional[str] = None
+    priority: int = 0
+    progress: Optional[float] = None
+    status_message: Optional[str] = None
+    added_time: Optional[float] = None
+    source_url: Optional[str] = None
+
+
+@dataclass
 class Release:
     """A downloadable release - all sources return this same structure."""
     source: str                      # "direct", "prowlarr", "irc", etc.
@@ -373,3 +400,5 @@ from shelfmark.release_sources import prowlarr  # noqa: F401, E402
 from shelfmark.release_sources import irc  # noqa: F401, E402
 from shelfmark.release_sources import annasarchive  # noqa: F401, E402
 from shelfmark.release_sources import audiobookbay  # noqa: F401, E402
+from shelfmark.release_sources import libgen  # noqa: F401, E402
+from shelfmark.release_sources import zlib  # noqa: F401, E402

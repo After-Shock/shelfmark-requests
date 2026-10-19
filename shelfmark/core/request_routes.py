@@ -946,10 +946,13 @@ def _auto_download_request(
                 logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
                 source_errors.append(source_name)
 
-        if content_type == "audiobook":
-            # ABB also matches descriptions ("from the author of ..."), so its top
-            # hits are often the author's other books. Only grab the requested title.
-            all_releases = [r for r in all_releases if _release_matches_title(book.title, r.title)]
+        # ABB, Libgen and Z-Library match loosely (descriptions, title-only
+        # fallback queries), so their top hits can be other books. Only grab the
+        # requested title from them.
+        all_releases = [
+            r for r in all_releases
+            if r.source == "direct_download" or _release_matches_title(book.title, r.title)
+        ]
 
         if not all_releases:
             from shelfmark.release_sources import get_source_display_name

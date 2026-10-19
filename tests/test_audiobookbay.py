@@ -72,7 +72,7 @@ def _auto_download_note(releases=None, search_error=False):
     if search_error:
         source.search.side_effect = RuntimeError("ABB down")
     else:
-        source.search.return_value = [SimpleNamespace(title=t) for t in (releases or [])]
+        source.search.return_value = [SimpleNamespace(title=t, source="audiobookbay") for t in (releases or [])]
     book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"])
     calls = []
     with patch("shelfmark.release_sources.list_available_sources", return_value=[

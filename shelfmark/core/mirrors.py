@@ -116,6 +116,11 @@ def get_libgen_mirrors() -> List[str]:
     return mirrors
 
 
+def has_libgen_mirror_configuration() -> bool:
+    """Return True when at least one LibGen mirror URL is configured."""
+    return bool(get_libgen_mirrors())
+
+
 def get_zlib_mirrors() -> List[str]:
     """
     Get Z-Library mirrors, with primary first.
