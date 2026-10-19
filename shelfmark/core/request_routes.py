@@ -5,6 +5,7 @@ Authenticated users can create requests; admins can approve/deny them.
 """
 
 from datetime import date, datetime, time as dt_time
+import os
 import threading
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -847,7 +848,8 @@ def _queue_next_release(request_db: RequestDB, request_id: int) -> bool:
         return _queue_next_release(request_db, request_id)
 
     task_id = release_data.get("source_id", "")
-    _set_request_status(request_db, user_db, request_id, "downloading", download_task_id=task_id)
+    # Clear any note from an earlier failed attempt ("Not found on ...").
+    _set_request_status(request_db, user_db, request_id, "downloading", download_task_id=task_id, admin_note="")
     logger.info(
         "Request #%s: download queued (task=%s, release %s/%s)",
         request_id, task_id, attempt, _MAX_RELEASE_ATTEMPTS,
@@ -868,6 +870,9 @@ def retry_next_release(request_db: RequestDB, request_id: int) -> bool:
         _release_download_slot(request_id)
 
 
+_resume_lock = None  # held open for the process lifetime once taken
+
+
 def resume_interrupted_requests(request_db: RequestDB, user_db: UserDB) -> None:
     """Restart requests that a Shelfmark restart left "approved" or "downloading".
 
@@ -875,6 +880,22 @@ def resume_interrupted_requests(request_db: RequestDB, user_db: UserDB) -> None:
     otherwise sit in that state forever. A torrent already in the client is picked
     up again by the download handler instead of being added twice.
     """
+    # Anything else that imports shelfmark.main (a one-off script, a second
+    # worker) must not resume the same requests again: the first process to take
+    # this lock owns resuming for its lifetime.
+    global _resume_lock
+    import fcntl
+    import tempfile
+
+    lock = open(os.path.join(tempfile.gettempdir(), "shelfmark-resume-requests.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        logger.info("Another Shelfmark process is resuming interrupted requests; skipping")
+        return
+    _resume_lock = lock
+
     # ponytail: resumes one request at a time; fine for a handful after a restart
     for status in ("approved", "downloading"):
         for req in request_db.list_requests(status=status, limit=500, include_hidden_from_admin=True):

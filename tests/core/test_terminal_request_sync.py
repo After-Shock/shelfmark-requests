@@ -58,5 +58,5 @@ def test_complete_notifies_discord_once_per_group(main_module):
             patch("shelfmark.core.discord_notifications.send_discord_book_available") as discord:
         main_module._sync_request_db_on_terminal("T1", QueueStatus.COMPLETE)
 
-    db.update_request_status.assert_called_once_with(1, status="fulfilled")
+    db.update_request_status.assert_called_once_with(1, status="fulfilled", admin_note="")
     discord.assert_called_once()

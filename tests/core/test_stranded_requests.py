@@ -7,7 +7,9 @@ from shelfmark.core import request_routes
 from shelfmark.core.models import QueueStatus
 
 
-def test_restart_resumes_approved_and_downloading_requests():
+def test_restart_resumes_approved_and_downloading_requests(tmp_path, monkeypatch):
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(request_routes, "_resume_lock", None)
     request_db = MagicMock()
     request_db.list_requests.side_effect = lambda status, **kw: {
         "approved": [{"id": 365, "approved_by": 1}],
@@ -22,6 +24,12 @@ def test_restart_resumes_approved_and_downloading_requests():
 
     assert [c.args[2] for c in auto.call_args_list] == [365, 367]  # linked row 999 skipped
     assert auto.call_args_list[0].args[4:] == (1, "admin")
+
+    # A second process (or a script importing shelfmark.main) must not resume again.
+    with patch.object(request_routes, "_auto_download_request") as auto_again, \
+         patch.object(request_routes, "_acquire_download_slot", return_value=True):
+        request_routes.resume_interrupted_requests(request_db, user_db)
+    auto_again.assert_not_called()
 
 
 def _sync(status_message, retry_ok):

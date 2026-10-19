@@ -1211,7 +1211,7 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
                 continue
             req_id = req["id"]
             if status == QueueStatus.COMPLETE:
-                request_db.update_request_status(req_id, status="fulfilled")
+                request_db.update_request_status(req_id, status="fulfilled", admin_note="")  # drop stale failure notes
                 request_routes.forget_release_retries(req_id)
                 logger.info("Request #%s marked fulfilled after download %s completed", req_id, task_id)
                 try:
