@@ -30,6 +30,7 @@ POLL_INTERVAL = 2
 # How long to wait for completed files to appear (seconds)
 COMPLETED_PATH_RETRY_INTERVAL = 5
 COMPLETED_PATH_MAX_ATTEMPTS = 12  # 12 attempts * 5s = 60s grace period
+ABS_WATCHER_WAIT_SECONDS = 120
 ABS_SCAN_WAIT_SECONDS = 600
 ABS_SCAN_POLL_SECONDS = 15
 
@@ -78,28 +79,41 @@ def _diagnose_path_issue(path: str) -> str:
     )
 
 
-def _scan_abs_then_remove_torrent(
-    client: DownloadClient, download_id: str, title: str, author: Optional[str]
-) -> None:
-    """Rescan Audiobookshelf; once the imported book shows up, drop the torrent and its files.
-
-    The book is already copied into the library, so the torrent's own copy is only
-    seed data. If ABS never lists the book, keep the torrent so nothing is lost.
-    """
-    if not abs_client.scan_libraries():
-        return
-    deadline = time.monotonic() + ABS_SCAN_WAIT_SECONDS
+def _wait_for_abs(title: str, author: Optional[str], seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         time.sleep(ABS_SCAN_POLL_SECONDS)
         abs_client.refresh()
         if abs_client.find_match(title, author or ""):
-            try:
-                client.remove(download_id, delete_files=True)
-                logger.info(f"'{title}' is in Audiobookshelf; removed torrent {download_id} from {client.name}")
-            except Exception as e:
-                logger.warning(f"'{title}' is in Audiobookshelf but removing torrent {download_id} failed: {e}")
+            return True
+    return False
+
+
+def _scan_abs_then_remove_torrent(
+    client: DownloadClient, download_id: str, title: str, author: Optional[str]
+) -> None:
+    """Wait for Audiobookshelf to list the imported book, then drop the torrent and its files.
+
+    The book is already copied into the library, so the torrent's own copy is only
+    seed data. If ABS never lists the book, keep the torrent so nothing is lost.
+    """
+    # ABS's folder watcher normally adds the book within seconds. A full library scan
+    # started before then works from a stale item list (and takes minutes over NFS),
+    # so it adds the same folder a second time - one copy later shows as missing.
+    # ponytail: a watcher slower than ABS_WATCHER_WAIT_SECONDS can still race the scan.
+    found = _wait_for_abs(title, author, ABS_WATCHER_WAIT_SECONDS)
+    if not found:
+        if not abs_client.scan_libraries():
             return
-    logger.warning(f"'{title}' not found in Audiobookshelf after scanning; keeping torrent {download_id}")
+        found = _wait_for_abs(title, author, ABS_SCAN_WAIT_SECONDS)
+    if not found:
+        logger.warning(f"'{title}' not found in Audiobookshelf after scanning; keeping torrent {download_id}")
+        return
+    try:
+        client.remove(download_id, delete_files=True)
+        logger.info(f"'{title}' is in Audiobookshelf; removed torrent {download_id} from {client.name}")
+    except Exception as e:
+        logger.warning(f"'{title}' is in Audiobookshelf but removing torrent {download_id} failed: {e}")
 
 
 class ExternalClientHandler(DownloadHandler, ABC):
