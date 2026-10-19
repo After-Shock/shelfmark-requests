@@ -3,7 +3,8 @@
 Runs inside the linuxserver/calibre container and goes through Calibre's
 content server, so it is safe while the GUI has the library open. Metadata is
 downloaded with Calibre's sources but only fills empty fields (and the cover if
-there is none). Modify ePub uses the options last saved in its GUI dialog, after
+there is none). Hardcover is set to ignore tags (its are mood/content-warning
+labels), so tags come from Google, Kobo or Amazon. Modify ePub uses the options last saved in its GUI dialog, after
 the metadata step so the jacket picks it up. Host crontab:
 
   */5 * * * * docker exec -u abc calibre flock -n /tmp/autoimport.lock calibre-debug -e /config/autoimport.py >> /opt/calibre/autoimport.log 2>&1
@@ -32,6 +33,7 @@ LIBRARY = "http://localhost:8081"
 IGNORE_FILE = "/config/autoimport.ignore"
 SETTLE_SECONDS = 120  # skip files Shelfmark may still be writing
 FETCH_ATTEMPTS = 3
+TAG_SOURCES = ("Google", "Kobo Metadata", "Amazon.com")
 
 
 def calibredb(*args):
@@ -53,39 +55,72 @@ def read_opf(data, tdir):
     return OPF(io.BytesIO(data), tdir).to_book_metadata()
 
 
+def fetch(mi, tdir, plugin=None, cover=None, attempts=FETCH_ATTEMPTS, wait=20):
+    """Download metadata for mi from all sources, or just `plugin`. None if nothing found."""
+    args = ["fetch-ebook-metadata", "--opf", "--timeout", "60", "--title", mi.title,
+            "--authors", " & ".join(mi.authors)]
+    if cover:
+        args += ["--cover", cover]
+    if plugin:
+        args += ["--allowed-plugin", plugin]
+    if mi.identifiers.get("isbn"):
+        args += ["--isbn", mi.identifiers["isbn"]]
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(wait)  # Google Books and Kobo intermittently answer "0 results"
+        result = subprocess.run(args, capture_output=True, cwd="/tmp")
+        if not result.returncode and b"<package" in result.stdout:
+            return read_opf(result.stdout, tdir)
+    return None
+
+
+def _key(text):
+    return re.sub(r"[^a-z0-9]", "", re.split(r"[:(\[]", text or "")[0].lower())
+
+
+def same_book(mi, found):
+    """Single sources match loosely (Kobo has returned a different "Anathema")."""
+    surnames = lambda m: {_key(a.split()[-1]) for a in m.authors if a.split()}  # noqa: E731
+    return _key(mi.title) == _key(found.title) and bool(surnames(mi) & surnames(found))
+
+
+def lookup_tags(mi, tdir):
+    """Tags from the first non-Hardcover source that returns the same book."""
+    for plugin in TAG_SOURCES:
+        found = fetch(mi, tdir, plugin=plugin, attempts=2, wait=10)
+        if found and found.tags and same_book(mi, found):
+            return found.tags, plugin
+    return None, None
+
+
 def fill_missing_metadata(book_id, exported, tdir):
     with open(exported["opf"], "rb") as f:
         mi = read_opf(f.read(), tdir)
     cover = os.path.join(tdir, "fetched-cover.jpg")
-    args = ["fetch-ebook-metadata", "--opf", "--timeout", "60", "--title", mi.title,
-            "--authors", " & ".join(mi.authors), "--cover", cover]
-    if mi.identifiers.get("isbn"):
-        args += ["--isbn", mi.identifiers["isbn"]]
-    for attempt in range(FETCH_ATTEMPTS):
-        if attempt:
-            time.sleep(20)  # Google Books intermittently answers "0 results"
-        result = subprocess.run(args, capture_output=True, cwd="/tmp")
-        if not result.returncode and b"<package" in result.stdout:
-            break
+    found = fetch(mi, tdir, cover=cover)
+    filled = []
+    if found:
+        for field in ("comments", "tags", "publisher", "series", "languages"):
+            if not getattr(mi, field) and getattr(found, field):
+                setattr(mi, field, getattr(found, field))
+                filled.append(field)
+        if "series" in filled:
+            mi.series_index = found.series_index
+        if is_date_undefined(mi.pubdate) and not is_date_undefined(found.pubdate):
+            mi.pubdate = found.pubdate
+            filled.append("pubdate")
+        for key, value in found.identifiers.items():
+            if key not in mi.identifiers:
+                mi.set_identifier(key, value)
+                filled.append(key)
     else:
         print("  no metadata found online")
-        return False
-    found = read_opf(result.stdout, tdir)
-
-    filled = []
-    for field in ("comments", "tags", "publisher", "series", "languages"):
-        if not getattr(mi, field) and getattr(found, field):
-            setattr(mi, field, getattr(found, field))
-            filled.append(field)
-    if "series" in filled:
-        mi.series_index = found.series_index
-    if is_date_undefined(mi.pubdate) and not is_date_undefined(found.pubdate):
-        mi.pubdate = found.pubdate
-        filled.append("pubdate")
-    for key, value in found.identifiers.items():
-        if key not in mi.identifiers:
-            mi.set_identifier(key, value)
-            filled.append(key)
+    if not mi.tags:
+        # The merged result only carries the best match's tags; ask tag sources directly.
+        tags, plugin = lookup_tags(mi, tdir)
+        if tags:
+            mi.tags = tags
+            filled.append(f"tags ({plugin})")
     if filled:
         mi.cover = None
         merged = os.path.join(tdir, "merged.opf")
