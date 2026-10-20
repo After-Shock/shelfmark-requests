@@ -1803,6 +1803,13 @@ def api_login() -> Union[Response, Tuple[Response, int]]:
                     if not db_user.get("password_hash") or not check_password_hash(db_user["password_hash"], password):
                         return _failed_login_response(username, ip_address)
 
+                    # Link same-named Calibre-Web / Audiobookshelf accounts that use this
+                    # same password, so later password changes reach them too.
+                    from shelfmark.core.signup_provisioning import link_accounts_with_password
+                    threading.Thread(
+                        target=link_accounts_with_password, args=(user_db, db_user, password), daemon=True
+                    ).start()
+
                     is_admin = db_user["role"] == "admin"
                     session['user_id'] = username
                     session['db_user_id'] = db_user["id"]
@@ -2003,6 +2010,65 @@ def api_reset_password() -> Union[Response, Tuple[Response, int]]:
     return jsonify({"success": True, "warnings": warnings})
 
 
+def _self_reset_available() -> bool:
+    try:
+        from shelfmark.core.password_reset import is_available
+        return user_db is not None and is_available()
+    except Exception:
+        return False
+
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def api_forgot_password() -> Union[Response, Tuple[Response, int]]:
+    """Email a password reset link. Same answer whether or not the account exists."""
+    if get_auth_mode() != "builtin" or not _self_reset_available():
+        return jsonify({"error": "Password reset by email isn't available. Ask an admin for a reset code."}), 503
+    identifier = str((request.get_json(silent=True) or {}).get("identifier") or "").strip()
+    if not identifier:
+        return jsonify({"error": "Enter your username or email address"}), 400
+    from shelfmark.core.password_reset import request_password_reset
+    # Background thread: response time must not reveal whether an email went out.
+    threading.Thread(target=request_password_reset, args=(user_db, identifier), daemon=True).start()
+    logger.info(f"Password reset requested from IP {get_client_ip()}")
+    return jsonify({"success": True})
+
+
+@app.route('/api/auth/forgot-password/complete', methods=['POST'])
+def api_forgot_password_complete() -> Union[Response, Tuple[Response, int]]:
+    """Set a new password from an emailed reset link."""
+    if user_db is None or get_auth_mode() != "builtin":
+        return jsonify({"error": "Password reset not available"}), 503
+    data = request.get_json(silent=True) or {}
+    token = str(data.get("token") or "")
+    password = data.get("password") or ""
+    if not token or not password:
+        return jsonify({"error": "Reset link and new password are required"}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
+    from shelfmark.core.password_reset import PasswordResetError, complete_password_reset
+    try:
+        result = complete_password_reset(user_db, token, password)
+    except PasswordResetError as e:
+        return jsonify({"error": str(e)}), 403
+    return jsonify({"success": True, **result})
+
+
+@app.route('/api/internal/abs-password-guard', methods=['GET'])
+def api_abs_password_guard() -> Union[Response, Tuple[Response, int]]:
+    """Traefik forwardAuth for Audiobookshelf's "change my password".
+
+    Admins keep changing their own password in Audiobookshelf; everyone else is
+    sent to the requests site so their passwords stay in sync.
+    """
+    from shelfmark.core.abs_user_sync import abs_user_type
+    if abs_user_type(request.headers.get("Authorization", "")) in ("root", "admin"):
+        return Response("", 200)
+    from shelfmark.core.password_reset import _public_url
+    site = _public_url() or "the requests site"
+    return Response(f"Passwords are managed at {site}. Use Forgot password there to change it.", 403,
+                    mimetype="text/plain")
+
+
 @app.route('/api/auth/logout', methods=['POST'])
 def api_logout() -> Union[Response, Tuple[Response, int]]:
     """
@@ -2102,6 +2168,7 @@ def api_auth_check() -> Union[Response, Tuple[Response, int]]:
             "registration_enabled": registration_enabled,
             "invite_required": True,
             "signup_services": signup_services,
+            "password_reset_enabled": auth_mode == "builtin" and _self_reset_available(),
         }
         
         # Add logout URL for proxy auth if configured

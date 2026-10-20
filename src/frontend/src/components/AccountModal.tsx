@@ -26,6 +26,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
   const [libraryAccounts, setLibraryAccounts] = useState<LibraryAccounts | null>(null);
   const [addingService, setAddingService] = useState<LibraryService | null>(null);
   const [libraryPassword, setLibraryPassword] = useState('');
+  const [appPassword, setAppPassword] = useState('');
   const [isAddingLibrary, setIsAddingLibrary] = useState(false);
 
   useEffect(() => {
@@ -33,18 +34,31 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
     getLibraryAccounts().then(setLibraryAccounts).catch(() => setLibraryAccounts(null));
   }, [isOpen]);
 
+  const isLinking = Boolean(addingService && libraryAccounts?.[addingService].has_account);
+  const addingLabel = LIBRARY_LABELS.find(([k]) => k === addingService)?.[1];
+  const cancelLibrary = () => {
+    setAddingService(null);
+    setLibraryPassword('');
+    setAppPassword('');
+  };
+
   const handleAddLibrary = async (e: FormEvent) => {
     e.preventDefault();
     if (!addingService) return;
     setIsAddingLibrary(true);
     try {
-      const result = await addLibraryAccount({ service: addingService, password: libraryPassword });
+      const result = await addLibraryAccount({
+        service: addingService,
+        password: libraryPassword,
+        ...(isLinking ? { app_password: appPassword } : {}),
+      });
       onShowToast(result.message, 'success');
       setLibraryAccounts((prev) =>
-        prev ? { ...prev, [addingService]: { offered: true, has_account: true } } : prev,
+        prev ? { ...prev, [addingService]: { offered: true, has_account: true, linked: true } } : prev,
       );
       setAddingService(null);
       setLibraryPassword('');
+      setAppPassword('');
     } catch (err) {
       onShowToast(err instanceof Error ? err.message : 'Could not create the account', 'error');
     } finally {
@@ -84,8 +98,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
   const handleClose = () => {
     setNewPassword('');
     setConfirmPassword('');
-    setAddingService(null);
-    setLibraryPassword('');
+    cancelLibrary();
     onClose();
   };
 
@@ -129,12 +142,14 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
           {libraryAccounts && LIBRARY_LABELS.some(([key]) => libraryAccounts[key].offered) && (
             <div className="mb-6 pb-6 border-b" style={{ borderColor: 'var(--border-muted)' }}>
               <h3 className="text-lg font-medium mb-1">Library Access</h3>
-              <p className="text-sm opacity-70 mb-4">Use the same username and password in our library apps.</p>
+              <p className="text-sm opacity-70 mb-4">
+                Linked apps use your password from this site. Changing or resetting it here updates them too.
+              </p>
               {LIBRARY_LABELS.filter(([key]) => libraryAccounts[key].offered).map(([key, label]) => (
                 <div key={key} className="flex items-center justify-between py-2">
                   <span className="font-medium">{label}</span>
-                  {libraryAccounts[key].has_account ? (
-                    <span className="text-sm opacity-70">&#10003; You have an account</span>
+                  {libraryAccounts[key].linked ? (
+                    <span className="text-sm opacity-70">&#10003; Linked</span>
                   ) : (
                     <button
                       type="button"
@@ -143,15 +158,40 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                       className="px-3 py-1.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
                       style={{ backgroundColor: theme.button.secondary }}
                     >
-                      Add {label}
+                      {libraryAccounts[key].has_account ? `Link ${label}` : `Add ${label}`}
                     </button>
                   )}
                 </div>
               ))}
               {addingService && (
                 <form onSubmit={handleAddLibrary} className="mt-3">
+                  {isLinking && (
+                    <>
+                      <label htmlFor="app-password" className="block text-sm font-medium mb-2">
+                        Your current {addingLabel} password
+                      </label>
+                      <input
+                        type="password"
+                        id="app-password"
+                        value={appPassword}
+                        onChange={(e) => setAppPassword(e.target.value)}
+                        disabled={isAddingLibrary}
+                        className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 mb-3"
+                        style={{
+                          backgroundColor: 'var(--input-background, var(--bg-soft))',
+                          borderColor: 'var(--border-muted)',
+                          color: 'var(--text-color)',
+                          '--tw-ring-color': theme.primary.turquoise,
+                        } as React.CSSProperties}
+                        autoComplete="off"
+                        required
+                      />
+                    </>
+                  )}
                   <label htmlFor="library-password" className="block text-sm font-medium mb-2">
-                    Confirm your password to create your {LIBRARY_LABELS.find(([k]) => k === addingService)?.[1]} account
+                    {isLinking
+                      ? `Your password on this site (${addingLabel} will switch to it)`
+                      : `Confirm your password to create your ${addingLabel} account`}
                   </label>
                   <input
                     type="password"
@@ -172,7 +212,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                   <div className="flex gap-3">
                     <button
                       type="button"
-                      onClick={() => { setAddingService(null); setLibraryPassword(''); }}
+                      onClick={cancelLibrary}
                       disabled={isAddingLibrary}
                       className="flex-1 px-4 py-2 rounded-lg font-medium disabled:opacity-50"
                       style={{ backgroundColor: 'var(--bg-soft)', color: 'var(--text-color)' }}
@@ -185,7 +225,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                       className="flex-1 px-4 py-2 rounded-lg font-medium text-white disabled:opacity-50"
                       style={{ backgroundColor: theme.button.secondary }}
                     >
-                      {isAddingLibrary ? 'Creating...' : 'Create Account'}
+                      {isAddingLibrary ? 'Working...' : isLinking ? 'Link Account' : 'Create Account'}
                     </button>
                   </div>
                 </form>

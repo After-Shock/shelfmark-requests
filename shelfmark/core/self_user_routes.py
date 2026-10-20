@@ -216,18 +216,23 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
     @app.route("/api/users/me/library-accounts", methods=["GET"])
     @_require_authenticated_user
     def users_me_library_accounts():
-        """Which library apps (Audiobookshelf, Calibre-Web) are offered, and which this user has."""
+        """Which library apps (Audiobookshelf, Calibre-Web) are offered, and which this user has linked."""
         _, user, user_error = _get_current_user(user_db)
         if user_error:
             return user_error
         from shelfmark.core.signup_provisioning import library_account_status
 
-        return jsonify(library_account_status(user["username"]))
+        return jsonify(library_account_status(user))
 
     @app.route("/api/users/me/library-accounts", methods=["POST"])
     @_require_authenticated_user
     def users_me_add_library_account():
-        """Create the user's account on a library app, with their Shelfmark password."""
+        """Link the user's existing account on a library app, or create one.
+
+        Body: {service, password (requests-site), app_password (only to link)}.
+        Linking needs both passwords, then sets the app to the requests-site
+        password so the two start out in sync.
+        """
         user_id, user, user_error = _get_current_user(user_db)
         if user_error:
             return user_error
@@ -235,17 +240,33 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
 
         from shelfmark.core.signup_provisioning import (
             library_account_status,
+            link_services,
             provision_signup_accounts,
             record_provisioned_services,
+            set_password,
+            verify_library_login,
         )
 
         data = request.get_json(silent=True) or {}
         service = data.get("service")
         password = data.get("password") or ""
-        if not library_account_status(user["username"]).get(service, {}).get("offered"):
+        status = library_account_status(user).get(service, {})
+        if not status.get("offered"):
             return jsonify({"error": "That library isn't available"}), 400
+        if status.get("linked"):
+            return jsonify({"error": "That account is already linked"}), 409
         if not user.get("password_hash") or not check_password_hash(user["password_hash"], password):
-            return jsonify({"error": "Password is incorrect"}), 403
+            return jsonify({"error": "Your requests-site password is incorrect"}), 403
+
+        if status.get("has_account"):
+            if not verify_library_login(service, user["username"], data.get("app_password") or ""):
+                return jsonify({"error": "That app's password is incorrect"}), 403
+            link_services(user_db, user_id, {service})
+            # Push the requests-site password everywhere it is linked.
+            results = set_password(user_db, user_db.get_user(user_id=user_id), password)
+            if results.get(service, {}).get("status") == "error":
+                return jsonify({"error": results[service].get("message") or "Linked, but the password update failed"}), 502
+            return jsonify({"success": True, "message": "Linked. That app now uses your requests-site password."})
 
         result = provision_signup_accounts(
             user["username"], password, email=user.get("email"), role="user", services={service: True}

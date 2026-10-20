@@ -567,17 +567,36 @@ export const resetPassword = async (data: {
   });
 };
 
-export const changePassword = async (data: {
-  new_password: string;
-}): Promise<{ success: boolean; message: string }> => {
-  return fetchJSON(`${API_BASE}/auth/change-password`, {
+export const requestPasswordResetEmail = async (identifier: string): Promise<{ success: boolean }> => {
+  return fetchJSON(`${API_BASE}/auth/forgot-password`, {
+    method: 'POST',
+    body: JSON.stringify({ identifier }),
+  });
+};
+
+export const completePasswordResetEmail = async (data: {
+  token: string;
+  password: string;
+}): Promise<{ success: boolean; username: string; updated: string[]; warnings?: string[] }> => {
+  return fetchJSON(`${API_BASE}/auth/forgot-password/complete`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
 };
 
+export const changePassword = async (data: {
+  new_password: string;
+}): Promise<{ success: boolean; message: string }> => {
+  const result = await fetchJSON<{ warnings?: string[] }>(`${API_BASE}/users/me`, {
+    method: 'PUT',
+    body: JSON.stringify({ password: data.new_password }),
+  });
+  const warn = result.warnings?.length ? ` Some library passwords could not be updated: ${result.warnings.join('; ')}` : '';
+  return { success: true, message: `Password changed on this site and your linked library accounts.${warn}` };
+};
+
 export type LibraryService = 'audiobookshelf' | 'calibre_web';
-export type LibraryAccounts = Record<LibraryService, { offered: boolean; has_account: boolean }>;
+export type LibraryAccounts = Record<LibraryService, { offered: boolean; has_account: boolean; linked: boolean }>;
 
 export const getLibraryAccounts = async (): Promise<LibraryAccounts> => {
   return fetchJSON(`${API_BASE}/users/me/library-accounts`);
@@ -586,6 +605,7 @@ export const getLibraryAccounts = async (): Promise<LibraryAccounts> => {
 export const addLibraryAccount = async (data: {
   service: LibraryService;
   password: string;
+  app_password?: string;
 }): Promise<{ success: boolean; message: string }> => {
   return fetchJSON(`${API_BASE}/users/me/library-accounts`, {
     method: 'POST',

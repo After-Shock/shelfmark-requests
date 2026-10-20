@@ -20,7 +20,9 @@ logger = setup_logger(__name__)
 # Calibre-Web role bits: 1 admin, 2 download, 16 change password, 256 view books.
 # 0 is no permissions at all - the user can log in but not read or download.
 _CWA_ROLE_ADMIN = 1
-_CWA_ROLE_USER = 2 | 16 | 256  # 274, what regular users on this server have
+# download + viewer (258). No "change password" (16): passwords are managed
+# from the requests site, so they stay in sync across the library apps.
+_CWA_ROLE_USER = 2 | 256
 
 # Columns that should not be cloned from an existing user row when creating a
 # new Calibre-Web account (identity/secret columns we set explicitly).
@@ -164,13 +166,20 @@ def update_cwa_password(username: str, password: str) -> dict[str, Any]:
     try:
         conn = sqlite3.connect(db_path, timeout=10)
         try:
-            cur = conn.execute(
+            # Same case-insensitive match as login/linking, but only when it is
+            # unambiguous ("sarah" and "Sarah" can both exist in Calibre-Web).
+            names = [r[0] for r in conn.execute(
+                "SELECT name FROM user WHERE lower(name) = lower(?)", (username,)
+            )]
+            if username in names:
+                names = [username]
+            if len(names) != 1:
+                return {"status": "skipped", "message": "No single matching Calibre-Web account"}
+            conn.execute(
                 "UPDATE user SET password = ? WHERE name = ?",
-                (_hash_cwa_password(password), username),
+                (_hash_cwa_password(password), names[0]),
             )
             conn.commit()
-            if cur.rowcount == 0:
-                return {"status": "skipped", "message": "No matching Calibre-Web account"}
         finally:
             conn.close()
     except sqlite3.Error as e:

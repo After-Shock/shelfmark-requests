@@ -85,6 +85,7 @@ function App() {
     authMode,
     needsSetup,
     registrationEnabled,
+    passwordResetEnabled,
     signupServices,
     loginError,
     isLoggingIn,
@@ -1150,7 +1151,7 @@ function App() {
         path="/reset-password"
         element={
           !isAuthenticated ? (
-            <ResetPasswordPage />
+            <ResetPasswordPage emailResetEnabled={passwordResetEnabled} />
           ) : (
             <Navigate to="/" replace />
           )
@@ -1169,6 +1170,7 @@ function App() {
               isLoading={isLoggingIn}
               authMode={authMode}
               registrationEnabled={registrationEnabled}
+              passwordResetEnabled={passwordResetEnabled}
             />
           )
         }

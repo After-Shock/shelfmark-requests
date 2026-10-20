@@ -17,6 +17,7 @@ interface UseAuthReturn {
   authMode: string;
   needsSetup: boolean;
   registrationEnabled: boolean;
+  passwordResetEnabled: boolean;
   signupServices: {
     audiobookshelf: boolean;
     calibre_web: boolean;
@@ -41,6 +42,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
   const [authMode, setAuthMode] = useState<string>('none');
   const [needsSetup, setNeedsSetup] = useState<boolean>(false);
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean>(false);
+  const [passwordResetEnabled, setPasswordResetEnabled] = useState<boolean>(false);
   const [signupServices, setSignupServices] = useState<{
     audiobookshelf: boolean;
     calibre_web: boolean;
@@ -56,6 +58,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
     setAuthMode(response.auth_mode || 'none');
     setNeedsSetup(response.needs_setup || false);
     setRegistrationEnabled(response.registration_enabled || false);
+    setPasswordResetEnabled(response.password_reset_enabled || false);
     setSignupServices({
       audiobookshelf: response.signup_services?.audiobookshelf || false,
       calibre_web: response.signup_services?.calibre_web || false,
@@ -140,6 +143,7 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
     authMode,
     needsSetup,
     registrationEnabled,
+    passwordResetEnabled,
     signupServices,
     loginError,
     isLoggingIn,

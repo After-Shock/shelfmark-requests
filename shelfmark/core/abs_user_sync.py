@@ -221,3 +221,18 @@ def verify_abs_login(username: str, password: str) -> Optional[Dict[str, Any]]:
     if resp.status_code != 200:
         return None
     return (resp.json() or {}).get("user") or None
+
+
+def abs_user_type(authorization: str) -> Optional[str]:
+    """The ABS account type ('root', 'admin', 'user', 'guest') behind a request's Authorization header."""
+    base_url, _ = _get_credentials()
+    if not base_url or not authorization.startswith("Bearer "):
+        return None
+    try:
+        resp = http_requests.get(f"{base_url}/api/me", headers={"Authorization": authorization}, timeout=10)
+    except http_requests.RequestException as e:
+        logger.warning("Audiobookshelf user check failed: %s", e)
+        return None
+    if resp.status_code != 200:
+        return None
+    return (resp.json() or {}).get("type")

@@ -359,6 +359,12 @@ def general_settings():
     """Core application settings."""
     return [
         TextField(
+            key="PUBLIC_URL",
+            label="Public Site URL",
+            description="The address users reach this site at. Used for links in emails, such as password reset links. Self-service password reset is offered when this and SMTP (Downloads → Email) are set.",
+            placeholder="https://requests.example.com",
+        ),
+        TextField(
             key="CALIBRE_WEB_URL",
             label="Library URL",
             description="Adds a navigation button to your book library (Calibre-Web Automated, Booklore, etc).",

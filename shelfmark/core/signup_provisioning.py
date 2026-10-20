@@ -128,23 +128,91 @@ def create_user_from_library_login(user_db: Any, username: str, password: str) -
     return user
 
 
-def library_account_status(username: str) -> Dict[str, Dict[str, bool]]:
-    """For each library app: is it offered here, and does this username already have an account?"""
-    from shelfmark.core.abs_user_sync import _find_abs_user, _get_credentials, is_enabled as abs_enabled
-    from shelfmark.core.cwa_user_sync import find_cwa_user, is_provisioning_enabled as cwa_enabled
+def _find_library_account(service: str, username: str) -> Optional[Dict[str, Any]]:
+    """The same-named account on a library app, as {'name', 'email'}, or None."""
+    if service == "calibre_web":
+        from shelfmark.core.cwa_user_sync import find_cwa_user
 
-    status = {key: {"offered": False, "has_account": False} for key in _SERVICE_KEYS}
-    if abs_enabled():
-        status["audiobookshelf"]["offered"] = True
+        user = find_cwa_user(username)
+        return {"name": user["name"], "email": user["email"]} if user else None
+    from shelfmark.core.abs_user_sync import _find_abs_user, _get_credentials
+
+    base_url, token = _get_credentials()
+    user = _find_abs_user(base_url, token, username)
+    return {"name": user.get("username"), "email": user.get("email")} if user else None
+
+
+def verify_library_login(service: str, username: str, password: str) -> bool:
+    """True when username/password logs in to that library app."""
+    from shelfmark.core.abs_user_sync import verify_abs_login
+    from shelfmark.core.cwa_user_sync import verify_cwa_login
+
+    verify = verify_cwa_login if service == "calibre_web" else verify_abs_login
+    return verify(username, password) is not None
+
+
+def offered_services() -> set:
+    """Library apps whose account sync is turned on here."""
+    from shelfmark.core.abs_user_sync import is_enabled as abs_enabled
+    from shelfmark.core.cwa_user_sync import is_provisioning_enabled as cwa_enabled
+
+    return {s for s, on in (("audiobookshelf", abs_enabled()), ("calibre_web", cwa_enabled())) if on}
+
+
+def library_account_status(user: Dict[str, Any]) -> Dict[str, Dict[str, bool]]:
+    """For each library app: offered here? same-named account there? linked to this user?"""
+    linked = parse_provisioned_services(user.get("provisioned_services"))
+    offered = offered_services()
+    status = {key: {"offered": False, "has_account": False, "linked": False} for key in _SERVICE_KEYS}
+    for service in offered:
         try:
-            base_url, token = _get_credentials()
-            status["audiobookshelf"]["has_account"] = _find_abs_user(base_url, token, username) is not None
+            has_account = _find_library_account(service, user["username"]) is not None
         except Exception as e:
-            logger.warning("Could not check Audiobookshelf account for '%s': %s", username, e)
-            status["audiobookshelf"]["offered"] = False
-    if cwa_enabled():
-        status["calibre_web"] = {"offered": True, "has_account": find_cwa_user(username) is not None}
+            logger.warning("Could not check %s account for '%s': %s", service, user["username"], e)
+            continue
+        status[service] = {"offered": True, "has_account": has_account, "linked": has_account and service in linked}
     return status
+
+
+def link_accounts_with_password(user_db: Any, user: Dict[str, Any], password: str) -> set:
+    """Link the user's same-named library accounts whose password is this same password.
+
+    Run after a successful requests-site login: a matching password proves the
+    library account is theirs, and means it is already in sync.
+    """
+    linked = parse_provisioned_services(user.get("provisioned_services"))
+    found = set()
+    for service in offered_services() - linked:
+        try:
+            if verify_library_login(service, user["username"], password):
+                found.add(service)
+        except Exception as e:
+            logger.warning("Auto-link check for '%s' (%s) failed: %s", user["username"], service, e)
+    if found:
+        link_services(user_db, int(user["id"]), found)
+        logger.info("Linked %s for '%s' (same password)", ", ".join(sorted(found)), user["username"])
+    return found
+
+
+def link_accounts_by_email(user_db: Any, user: Dict[str, Any], email: str) -> set:
+    """Link the user's same-named library accounts registered to this (just verified) email."""
+    linked = parse_provisioned_services(user.get("provisioned_services"))
+    wanted = (email or "").strip().lower()
+    found = set()
+    if not wanted:
+        return found
+    for service in offered_services() - linked:
+        try:
+            account = _find_library_account(service, user["username"])
+        except Exception as e:
+            logger.warning("Email-link check for '%s' (%s) failed: %s", user["username"], service, e)
+            continue
+        if account and str(account.get("email") or "").strip().lower() == wanted:
+            found.add(service)
+    if found:
+        link_services(user_db, int(user["id"]), found)
+        logger.info("Linked %s for '%s' (matching email)", ", ".join(sorted(found)), user["username"])
+    return found
 
 
 def provision_signup_accounts(
@@ -212,6 +280,15 @@ def parse_provisioned_services(value: Any) -> set:
     return {part.strip() for part in str(value).split(",") if part.strip() in _SERVICE_KEYS}
 
 
+def link_services(user_db: Any, user_id: int, services: set) -> None:
+    """Mark library accounts as linked: their password follows the requests-site password."""
+    if not services:
+        return
+    user = user_db.get_user(user_id=user_id) or {}
+    merged = parse_provisioned_services(user.get("provisioned_services")) | set(services)
+    user_db.update_user(int(user_id), provisioned_services=",".join(sorted(merged)))
+
+
 def record_provisioned_services(
     user_db: Any, user_id: int, results: Dict[str, Dict[str, Any]]
 ) -> None:
@@ -221,24 +298,19 @@ def record_provisioned_services(
     already there and we left it alone - claiming ownership of it would let a
     later password change overwrite a password Shelfmark never set.
     """
-    created = {service for service, result in results.items() if result.get("status") == "created"}
-    if not created:
-        return
-    user = user_db.get_user(user_id=user_id) or {}
-    merged = parse_provisioned_services(user.get("provisioned_services")) | created
-    user_db.update_user(int(user_id), provisioned_services=",".join(sorted(merged)))
+    link_services(user_db, user_id, {s for s, r in results.items() if r.get("status") == "created"})
 
 
 def set_password(user_db: Any, user: Dict[str, Any], password: str) -> Dict[str, Dict[str, Any]]:
-    """Store a new local password and push it to the services we provisioned.
+    """Store a new local password and push it to the user's linked library accounts.
 
     Single chokepoint for password changes. Any caller that hashes and writes a
     password itself will silently drift the user's Audiobookshelf/Calibre-Web
     accounts out of sync, so route every password change through here.
 
-    Only services recorded in users.provisioned_services are updated. Users who
-    predate signup provisioning have no record, so their external accounts -
-    which Shelfmark did not create - are never touched.
+    Only linked services (users.provisioned_services: created by Shelfmark, or
+    proven to be the user's by password or email) are updated. Unlinked
+    same-named accounts are never touched.
 
     Returns a map of service key -> result dict, for get_warnings().
     """
@@ -252,7 +324,7 @@ def set_password(user_db: Any, user: Dict[str, Any], password: str) -> Dict[str,
     username = user["username"]
     provisioned = parse_provisioned_services(user.get("provisioned_services"))
     if not provisioned:
-        logger.info("No Shelfmark-provisioned services for '%s'; password change stays local", username)
+        logger.info("No linked library accounts for '%s'; password change stays local", username)
         return {}
 
     results: Dict[str, Dict[str, Any]] = {}

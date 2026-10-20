@@ -480,14 +480,19 @@ class UserDB:
                 """SELECT prc.*, users.username
                    FROM password_reset_codes prc
                    JOIN users ON users.id = prc.user_id
+                   WHERE prc.code NOT LIKE 'self:%'
                    ORDER BY prc.used_at IS NOT NULL, prc.created_at DESC, prc.id DESC"""
             ).fetchall()
             return [dict(r) for r in rows]
         finally:
             conn.close()
 
-    def consume_password_reset_code(self, username: str, code: str) -> Optional[Dict[str, Any]]:
-        """Consume a valid reset code and return the target user."""
+    def consume_password_reset_code(self, username: Optional[str], code: str) -> Optional[Dict[str, Any]]:
+        """Consume a valid reset code and return the target user.
+
+        username=None matches on the code alone (emailed self-service links,
+        whose codes are long random tokens).
+        """
         with self._lock:
             conn = self._connect()
             try:
@@ -496,10 +501,10 @@ class UserDB:
                        FROM password_reset_codes prc
                        JOIN users ON users.id = prc.user_id
                        WHERE prc.code = ?
-                         AND LOWER(users.username) = LOWER(?)
+                         AND (? IS NULL OR LOWER(users.username) = LOWER(?))
                          AND prc.used_at IS NULL
                          AND prc.expires_at > CURRENT_TIMESTAMP""",
-                    (code, username),
+                    (code, username, username),
                 ).fetchone()
                 if not row:
                     return None
@@ -513,6 +518,20 @@ class UserDB:
                 return payload
             finally:
                 conn.close()
+
+    def has_recent_password_reset(self, user_id: int, code_prefix: str, minutes: int) -> bool:
+        """True if a reset code with this prefix was made for the user in the last N minutes."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """SELECT 1 FROM password_reset_codes
+                   WHERE user_id = ? AND code LIKE ? || '%'
+                     AND created_at > datetime('now', ?)""",
+                (user_id, code_prefix, f"-{int(minutes)} minutes"),
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
 
     def delete_password_reset_code(self, reset_id: int) -> None:
         """Delete an unused password reset code."""

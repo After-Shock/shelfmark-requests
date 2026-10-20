@@ -10,9 +10,10 @@ interface LoginPageProps {
   isLoading: boolean;
   authMode?: string;
   registrationEnabled?: boolean;
+  passwordResetEnabled?: boolean;
 }
 
-export const LoginPage = ({ onLogin, error, isLoading, authMode, registrationEnabled }: LoginPageProps) => {
+export const LoginPage = ({ onLogin, error, isLoading, authMode, registrationEnabled, passwordResetEnabled }: LoginPageProps) => {
   const logoUrl = withBasePath('/logo.svg');
 
   return (
@@ -38,6 +39,23 @@ export const LoginPage = ({ onLogin, error, isLoading, authMode, registrationEna
           {authMode === 'builtin' && (
             <p className="text-center text-sm mt-4 opacity-70">
               Already use our Ebooks or Audiobooks app? Sign in with that username and password.
+            </p>
+          )}
+
+          {authMode === 'builtin' && (
+            <p className="text-center text-sm mt-4">
+              <Link
+                to="/reset-password"
+                className="font-medium hover:opacity-80 transition-opacity"
+                style={{ color: theme.primary.turquoise }}
+              >
+                Forgot password?
+              </Link>
+              {passwordResetEnabled && (
+                <span className="block mt-1 text-xs opacity-60">
+                  One password covers this site and your linked Ebooks and Audiobooks accounts.
+                </span>
+              )}
             </p>
           )}
 

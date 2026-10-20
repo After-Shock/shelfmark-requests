@@ -92,7 +92,7 @@ def test_provision_cwa_user_created(cwa_db):
     assert row[1] == "alice@example.com"
     # pbkdf2 hash format Calibre-Web can verify
     assert row[2].startswith("pbkdf2:sha256")
-    assert row[3] == 274  # view + download + change password, not admin
+    assert row[3] == 258  # view + download; no change password, not admin
     # sidebar settings cloned from the template admin row
     assert row[4] == 63
 
@@ -469,3 +469,19 @@ def test_audiobookshelf_login_creates_the_shelfmark_account(library_login, monke
     user = signup_provisioning.create_user_from_library_login(library_login, "listener1", "abs-pass")
     assert user["username"] == "Listener1" and user["email"] is None
     assert signup_provisioning.create_user_from_library_login(library_login, "nobody", "abs-pass") is None
+
+
+def test_cwa_password_update_matches_name_case_insensitively_only_when_unambiguous(cwa_db, monkeypatch):
+    import shelfmark.core.cwa_user_sync as cwa
+    from werkzeug.security import check_password_hash
+
+    conn = sqlite3.connect(cwa_db)
+    conn.executemany("INSERT INTO user (name, email, password, role) VALUES (?, ?, 'x', 258)",
+                     [("Austin", "a@x.com"), ("sarah", "s1@x.com"), ("Sarah", "s2@x.com")])
+    conn.commit()
+
+    assert cwa.update_cwa_password("austin", "pw")["status"] == "updated"
+    assert cwa.update_cwa_password("SARAH", "pw")["status"] == "skipped"  # two candidates
+    assert cwa.update_cwa_password("Sarah", "pw")["status"] == "updated"  # exact name wins
+    hashes = dict(conn.execute("SELECT name, password FROM user"))
+    assert hashes["sarah"] == "x" and check_password_hash(hashes["Sarah"], "pw")
