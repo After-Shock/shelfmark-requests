@@ -204,3 +204,20 @@ def provision_abs_user(username: str, password: str, role: str = "user") -> Dict
     except http_requests.RequestException as e:
         logger.error("Audiobookshelf user creation for '%s' failed: %s", username, e)
         return {"status": "error", "message": "Could not reach Audiobookshelf server"}
+
+
+def verify_abs_login(username: str, password: str) -> Optional[Dict[str, Any]]:
+    """Return the ABS user when username/password is a valid Audiobookshelf login, else None."""
+    base_url, _ = _get_credentials()
+    if not base_url:
+        return None
+    try:
+        resp = http_requests.post(
+            f"{base_url}/login", json={"username": username, "password": password}, timeout=10
+        )
+    except http_requests.RequestException as e:
+        logger.warning("Audiobookshelf login check for '%s' failed: %s", username, e)
+        return None
+    if resp.status_code != 200:
+        return None
+    return (resp.json() or {}).get("user") or None

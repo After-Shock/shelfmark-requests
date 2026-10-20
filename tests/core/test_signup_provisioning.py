@@ -414,3 +414,58 @@ def test_signup_must_pick_at_least_one_offered_library(monkeypatch):
 
     monkeypatch.setattr(abs_module, "is_enabled", lambda: False)
     assert not missing(None)  # nothing offered, nothing to pick
+
+
+@pytest.fixture
+def library_login(cwa_db, tmp_path, monkeypatch):
+    """A real users.db plus a Calibre-Web user 'Austin' (password 'cw-pass'); ABS off."""
+    from werkzeug.security import generate_password_hash
+
+    import shelfmark.core.abs_user_sync as abs_module
+    from shelfmark.core.user_db import UserDB
+
+    conn = sqlite3.connect(cwa_db)
+    conn.execute(
+        "INSERT INTO user (name, email, password, role) VALUES ('Austin', 'austin@example.com', ?, 274)",
+        (generate_password_hash("cw-pass"),),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(abs_module, "is_enabled", lambda: False)
+    user_db = UserDB(str(tmp_path / "users.db"))
+    user_db.initialize()
+    return user_db
+
+
+def test_calibre_web_login_creates_the_shelfmark_account(library_login):
+    from werkzeug.security import check_password_hash
+
+    user = signup_provisioning.create_user_from_library_login(library_login, "austin", "cw-pass")
+
+    assert user["username"] == "Austin"  # Calibre-Web's spelling, as they know it
+    assert user["email"] == "austin@example.com" and user["role"] == "user"
+    assert check_password_hash(library_login.get_user(username="Austin")["password_hash"], "cw-pass")
+
+
+def test_library_login_refuses_wrong_password_and_near_duplicates(library_login):
+    create = signup_provisioning.create_user_from_library_login
+    assert create(library_login, "Austin", "wrong") is None
+
+    library_login.create_user(username="AUSTIN", password_hash="x", role="user")
+    assert create(library_login, "Austin", "cw-pass") is None  # someone else is already "AUSTIN" here
+    assert library_login.get_user(username="Austin") is None
+
+
+def test_audiobookshelf_login_creates_the_shelfmark_account(library_login, monkeypatch):
+    import shelfmark.core.abs_user_sync as abs_module
+
+    monkeypatch.setattr(abs_module, "is_enabled", lambda: True)
+    monkeypatch.setattr(
+        abs_module,
+        "verify_abs_login",
+        lambda u, p: {"username": "Listener1"} if (u.lower(), p) == ("listener1", "abs-pass") else None,
+    )
+
+    user = signup_provisioning.create_user_from_library_login(library_login, "listener1", "abs-pass")
+    assert user["username"] == "Listener1" and user["email"] is None
+    assert signup_provisioning.create_user_from_library_login(library_login, "nobody", "abs-pass") is None

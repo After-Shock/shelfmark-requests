@@ -213,6 +213,50 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
             }
         )
 
+    @app.route("/api/users/me/library-accounts", methods=["GET"])
+    @_require_authenticated_user
+    def users_me_library_accounts():
+        """Which library apps (Audiobookshelf, Calibre-Web) are offered, and which this user has."""
+        _, user, user_error = _get_current_user(user_db)
+        if user_error:
+            return user_error
+        from shelfmark.core.signup_provisioning import library_account_status
+
+        return jsonify(library_account_status(user["username"]))
+
+    @app.route("/api/users/me/library-accounts", methods=["POST"])
+    @_require_authenticated_user
+    def users_me_add_library_account():
+        """Create the user's account on a library app, with their Shelfmark password."""
+        user_id, user, user_error = _get_current_user(user_db)
+        if user_error:
+            return user_error
+        from werkzeug.security import check_password_hash
+
+        from shelfmark.core.signup_provisioning import (
+            library_account_status,
+            provision_signup_accounts,
+            record_provisioned_services,
+        )
+
+        data = request.get_json(silent=True) or {}
+        service = data.get("service")
+        password = data.get("password") or ""
+        if not library_account_status(user["username"]).get(service, {}).get("offered"):
+            return jsonify({"error": "That library isn't available"}), 400
+        if not user.get("password_hash") or not check_password_hash(user["password_hash"], password):
+            return jsonify({"error": "Password is incorrect"}), 403
+
+        result = provision_signup_accounts(
+            user["username"], password, email=user.get("email"), role="user", services={service: True}
+        ).get(service, {"status": "error", "message": "Not created"})
+        record_provisioned_services(user_db, user_id, {service: result})
+        if result["status"] == "created":
+            return jsonify({"success": True, "message": "Account created. Log in there with your Shelfmark username and password."})
+        if result["status"] == "exists":
+            return jsonify({"error": "You already have an account there"}), 409
+        return jsonify({"error": result.get("message") or "Could not create the account"}), 502
+
     @app.route("/api/users/me/notification-preferences/test", methods=["POST"])
     @_require_authenticated_user
     def users_me_test_notification_preferences():

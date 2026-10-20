@@ -35,6 +35,12 @@ export const LoginPage = ({ onLogin, error, isLoading, authMode, registrationEna
         >
           <LoginForm onSubmit={onLogin} error={error} isLoading={isLoading} authMode={authMode} />
 
+          {authMode === 'builtin' && (
+            <p className="text-center text-sm mt-4 opacity-70">
+              Already use our Ebooks or Audiobooks app? Sign in with that username and password.
+            </p>
+          )}
+
           {registrationEnabled && (
             <p className="text-center text-sm mt-4 opacity-70">
               Don&apos;t have an account?{' '}

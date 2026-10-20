@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Iterable, Mapping, Optional
 
+from werkzeug.security import check_password_hash
+
 from shelfmark.core.auth_modes import AUTH_SOURCE_CWA, normalize_auth_source
 from shelfmark.core.config import config
 from shelfmark.core.external_user_linking import upsert_external_user
@@ -251,3 +253,31 @@ def sync_cwa_users_from_rows(
         "deleted": deleted,
         "total": created + updated,
     }
+
+
+def find_cwa_user(username: str) -> Optional[dict[str, Any]]:
+    """Return {'name', 'password', 'email'} for a Calibre-Web user, or None.
+
+    Names are compared case-insensitively, as Calibre-Web's own login does.
+    """
+    db_path = _get_cwa_db_path()
+    if not db_path:
+        return None
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT name, password, email FROM user WHERE lower(name) = lower(?)", (username,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"name": row[0], "password": row[1], "email": _normalize_email(row[2])}
+
+
+def verify_cwa_login(username: str, password: str) -> Optional[dict[str, Any]]:
+    """Return the Calibre-Web user when username/password is a valid login there, else None."""
+    user = find_cwa_user(username)
+    if not user or not user["password"] or not check_password_hash(user["password"], password):
+        return None
+    return user

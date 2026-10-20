@@ -1,5 +1,11 @@
-import { FormEvent, useState } from 'react';
-import { changePassword } from '../services/api';
+import { FormEvent, useEffect, useState } from 'react';
+import {
+  addLibraryAccount,
+  changePassword,
+  getLibraryAccounts,
+  LibraryAccounts,
+  LibraryService,
+} from '../services/api';
 import { theme } from '../theme';
 
 interface AccountModalProps {
@@ -8,10 +14,43 @@ interface AccountModalProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+const LIBRARY_LABELS: [LibraryService, string][] = [
+  ['audiobookshelf', 'Audiobooks'],
+  ['calibre_web', 'Ebooks'],
+];
+
 export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps) => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [libraryAccounts, setLibraryAccounts] = useState<LibraryAccounts | null>(null);
+  const [addingService, setAddingService] = useState<LibraryService | null>(null);
+  const [libraryPassword, setLibraryPassword] = useState('');
+  const [isAddingLibrary, setIsAddingLibrary] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    getLibraryAccounts().then(setLibraryAccounts).catch(() => setLibraryAccounts(null));
+  }, [isOpen]);
+
+  const handleAddLibrary = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!addingService) return;
+    setIsAddingLibrary(true);
+    try {
+      const result = await addLibraryAccount({ service: addingService, password: libraryPassword });
+      onShowToast(result.message, 'success');
+      setLibraryAccounts((prev) =>
+        prev ? { ...prev, [addingService]: { offered: true, has_account: true } } : prev,
+      );
+      setAddingService(null);
+      setLibraryPassword('');
+    } catch (err) {
+      onShowToast(err instanceof Error ? err.message : 'Could not create the account', 'error');
+    } finally {
+      setIsAddingLibrary(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -45,6 +84,8 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
   const handleClose = () => {
     setNewPassword('');
     setConfirmPassword('');
+    setAddingService(null);
+    setLibraryPassword('');
     onClose();
   };
 
@@ -85,6 +126,73 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
 
         {/* Content */}
         <div className="px-6 py-6">
+          {libraryAccounts && LIBRARY_LABELS.some(([key]) => libraryAccounts[key].offered) && (
+            <div className="mb-6 pb-6 border-b" style={{ borderColor: 'var(--border-muted)' }}>
+              <h3 className="text-lg font-medium mb-1">Library Access</h3>
+              <p className="text-sm opacity-70 mb-4">Use the same username and password in our library apps.</p>
+              {LIBRARY_LABELS.filter(([key]) => libraryAccounts[key].offered).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between py-2">
+                  <span className="font-medium">{label}</span>
+                  {libraryAccounts[key].has_account ? (
+                    <span className="text-sm opacity-70">&#10003; You have an account</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setAddingService(key)}
+                      disabled={isAddingLibrary}
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+                      style={{ backgroundColor: theme.button.secondary }}
+                    >
+                      Add {label}
+                    </button>
+                  )}
+                </div>
+              ))}
+              {addingService && (
+                <form onSubmit={handleAddLibrary} className="mt-3">
+                  <label htmlFor="library-password" className="block text-sm font-medium mb-2">
+                    Confirm your password to create your {LIBRARY_LABELS.find(([k]) => k === addingService)?.[1]} account
+                  </label>
+                  <input
+                    type="password"
+                    id="library-password"
+                    value={libraryPassword}
+                    onChange={(e) => setLibraryPassword(e.target.value)}
+                    disabled={isAddingLibrary}
+                    className="w-full px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50 mb-3"
+                    style={{
+                      backgroundColor: 'var(--input-background, var(--bg-soft))',
+                      borderColor: 'var(--border-muted)',
+                      color: 'var(--text-color)',
+                      '--tw-ring-color': theme.primary.turquoise,
+                    } as React.CSSProperties}
+                    autoComplete="current-password"
+                    required
+                  />
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setAddingService(null); setLibraryPassword(''); }}
+                      disabled={isAddingLibrary}
+                      className="flex-1 px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+                      style={{ backgroundColor: 'var(--bg-soft)', color: 'var(--text-color)' }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isAddingLibrary}
+                      className="flex-1 px-4 py-2 rounded-lg font-medium text-white disabled:opacity-50"
+                      style={{ backgroundColor: theme.button.secondary }}
+                    >
+                      {isAddingLibrary ? 'Creating...' : 'Create Account'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
           <h3 className="text-lg font-medium mb-4">Set Password</h3>
           <form onSubmit={handleSubmit}>
             <div className="mb-4">

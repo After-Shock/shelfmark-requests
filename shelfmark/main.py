@@ -1788,6 +1788,12 @@ def api_login() -> Union[Response, Tuple[Response, int]]:
                 return jsonify({"error": "Authentication service unavailable"}), 503
             try:
                 db_user = user_db.get_user(username=username)
+                if not db_user and auth_mode == "builtin":
+                    # Existing Calibre-Web / Audiobookshelf members log in with that login.
+                    from shelfmark.core.signup_provisioning import create_user_from_library_login
+                    db_user = create_user_from_library_login(user_db, username, password)
+                    if db_user:
+                        username = db_user["username"]
 
                 if not db_user:
                     return _failed_login_response(username, ip_address)

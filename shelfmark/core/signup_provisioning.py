@@ -81,6 +81,72 @@ def missing_service_selection(data: Any) -> bool:
     return any(offered.values()) and not any(selection[k] for k, on in offered.items() if on)
 
 
+def create_user_from_library_login(user_db: Any, username: str, password: str) -> Optional[Dict[str, Any]]:
+    """First Shelfmark login for someone who only has a Calibre-Web or Audiobookshelf account.
+
+    When username/password is a valid login on one of them, create the Shelfmark
+    account with the same username and password (regular user, no invite needed -
+    they are already a member). Returns the new user, or None.
+    """
+    from werkzeug.security import generate_password_hash
+
+    from shelfmark.core.abs_user_sync import is_enabled as abs_enabled, verify_abs_login
+    from shelfmark.core.cwa_user_sync import is_provisioning_enabled as cwa_enabled, verify_cwa_login
+
+    # "sarah" here and "Sarah" in Calibre-Web may be different people; don't
+    # create a near-duplicate - they keep using the account they already have.
+    wanted = username.lower()
+    if any(str(u.get("username", "")).lower() == wanted for u in user_db.list_users()):
+        return None
+
+    found, source = None, None
+    if cwa_enabled():
+        cwa_user = verify_cwa_login(username, password)
+        if cwa_user:
+            found, source = {"name": cwa_user["name"], "email": cwa_user["email"]}, "Calibre-Web"
+    if not found and abs_enabled():
+        abs_user = verify_abs_login(username, password)
+        if abs_user:
+            found, source = {"name": abs_user.get("username") or username, "email": None}, "Audiobookshelf"
+    if not found:
+        return None
+
+    name = found["name"]
+    if validate_signup_username(name):
+        logger.warning("Not linking %s account '%s': username not allowed on Shelfmark", source, name)
+        return None
+    try:
+        user = user_db.create_user(
+            username=name,
+            password_hash=generate_password_hash(password),
+            email=found["email"],
+            role="user",
+        )
+    except ValueError:
+        return None
+    logger.info("Created Shelfmark account '%s' from an existing %s login", name, source)
+    return user
+
+
+def library_account_status(username: str) -> Dict[str, Dict[str, bool]]:
+    """For each library app: is it offered here, and does this username already have an account?"""
+    from shelfmark.core.abs_user_sync import _find_abs_user, _get_credentials, is_enabled as abs_enabled
+    from shelfmark.core.cwa_user_sync import find_cwa_user, is_provisioning_enabled as cwa_enabled
+
+    status = {key: {"offered": False, "has_account": False} for key in _SERVICE_KEYS}
+    if abs_enabled():
+        status["audiobookshelf"]["offered"] = True
+        try:
+            base_url, token = _get_credentials()
+            status["audiobookshelf"]["has_account"] = _find_abs_user(base_url, token, username) is not None
+        except Exception as e:
+            logger.warning("Could not check Audiobookshelf account for '%s': %s", username, e)
+            status["audiobookshelf"]["offered"] = False
+    if cwa_enabled():
+        status["calibre_web"] = {"offered": True, "has_account": find_cwa_user(username) is not None}
+    return status
+
+
 def provision_signup_accounts(
     username: str,
     password: str,

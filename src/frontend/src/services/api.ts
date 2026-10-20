@@ -576,6 +576,23 @@ export const changePassword = async (data: {
   });
 };
 
+export type LibraryService = 'audiobookshelf' | 'calibre_web';
+export type LibraryAccounts = Record<LibraryService, { offered: boolean; has_account: boolean }>;
+
+export const getLibraryAccounts = async (): Promise<LibraryAccounts> => {
+  return fetchJSON(`${API_BASE}/users/me/library-accounts`);
+};
+
+export const addLibraryAccount = async (data: {
+  service: LibraryService;
+  password: string;
+}): Promise<{ success: boolean; message: string }> => {
+  return fetchJSON(`${API_BASE}/users/me/library-accounts`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
 // Audiobookshelf library ownership check
 export const checkAbsOwned = async (
   title: string,
