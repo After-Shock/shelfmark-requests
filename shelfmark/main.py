@@ -1917,6 +1917,9 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
         return jsonify({"error": username_error}), 400
     if not password or len(password) < 4:
         return jsonify({"error": "Password must be at least 4 characters"}), 400
+    from shelfmark.core.signup_provisioning import missing_service_selection
+    if missing_service_selection(data.get("services")):
+        return jsonify({"error": "Select at least one library account to create"}), 400
     if user_db.get_user(username=username):
         return jsonify({"error": "Username already taken"}), 409
 

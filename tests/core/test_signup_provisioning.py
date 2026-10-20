@@ -399,3 +399,18 @@ def test_record_provisioned_services_noop_when_nothing_created():
         "calibre_web": {"status": "skipped", "message": "disabled"},
     })
     assert db.user["provisioned_services"] is None
+
+
+def test_signup_must_pick_at_least_one_offered_library(monkeypatch):
+    import shelfmark.core.abs_user_sync as abs_module
+    import shelfmark.core.cwa_user_sync as cwa_module
+
+    monkeypatch.setattr(abs_module, "is_enabled", lambda: True)
+    monkeypatch.setattr(cwa_module, "is_provisioning_enabled", lambda: False)
+    missing = signup_provisioning.missing_service_selection
+    assert missing(None)
+    assert missing({"audiobookshelf": False, "calibre_web": True})  # Calibre-Web isn't offered
+    assert not missing({"audiobookshelf": True})
+
+    monkeypatch.setattr(abs_module, "is_enabled", lambda: False)
+    assert not missing(None)  # nothing offered, nothing to pick

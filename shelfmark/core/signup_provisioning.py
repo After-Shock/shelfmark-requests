@@ -68,6 +68,19 @@ def normalize_service_selection(data: Any) -> Dict[str, bool]:
     return {key: False for key in _SERVICE_KEYS}
 
 
+def missing_service_selection(data: Any) -> bool:
+    """True when the signup page offers library accounts but none was picked.
+
+    Signups must take at least one of Audiobookshelf / Calibre-Web (not both).
+    """
+    from shelfmark.core.abs_user_sync import is_enabled as abs_enabled
+    from shelfmark.core.cwa_user_sync import is_provisioning_enabled as cwa_enabled
+
+    offered = {"audiobookshelf": abs_enabled(), "calibre_web": cwa_enabled()}
+    selection = normalize_service_selection(data)
+    return any(offered.values()) and not any(selection[k] for k, on in offered.items() if on)
+
+
 def provision_signup_accounts(
     username: str,
     password: str,
