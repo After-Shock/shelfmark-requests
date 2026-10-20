@@ -83,10 +83,10 @@ def test_creates_user(configured, monkeypatch):
 
     def fake_get(url, **k):
         gets.append(url)
-        if url.endswith("/api/users/username/alice") and len(gets) == 1:
-            return FakeResponse(404)
-        if url.endswith("/api/users/username/alice"):
-            return FakeResponse(200, payload={"id": "user-1", "librariesAccessible": []})
+        if url.endswith("/api/users") and len(gets) == 1:
+            return FakeResponse(200, payload={"users": []})
+        if url.endswith("/api/users"):
+            return FakeResponse(200, payload={"users": [{"id": "user-1", "username": "alice"}]})
         if url.endswith("/api/users/user-1"):
             return FakeResponse(200, payload={"id": "user-1", "librariesAccessible": []})
         if url.endswith("/api/libraries"):
@@ -120,7 +120,7 @@ def test_admin_role_maps_to_admin_type(configured, monkeypatch):
         captured["json"] = json
         return FakeResponse(200)
 
-    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(404))
+    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(200, payload={"users": []}))
     monkeypatch.setattr(abs_user_sync.http_requests, "post", fake_post)
 
     abs_user_sync.provision_abs_user("bob", "pw1234", role="admin")
@@ -135,7 +135,9 @@ def test_existing_user_not_touched(configured, monkeypatch):
         posts.append(url)
         return FakeResponse(200)
 
-    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(200))
+    # ABS compares usernames case-insensitively, so "Alice" is the same account.
+    users = {"users": [{"id": "u1", "username": "Alice"}]}
+    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(200, payload=users))
     monkeypatch.setattr(abs_user_sync.http_requests, "post", fake_post)
 
     result = abs_user_sync.provision_abs_user("alice", "pw1234")
@@ -145,7 +147,7 @@ def test_existing_user_not_touched(configured, monkeypatch):
 
 def test_non_admin_token_reports_error(configured, monkeypatch):
     """A 403 from ABS means the token isn't an admin token."""
-    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(404))
+    monkeypatch.setattr(abs_user_sync.http_requests, "get", lambda url, **k: FakeResponse(200, payload={"users": []}))
     monkeypatch.setattr(abs_user_sync.http_requests, "post", lambda url, **k: FakeResponse(403))
 
     result = abs_user_sync.provision_abs_user("alice", "pw1234")
@@ -163,6 +165,26 @@ def test_unreachable_server_reports_error(configured, monkeypatch):
 
     result = abs_user_sync.provision_abs_user("alice", "pw1234")
     assert result["status"] == "error"
+
+
+def test_new_user_with_all_library_access_needs_no_grant(configured, monkeypatch):
+    """ABS gives new users accessAllLibraries; that is a finished, recordable create."""
+    gets = []
+
+    def fake_get(url, **k):
+        gets.append(url)
+        if url.endswith("/api/users"):
+            return FakeResponse(200, payload={"users": [{"id": "u1", "username": "austin"}] if len(gets) > 1 else []})
+        return FakeResponse(200, payload={"id": "u1", "permissions": {"accessAllLibraries": True}})
+
+    def no_put(*a, **k):
+        raise AssertionError("no PUT needed")
+
+    monkeypatch.setattr(abs_user_sync.http_requests, "get", fake_get)
+    monkeypatch.setattr(abs_user_sync.http_requests, "post", lambda url, **k: FakeResponse(201))
+    monkeypatch.setattr(abs_user_sync.http_requests, "put", no_put)
+
+    assert abs_user_sync.provision_abs_user("austin", "pw1234")["status"] == "created"
 
 
 def test_is_enabled(configured):

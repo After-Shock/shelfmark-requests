@@ -10,7 +10,6 @@ Audiobookshelf server, since user creation is an admin-only API call.
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from urllib.parse import quote
 
 import requests as http_requests
 
@@ -20,14 +19,21 @@ from shelfmark.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-def _user_by_name_url(base_url: str, username: str) -> str:
-    """Build the ABS lookup URL for a username.
+def _find_abs_user(base_url: str, token: str, username: str) -> Optional[Dict[str, Any]]:
+    """Return the ABS user with this username (case-insensitive, as ABS compares), or None.
 
-    The username is percent-encoded with no safe characters: a name containing
-    '/', '?' or '#' would otherwise change the path being requested, and a
-    bogus 404 there reads as "no such user" and triggers a duplicate create.
+    ABS has no lookup-by-username route (/api/users/username/... is a 404 for
+    everyone), so list the users. Raises requests errors when the list fails.
     """
-    return f"{base_url}/api/users/username/{quote(username, safe='')}"
+    resp = http_requests.get(
+        f"{base_url}/api/users", headers={"Authorization": f"Bearer {token}"}, timeout=10
+    )
+    resp.raise_for_status()
+    wanted = username.lower()
+    return next(
+        (u for u in resp.json().get("users", []) if str(u.get("username", "")).lower() == wanted),
+        None,
+    )
 
 
 def _get_credentials() -> tuple[Optional[str], Optional[str]]:
@@ -45,23 +51,8 @@ def is_enabled() -> bool:
 
 def _abs_user_exists(base_url: str, token: str, username: str) -> Optional[bool]:
     """Check if a user already exists on the ABS server. None = check failed."""
-    headers = {"Authorization": f"Bearer {token}"}
     try:
-        resp = http_requests.get(
-            _user_by_name_url(base_url, username),
-            headers=headers,
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return True
-        if resp.status_code == 404:
-            return False
-        logger.warning(
-            "ABS user lookup for '%s' returned unexpected status %d",
-            username,
-            resp.status_code,
-        )
-        return None
+        return _find_abs_user(base_url, token, username) is not None
     except http_requests.RequestException as e:
         logger.warning("ABS user lookup failed for '%s': %s", username, e)
         return None
@@ -82,11 +73,10 @@ def _grant_all_libraries(base_url: str, token: str, username: str) -> Dict[str, 
     present on the user object when possible, and default to librariesAccessible.
     """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    lookup = http_requests.get(_user_by_name_url(base_url, username), headers=headers, timeout=10)
-    if lookup.status_code != 200:
+    user = _find_abs_user(base_url, token, username)
+    if user is None:
         return {"status": "error", "message": "Audiobookshelf account created, but user lookup failed while granting libraries"}
 
-    user = lookup.json() or {}
     user_id = user.get("id")
     if not user_id:
         return {"status": "error", "message": "Audiobookshelf account created, but returned user had no id"}
@@ -94,6 +84,8 @@ def _grant_all_libraries(base_url: str, token: str, username: str) -> Dict[str, 
     detail = http_requests.get(f"{base_url}/api/users/{user_id}", headers=headers, timeout=10)
     if detail.status_code == 200:
         user = detail.json() or user
+    if (user.get("permissions") or {}).get("accessAllLibraries"):
+        return {"status": "created", "message": "Audiobookshelf account created with all library access"}
 
     library_ids = _get_all_library_ids(base_url, token)
     if not library_ids:
@@ -122,12 +114,9 @@ def update_abs_password(username: str, password: str) -> Dict[str, Any]:
         return {"status": "skipped", "message": "ABS user sync is disabled"}
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
-        lookup = http_requests.get(_user_by_name_url(base_url, username), headers=headers, timeout=10)
-        if lookup.status_code == 404:
+        user = _find_abs_user(base_url, token, username)
+        if user is None:
             return {"status": "skipped", "message": "No matching Audiobookshelf account"}
-        if lookup.status_code != 200:
-            return {"status": "error", "message": f"ABS user lookup returned status {lookup.status_code}"}
-        user = lookup.json() or {}
         user_id = user.get("id")
         if not user_id:
             return {"status": "error", "message": "Audiobookshelf user had no id"}

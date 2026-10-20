@@ -15,8 +15,10 @@ _CWA_ALIAS_SUFFIX = "__cwa"
 
 logger = setup_logger(__name__)
 
-# CWA role flags: bit 0 = admin, 0 = regular user.
+# Calibre-Web role bits: 1 admin, 2 download, 16 change password, 256 view books.
+# 0 is no permissions at all - the user can log in but not read or download.
 _CWA_ROLE_ADMIN = 1
+_CWA_ROLE_USER = 2 | 16 | 256  # 274, what regular users on this server have
 
 # Columns that should not be cloned from an existing user row when creating a
 # new Calibre-Web account (identity/secret columns we set explicitly).
@@ -83,7 +85,7 @@ def provision_cwa_user(username: str, password: str, email: Optional[str] = None
         return {"status": "skipped", "message": "Calibre-Web database not mounted (/auth/app.db)"}
 
     normalized_email = _normalize_email(email)
-    cwa_role = _CWA_ROLE_ADMIN if role == "admin" else 0
+    cwa_role = _CWA_ROLE_ADMIN if role == "admin" else _CWA_ROLE_USER
     password_hash = _hash_cwa_password(password)
 
     try:

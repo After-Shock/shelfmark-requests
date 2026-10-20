@@ -92,7 +92,7 @@ def test_provision_cwa_user_created(cwa_db):
     assert row[1] == "alice@example.com"
     # pbkdf2 hash format Calibre-Web can verify
     assert row[2].startswith("pbkdf2:sha256")
-    assert row[3] == 0  # regular user, not admin
+    assert row[3] == 274  # view + download + change password, not admin
     # sidebar settings cloned from the template admin row
     assert row[4] == 63
 
@@ -321,21 +321,6 @@ def test_validate_signup_username():
         assert signup_provisioning.validate_signup_username(ok) is None
     for bad in ("a", "x" * 65, "eve/../admin", "eve?x=1", "eve#1", "ev e", "ev\\e", ""):
         assert signup_provisioning.validate_signup_username(bad) is not None
-
-
-def test_abs_lookup_url_encodes_username():
-    """A '/' in a username must not change which ABS path is requested."""
-    import shelfmark.core.abs_user_sync as abs_module
-
-    assert abs_module._user_by_name_url("http://abs", "dave") == (
-        "http://abs/api/users/username/dave"
-    )
-    assert abs_module._user_by_name_url("http://abs", "eve/../admin") == (
-        "http://abs/api/users/username/eve%2F..%2Fadmin"
-    )
-    assert abs_module._user_by_name_url("http://abs", "eve?x=1") == (
-        "http://abs/api/users/username/eve%3Fx%3D1"
-    )
 
 
 def _password_sync_spy(monkeypatch):
