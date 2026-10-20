@@ -82,7 +82,7 @@ def test_package_metadata_matches_version_file():
     package = json.loads((root / "src/frontend/package.json").read_text(encoding="utf-8"))
     package_lock = json.loads((root / "src/frontend/package-lock.json").read_text(encoding="utf-8"))
 
-    assert version == "1.6.0"
+    assert version == "1.7.0"
     assert pyproject_version is not None
     assert pyproject_version.group(1) == version
     assert package["version"] == version
