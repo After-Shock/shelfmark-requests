@@ -549,7 +549,7 @@ export const registerUser = async (data: {
     audiobookshelf?: boolean;
     calibre_web?: boolean;
   };
-}): Promise<{ success: boolean; warnings?: string[] }> => {
+}): Promise<{ success: boolean; warnings?: string[]; link_offers?: LibraryService[] }> => {
   return fetchJSON(`${API_BASE}/auth/register`, {
     method: 'POST',
     body: JSON.stringify(data),

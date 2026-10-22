@@ -1935,6 +1935,18 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
         return jsonify({"error": "Select at least one library account to create"}), 400
     if user_db.get_user(username=username):
         return jsonify({"error": "Username already taken"}), 409
+    # Same email on an Ebooks/Audiobooks account under another name: that's
+    # this person's existing account, so don't make them a second one.
+    from shelfmark.core.signup_provisioning import accounts_under_other_names
+    existing = accounts_under_other_names(email, username)
+    if existing:
+        app_labels = {"calibre_web": "Ebooks", "audiobookshelf": "Audiobooks"}
+        service, name = existing[0]
+        return jsonify({
+            "error": f"This email already has an {app_labels[service]} account with the username "
+                     f"\"{name}\". Sign in with that username and password instead of creating a new account.",
+            "existing_username": name,
+        }), 409
 
     from werkzeug.security import generate_password_hash
     password_hash = generate_password_hash(password)
@@ -1957,17 +1969,20 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
     # if enabled. Best-effort: a failure here should not block registration.
     from shelfmark.core.signup_provisioning import (
         get_warnings,
+        link_after_signup,
         normalize_service_selection,
         provision_signup_accounts,
         record_provisioned_services,
     )
     sync_results: dict = {}
+    link_offers: list = []
     try:
         selection = normalize_service_selection(data.get("services"))
         sync_results = provision_signup_accounts(
             username, password, email=email, role="user", services=selection
         )
         record_provisioned_services(user_db, int(new_user["id"]), sync_results)
+        link_offers = link_after_signup(user_db, int(new_user["id"]), password)
     except Exception as e:
         logger.warning(f"Unexpected error syncing '{username}' to external services: {e}")
 
@@ -1980,7 +1995,7 @@ def api_register() -> Union[Response, Tuple[Response, int]]:
     session.permanent = True
 
     logger.info(f"New user registered: '{username}'")
-    return jsonify({"success": True, "warnings": warnings}), 201
+    return jsonify({"success": True, "warnings": warnings, "link_offers": link_offers}), 201
 
 
 @app.route('/api/auth/reset-password', methods=['POST'])

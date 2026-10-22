@@ -95,3 +95,28 @@ def test_login_links_accounts_with_the_same_password(user_db, monkeypatch):
     assert signup_provisioning.link_accounts_with_password(user_db, user, "old") == {"audiobookshelf"}
     assert user_db.get_user(username="dave")["provisioned_services"] == "audiobookshelf"
 
+
+def test_signup_links_same_password_and_offers_the_rest(user_db, monkeypatch):
+    accounts = {"calibre_web": {"name": "dave", "email": None}, "audiobookshelf": {"name": "dave", "email": None}}
+    monkeypatch.setattr(signup_provisioning, "offered_services", lambda: {"calibre_web", "audiobookshelf"})
+    monkeypatch.setattr(signup_provisioning, "_find_library_account", lambda service, username: accounts.get(service))
+    monkeypatch.setattr(signup_provisioning, "verify_library_login",
+                        lambda service, username, password: service == "calibre_web" and password == "pw")
+    uid = user_db.get_user(username="dave")["id"]
+
+    assert signup_provisioning.link_after_signup(user_db, uid, "pw") == ["audiobookshelf"]
+    assert user_db.get_user(user_id=uid)["provisioned_services"] == "calibre_web"
+
+
+def test_signup_email_already_used_under_another_name(monkeypatch):
+    monkeypatch.setattr(signup_provisioning, "offered_services", lambda: {"calibre_web", "audiobookshelf"})
+    monkeypatch.setattr("shelfmark.core.cwa_user_sync.find_cwa_names_by_email",
+                        lambda email: ["Austin", "austin210286"] if email == "a@example.com" else [])
+    monkeypatch.setattr("shelfmark.core.abs_user_sync._get_credentials", lambda: ("http://abs", "t"))
+    monkeypatch.setattr("shelfmark.core.abs_user_sync.list_abs_users",
+                        lambda url, token: [{"username": "aus", "email": " A@Example.com"}, {"username": "x", "email": None}])
+
+    assert signup_provisioning.accounts_under_other_names(" A@example.com ", "austin210286") == [
+        ("audiobookshelf", "aus"), ("calibre_web", "Austin")]
+    assert signup_provisioning.accounts_under_other_names("other@example.com", "bob") == []
+    assert signup_provisioning.accounts_under_other_names(None, "bob") == []

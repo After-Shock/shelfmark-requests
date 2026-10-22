@@ -25,15 +25,20 @@ def _find_abs_user(base_url: str, token: str, username: str) -> Optional[Dict[st
     ABS has no lookup-by-username route (/api/users/username/... is a 404 for
     everyone), so list the users. Raises requests errors when the list fails.
     """
+    wanted = username.lower()
+    return next(
+        (u for u in list_abs_users(base_url, token) if str(u.get("username", "")).lower() == wanted),
+        None,
+    )
+
+
+def list_abs_users(base_url: str, token: str) -> list[Dict[str, Any]]:
+    """All ABS users. Raises requests errors when the list fails."""
     resp = http_requests.get(
         f"{base_url}/api/users", headers={"Authorization": f"Bearer {token}"}, timeout=10
     )
     resp.raise_for_status()
-    wanted = username.lower()
-    return next(
-        (u for u in resp.json().get("users", []) if str(u.get("username", "")).lower() == wanted),
-        None,
-    )
+    return resp.json().get("users", [])
 
 
 def _get_credentials() -> tuple[Optional[str], Optional[str]]:

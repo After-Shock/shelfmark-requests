@@ -284,6 +284,21 @@ def find_cwa_user(username: str) -> Optional[dict[str, Any]]:
     return {"name": row[0], "password": row[1], "email": _normalize_email(row[2])}
 
 
+def find_cwa_names_by_email(email: str) -> list[str]:
+    """Names of Calibre-Web users registered to this email (case-insensitive)."""
+    db_path = _get_cwa_db_path()
+    if not db_path or not email:
+        return []
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT name FROM user WHERE lower(trim(email)) = lower(trim(?))", (email,)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [r[0] for r in rows]
+
+
 def verify_cwa_login(username: str, password: str) -> Optional[dict[str, Any]]:
     """Return the Calibre-Web user when username/password is a valid login there, else None."""
     user = find_cwa_user(username)

@@ -12,7 +12,7 @@ Shelfmark account itself or the other service.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from shelfmark.core.logger import setup_logger
 
@@ -172,6 +172,44 @@ def library_account_status(user: Dict[str, Any]) -> Dict[str, Dict[str, bool]]:
             continue
         status[service] = {"offered": True, "has_account": has_account, "linked": has_account and service in linked}
     return status
+
+
+def accounts_under_other_names(email: Optional[str], username: str) -> List[Tuple[str, str]]:
+    """(service, name) for library accounts on this email under a different username.
+
+    Signing up with such an email would create a second account for the same
+    person, so registration sends them to sign in with the existing one.
+    """
+    from shelfmark.core.abs_user_sync import _get_credentials, list_abs_users
+    from shelfmark.core.cwa_user_sync import find_cwa_names_by_email
+
+    wanted = (email or "").strip().lower()
+    if not wanted:
+        return []
+    found: List[Tuple[str, str]] = []
+    for service in sorted(offered_services()):
+        try:
+            if service == "calibre_web":
+                names = find_cwa_names_by_email(wanted)
+            else:
+                names = [str(u.get("username") or "") for u in list_abs_users(*_get_credentials())
+                         if str(u.get("email") or "").strip().lower() == wanted]
+        except Exception as e:
+            logger.warning("Duplicate-account check on %s failed: %s", service, e)
+            continue
+        found += [(service, n) for n in names if n and n.lower() != username.lower()]
+    return found
+
+
+def link_after_signup(user_db: Any, user_id: int, password: str) -> List[str]:
+    """Link same-named library accounts that already use the signup password.
+
+    Returns the services where a same-named account exists but stays unlinked,
+    so the signup page can offer to link it with that app's password.
+    """
+    link_accounts_with_password(user_db, user_db.get_user(user_id=user_id), password)
+    status = library_account_status(user_db.get_user(user_id=user_id))
+    return sorted(s for s, st in status.items() if st["has_account"] and not st["linked"])
 
 
 def link_accounts_with_password(user_db: Any, user: Dict[str, Any], password: str) -> set:

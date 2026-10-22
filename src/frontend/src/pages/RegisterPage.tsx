@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { withBasePath } from '../utils/basePath';
-import { registerUser } from '../services/api';
+import { addLibraryAccount, LibraryService, registerUser } from '../services/api';
 import { theme } from '../theme';
 
 interface RegisterPageProps {
@@ -27,6 +27,10 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [linkOffers, setLinkOffers] = useState<LibraryService[]>([]);
+  const [appPasswords, setAppPasswords] = useState<Record<string, string>>({});
+  const [linkStatus, setLinkStatus] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [linking, setLinking] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const serviceOptions = getServiceOptions(signupServices);
@@ -84,9 +88,10 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
           serviceOptions.map((o) => [o.key, selectedServices[o.key] !== false]),
         ) as Record<string, boolean>,
       });
-      if (response.warnings && response.warnings.length > 0) {
-        // Registration succeeded but some library accounts failed - show why.
-        setWarnings(response.warnings);
+      if (response.warnings?.length || response.link_offers?.length) {
+        // Registration succeeded, but some library accounts failed or already exist.
+        setWarnings(response.warnings || []);
+        setLinkOffers(response.link_offers || []);
       } else {
         onRegisterComplete();
       }
@@ -103,7 +108,20 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
     color: 'var(--text-color)',
   };
 
-  if (warnings.length > 0) {
+  const linkExisting = async (service: LibraryService) => {
+    setLinking(service);
+    try {
+      await addLibraryAccount({ service, password, app_password: appPasswords[service] || '' });
+      setLinkStatus((prev) => ({ ...prev, [service]: { ok: true, message: 'Linked' } }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not link';
+      setLinkStatus((prev) => ({ ...prev, [service]: { ok: false, message } }));
+    } finally {
+      setLinking(null);
+    }
+  };
+
+  if (warnings.length > 0 || linkOffers.length > 0) {
     return (
       <div
         className="min-h-screen flex items-center justify-center px-4 py-8"
@@ -119,14 +137,71 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
             }}
           >
             <h1 className="text-2xl font-semibold mb-4">Account Created</h1>
-            <p className="text-sm mb-4">
-              Your Shelfmark account is ready. Some library accounts could not be created:
-            </p>
-            <ul className="text-sm mb-6 list-disc list-inside space-y-1 opacity-80">
-              {warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
+            {warnings.length > 0 && (
+              <>
+                <p className="text-sm mb-4">
+                  Your Shelfmark account is ready. Some library accounts could not be created:
+                </p>
+                <ul className="text-sm mb-6 list-disc list-inside space-y-1 opacity-80">
+                  {warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {linkOffers.length > 0 && (
+              <div className="mb-6 space-y-4">
+                <p className="text-sm">
+                  You already have {linkOffers.map((s) => APP_LABELS[s]).join(' and ')} account
+                  {linkOffers.length > 1 ? 's' : ''} named <span className="font-medium">{username.trim()}</span>.
+                  Link {linkOffers.length > 1 ? 'them' : 'it'} so one password works everywhere: enter that
+                  app&apos;s current password and it will switch to the password you just chose.
+                </p>
+                {linkOffers.map((service) => {
+                  const status = linkStatus[service];
+                  if (status?.ok) {
+                    return (
+                      <p key={service} className="text-sm font-medium" style={{ color: theme.primary.turquoise }}>
+                        ✓ {APP_LABELS[service]} linked
+                      </p>
+                    );
+                  }
+                  return (
+                    <div key={service}>
+                      <label htmlFor={`app-pw-${service}`} className="block text-sm font-medium mb-2">
+                        Current {APP_LABELS[service]} password
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          id={`app-pw-${service}`}
+                          value={appPasswords[service] || ''}
+                          onChange={(e) => setAppPasswords((prev) => ({ ...prev, [service]: e.target.value }))}
+                          disabled={linking !== null}
+                          className="flex-1 min-w-0 px-4 py-2.5 rounded-lg border focus:outline-none focus:ring-2 disabled:opacity-50"
+                          style={{ ...inputStyle, '--tw-ring-color': theme.primary.turquoise } as React.CSSProperties}
+                          autoComplete="current-password"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => linkExisting(service)}
+                          disabled={linking !== null || !appPasswords[service]}
+                          className="px-4 rounded-lg font-medium text-white disabled:opacity-50"
+                          style={{ backgroundColor: '#7c3aed' }}
+                        >
+                          {linking === service ? 'Linking...' : 'Link'}
+                        </button>
+                      </div>
+                      {status && !status.ok && <p className="text-sm mt-1 text-red-500">{status.message}</p>}
+                    </div>
+                  );
+                })}
+                <p className="text-xs opacity-70">
+                  Don&apos;t know it? Skip for now, then use Forgot password? on the sign-in page, or link it later
+                  from ☰ → Account → Library Access.
+                </p>
+              </div>
+            )}
             <button
               type="button"
               onClick={onRegisterComplete}
@@ -330,6 +405,8 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
     </div>
   );
 };
+
+const APP_LABELS: Record<LibraryService, string> = { calibre_web: 'Ebooks', audiobookshelf: 'Audiobooks' };
 
 function getServiceOptions(
   signupServices?: {
