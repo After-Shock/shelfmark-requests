@@ -2278,6 +2278,7 @@ def api_metadata_search() -> Union[Response, Tuple[Response, int]]:
     try:
         from shelfmark.metadata_providers import (
             get_configured_provider,
+            search_with_fallback,
             MetadataSearchOptions,
             SortOrder,
             CheckboxSearchField,
@@ -2342,7 +2343,7 @@ def api_metadata_search() -> Union[Response, Tuple[Response, int]]:
             return jsonify({"error": "Either 'query' or search field values are required"}), 400
 
         options = MetadataSearchOptions(query=query, limit=limit, page=page, sort=sort_order, fields=fields)
-        search_result = provider.search_paginated(options)
+        provider, search_result = search_with_fallback(provider, options)
 
         # Convert BookMetadata objects to dicts
         books_data = [asdict(book) for book in search_result.books]

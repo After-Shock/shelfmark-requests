@@ -457,6 +457,51 @@ def get_configured_provider(content_type: str = "ebook") -> Optional[MetadataPro
     return provider
 
 
+_FALLBACK_ORDER = ["hardcover", "openlibrary", "googlebooks"]
+
+
+def search_with_fallback(provider: MetadataProvider, options: "MetadataSearchOptions") -> tuple:
+    """Search the configured provider; if it errors or finds nothing, try the other enabled ones.
+
+    Providers swallow API outages (e.g. Google Books 503s) and return no
+    books, so an empty result is the only signal. Provider-specific search
+    fields don't carry over, so fallbacks run on the plain query only.
+    Returns (provider_that_answered, SearchResult).
+    """
+    import logging
+    from dataclasses import replace
+
+    logger = logging.getLogger(__name__)
+    try:
+        result = provider.search_paginated(options)
+        if result.books or not options.query:
+            return provider, result
+    except Exception as e:
+        if not options.query:
+            raise
+        logger.warning(f"Metadata search on '{provider.name}' failed: {e}")
+        result = None
+
+    plain = replace(options, fields={})
+    for name in _FALLBACK_ORDER:
+        if name == provider.name or name not in _PROVIDERS or not is_provider_enabled(name):
+            continue
+        try:
+            fallback = get_provider(name, **get_provider_kwargs(name))
+            if not fallback.is_available():
+                continue
+            fallback_result = fallback.search_paginated(plain)
+        except Exception as e:
+            logger.warning(f"Fallback metadata search on '{name}' failed: {e}")
+            continue
+        if fallback_result.books:
+            logger.info(f"'{provider.name}' found nothing for {options.query!r}; using '{name}' results")
+            return fallback, fallback_result
+    if result is None:
+        raise RuntimeError(f"{provider.display_name} search failed")
+    return provider, result
+
+
 def _get_configured_provider_name() -> str:
     """Get the currently configured metadata provider name from config."""
     from shelfmark.core.config import config as app_config
