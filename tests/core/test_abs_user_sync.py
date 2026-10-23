@@ -70,46 +70,40 @@ def test_skipped_when_unconfigured():
     assert result["status"] == "skipped"
 
 
-def test_creates_user(configured, monkeypatch):
-    """A new signup results in a user creation call to the ABS API."""
+def test_creates_user_enabled_with_explicit_access(configured, monkeypatch):
+    """New ABS users are created enabled, with all libraries and explicit content."""
     calls = []
+    gets = []
 
     def fake_post(url, headers=None, json=None, timeout=None):
         calls.append({"url": url, "headers": headers, "json": json})
         return FakeResponse(200)
 
-    gets = []
-    puts = []
-
     def fake_get(url, **k):
         gets.append(url)
-        if url.endswith("/api/users") and len(gets) == 1:
-            return FakeResponse(200, payload={"users": []})
         if url.endswith("/api/users"):
-            return FakeResponse(200, payload={"users": [{"id": "user-1", "username": "alice"}]})
-        if url.endswith("/api/users/user-1"):
-            return FakeResponse(200, payload={"id": "user-1", "librariesAccessible": []})
-        if url.endswith("/api/libraries"):
-            return FakeResponse(200, payload={"libraries": [{"id": "lib-1"}, {"id": "lib-2"}]})
-        return FakeResponse(404)
+            return FakeResponse(200, payload={"users": [{"id": "user-1", "username": "alice"}] if len(gets) > 1 else []})
+        return FakeResponse(200, payload={"id": "user-1", "isActive": True,
+                                          "permissions": {"accessAllLibraries": True, "accessExplicitContent": True}})
 
-    def fake_put(url, headers=None, json=None, timeout=None):
-        puts.append({"url": url, "json": json})
-        return FakeResponse(200)
+    def no_patch(*a, **k):
+        raise AssertionError("ABS honored the create payload; no PATCH needed")
 
     monkeypatch.setattr(abs_user_sync.http_requests, "get", fake_get)
     monkeypatch.setattr(abs_user_sync.http_requests, "post", fake_post)
-    monkeypatch.setattr(abs_user_sync.http_requests, "put", fake_put)
+    monkeypatch.setattr(abs_user_sync.http_requests, "patch", no_patch)
 
     result = abs_user_sync.provision_abs_user("alice", "pw1234", role="user")
 
     assert result["status"] == "created"
-    assert len(calls) == 1
-    assert calls[0]["url"] == "https://audiobooks.sullyflix.com/api/users"
-    assert calls[0]["json"] == {"username": "alice", "password": "pw1234", "type": "user"}
-    assert calls[0]["headers"]["Authorization"] == "Bearer test-token"
-    assert puts[0]["url"] == "https://audiobooks.sullyflix.com/api/users/user-1"
-    assert puts[0]["json"]["librariesAccessible"] == ["lib-1", "lib-2"]
+    [call] = calls
+    assert call["url"] == "https://audiobooks.sullyflix.com/api/users"
+    assert call["headers"]["Authorization"] == "Bearer test-token"
+    body = call["json"]
+    assert (body["username"], body["password"], body["type"]) == ("alice", "pw1234", "user")
+    assert body["isActive"] is True
+    assert body["permissions"]["accessExplicitContent"] is True
+    assert body["permissions"]["accessAllLibraries"] is True
 
 
 def test_admin_role_maps_to_admin_type(configured, monkeypatch):
@@ -167,24 +161,45 @@ def test_unreachable_server_reports_error(configured, monkeypatch):
     assert result["status"] == "error"
 
 
-def test_new_user_with_all_library_access_needs_no_grant(configured, monkeypatch):
-    """ABS gives new users accessAllLibraries; that is a finished, recordable create."""
+def test_new_user_created_disabled_is_patched_on(configured, monkeypatch):
+    """If ABS ignores the create settings, the user is PATCHed enabled with explicit access."""
     gets = []
+    patches = []
 
     def fake_get(url, **k):
         gets.append(url)
         if url.endswith("/api/users"):
             return FakeResponse(200, payload={"users": [{"id": "u1", "username": "austin"}] if len(gets) > 1 else []})
-        return FakeResponse(200, payload={"id": "u1", "permissions": {"accessAllLibraries": True}})
+        return FakeResponse(200, payload={"id": "u1", "isActive": False,
+                                          "permissions": {"download": True, "accessAllLibraries": True,
+                                                          "accessExplicitContent": False}})
 
-    def no_put(*a, **k):
-        raise AssertionError("no PUT needed")
+    def fake_patch(url, headers=None, json=None, timeout=None):
+        patches.append((url, json))
+        return FakeResponse(200)
 
     monkeypatch.setattr(abs_user_sync.http_requests, "get", fake_get)
     monkeypatch.setattr(abs_user_sync.http_requests, "post", lambda url, **k: FakeResponse(201))
-    monkeypatch.setattr(abs_user_sync.http_requests, "put", no_put)
+    monkeypatch.setattr(abs_user_sync.http_requests, "patch", fake_patch)
 
     assert abs_user_sync.provision_abs_user("austin", "pw1234")["status"] == "created"
+    [(url, body)] = patches
+    assert url == "https://audiobooks.sullyflix.com/api/users/u1"
+    assert body["isActive"] is True
+    assert body["permissions"]["accessExplicitContent"] is True
+    assert body["permissions"]["download"] is True  # existing permissions kept
+
+
+def test_password_update_uses_patch(configured, monkeypatch):
+    """ABS has no PUT /api/users/:id; password changes must PATCH just the password."""
+    patches = []
+    monkeypatch.setattr(abs_user_sync.http_requests, "get",
+                        lambda url, **k: FakeResponse(200, payload={"users": [{"id": "u1", "username": "Alice"}]}))
+    monkeypatch.setattr(abs_user_sync.http_requests, "patch",
+                        lambda url, headers=None, json=None, timeout=None: patches.append((url, json)) or FakeResponse(200))
+
+    assert abs_user_sync.update_abs_password("alice", "new-pw")["status"] == "updated"
+    assert patches == [("https://audiobooks.sullyflix.com/api/users/u1", {"password": "new-pw"})]
 
 
 def test_is_enabled(configured):

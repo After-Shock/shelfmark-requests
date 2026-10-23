@@ -63,51 +63,48 @@ def _abs_user_exists(base_url: str, token: str, username: str) -> Optional[bool]
         return None
 
 
-def _get_all_library_ids(base_url: str, token: str) -> list[str]:
-    """Return all library IDs visible to the configured admin token."""
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = http_requests.get(f"{base_url}/api/libraries", headers=headers, timeout=10)
-    resp.raise_for_status()
-    return [str(lib["id"]) for lib in resp.json().get("libraries", []) if lib.get("id")]
+# What every account created from the requests site gets on Audiobookshelf.
+# Without these ABS creates the user disabled and hides explicit books.
+_NEW_USER_SETTINGS = {
+    "isActive": True,
+    "permissions": {
+        "download": True,
+        "update": False,
+        "delete": False,
+        "upload": False,
+        "createEreader": False,
+        "accessAllLibraries": True,
+        "accessAllTags": True,
+        "accessExplicitContent": True,
+        "selectedTagsNotAccessible": False,
+    },
+}
 
 
-def _grant_all_libraries(base_url: str, token: str, username: str) -> Dict[str, Any]:
-    """Grant a user access to every ABS library.
+def _ensure_new_user_settings(base_url: str, token: str, username: str) -> Dict[str, Any]:
+    """Make sure a just-created ABS user is enabled, sees every library, and allows explicit content.
 
-    ABS has used different field names across releases; update the field already
-    present on the user object when possible, and default to librariesAccessible.
+    Some ABS versions ignore these fields on create, so check and PATCH if needed.
     """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     user = _find_abs_user(base_url, token, username)
-    if user is None:
-        return {"status": "error", "message": "Audiobookshelf account created, but user lookup failed while granting libraries"}
-
-    user_id = user.get("id")
-    if not user_id:
-        return {"status": "error", "message": "Audiobookshelf account created, but returned user had no id"}
-
+    if not user or not user.get("id"):
+        return {"status": "error", "message": "Audiobookshelf account created, but user lookup failed while enabling it"}
+    user_id = user["id"]
     detail = http_requests.get(f"{base_url}/api/users/{user_id}", headers=headers, timeout=10)
     if detail.status_code == 200:
         user = detail.json() or user
-    if (user.get("permissions") or {}).get("accessAllLibraries"):
-        return {"status": "created", "message": "Audiobookshelf account created with all library access"}
+    perms = user.get("permissions") or {}
+    wanted = _NEW_USER_SETTINGS["permissions"]
+    if user.get("isActive") and all(perms.get(k) == wanted[k] for k in ("accessAllLibraries", "accessExplicitContent")):
+        return {"status": "created", "message": "Audiobookshelf account created"}
 
-    library_ids = _get_all_library_ids(base_url, token)
-    if not library_ids:
-        return {"status": "created", "message": "Audiobookshelf account created; no libraries found to grant"}
-
-    access_key = "librariesAccessible"
-    for candidate in ("librariesAccessible", "libraries_access", "librariesAccess"):
-        if candidate in user:
-            access_key = candidate
-            break
-    user[access_key] = library_ids
-
-    resp = http_requests.put(f"{base_url}/api/users/{user_id}", headers=headers, json=user, timeout=15)
+    payload = {"isActive": True, "permissions": {**perms, **{k: wanted[k] for k in ("accessAllLibraries", "accessAllTags", "accessExplicitContent")}}}
+    resp = http_requests.patch(f"{base_url}/api/users/{user_id}", headers=headers, json=payload, timeout=15)
     if resp.status_code in (200, 204):
-        return {"status": "created", "message": "Audiobookshelf account created with all library access"}
-    logger.warning("ABS library grant for '%s' failed with status %d: %s", username, resp.status_code, resp.text[:500])
-    return {"status": "error", "message": "Audiobookshelf account created, but granting library access failed"}
+        return {"status": "created", "message": "Audiobookshelf account created"}
+    logger.warning("Enabling ABS user '%s' failed with status %d: %s", username, resp.status_code, resp.text[:500])
+    return {"status": "error", "message": "Audiobookshelf account created, but enabling it failed"}
 
 
 def update_abs_password(username: str, password: str) -> Dict[str, Any]:
@@ -125,11 +122,10 @@ def update_abs_password(username: str, password: str) -> Dict[str, Any]:
         user_id = user.get("id")
         if not user_id:
             return {"status": "error", "message": "Audiobookshelf user had no id"}
-        detail = http_requests.get(f"{base_url}/api/users/{user_id}", headers=headers, timeout=10)
-        if detail.status_code == 200:
-            user = detail.json() or user
-        user["password"] = password
-        resp = http_requests.put(f"{base_url}/api/users/{user_id}", headers=headers, json=user, timeout=15)
+        # ABS only has PATCH /api/users/:id (there is no PUT).
+        resp = http_requests.patch(
+            f"{base_url}/api/users/{user_id}", headers=headers, json={"password": password}, timeout=15
+        )
         if resp.status_code in (200, 204):
             return {"status": "updated", "message": "Audiobookshelf password updated"}
         if resp.status_code == 403:
@@ -174,18 +170,19 @@ def provision_abs_user(username: str, password: str, role: str = "user") -> Dict
         "username": username,
         "password": password,
         "type": "admin" if role == "admin" else "user",
+        **_NEW_USER_SETTINGS,
     }
     try:
         resp = http_requests.post(f"{base_url}/api/users", headers=headers, json=payload, timeout=15)
         if resp.status_code in (200, 201):
             logger.info("Created Audiobookshelf account for user '%s'", username)
             try:
-                return _grant_all_libraries(base_url, token, username)
+                return _ensure_new_user_settings(base_url, token, username)
             except http_requests.RequestException as e:
-                logger.warning("ABS library grant for '%s' failed: %s", username, e)
+                logger.warning("Enabling ABS user '%s' failed: %s", username, e)
                 return {
                     "status": "error",
-                    "message": "Audiobookshelf account created, but granting library access failed",
+                    "message": "Audiobookshelf account created, but enabling it failed",
                 }
         if resp.status_code == 403:
             logger.error(
