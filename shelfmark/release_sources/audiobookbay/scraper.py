@@ -126,7 +126,8 @@ def search_audiobookbay(
         List of dicts with keys: title, link, cover, language, format, bitrate, size, posted_date
     """
     results = []
-    query = normalize_search_punctuation(query)
+    # ABB 301s any search containing uppercase letters to its homepage (seen 2026-10-24).
+    query = normalize_search_punctuation(query).lower()
     rate_limit_delay = config.get("ABB_RATE_LIMIT_DELAY", 1.0)
     session = requests.Session()
 
