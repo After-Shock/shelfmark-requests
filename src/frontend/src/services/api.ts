@@ -592,7 +592,7 @@ export const changePassword = async (data: {
     body: JSON.stringify({ password: data.new_password }),
   });
   const warn = result.warnings?.length ? ` Some library passwords could not be updated: ${result.warnings.join('; ')}` : '';
-  return { success: true, message: `Password changed on this site and your linked library accounts.${warn}` };
+  return { success: true, message: warn };
 };
 
 export type LibraryService = 'audiobookshelf' | 'calibre_web';

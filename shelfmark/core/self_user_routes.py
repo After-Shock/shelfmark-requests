@@ -256,7 +256,11 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
         if status.get("linked"):
             return jsonify({"error": "That account is already linked"}), 409
         if not user.get("password_hash") or not check_password_hash(user["password_hash"], password):
-            return jsonify({"error": "Your requests-site password is incorrect"}), 403
+            return jsonify({
+                "error": "That's not your password for this site. Forgot it? Set a new one under "
+                         "Set Password below, then try again. A new password also applies to any "
+                         "Ebooks or Audiobooks accounts you've already linked."
+            }), 403
 
         if status.get("has_account"):
             if not verify_library_login(service, user["username"], data.get("app_password") or ""):

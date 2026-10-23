@@ -66,6 +66,12 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
     }
   };
 
+  const linkedApps = libraryAccounts
+    ? (['calibre_web', 'audiobookshelf'] as LibraryService[])
+        .filter((s) => libraryAccounts[s]?.linked)
+        .map((s) => (s === 'calibre_web' ? 'Ebooks' : 'Audiobooks'))
+    : [];
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
@@ -84,7 +90,12 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
       const result = await changePassword({
         new_password: newPassword,
       });
-      onShowToast(result.message || 'Password changed successfully', 'success');
+      onShowToast(
+        (linkedApps.length > 0
+          ? `Password changed here and on ${linkedApps.join(' and ')}.`
+          : 'Password changed.') + result.message,
+        result.message ? 'info' : 'success',
+      );
       setNewPassword('');
       setConfirmPassword('');
       onClose();
@@ -233,7 +244,12 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
             </div>
           )}
 
-          <h3 className="text-lg font-medium mb-4">Set Password</h3>
+          <h3 className="text-lg font-medium mb-1">Set Password</h3>
+          <p className="text-sm opacity-70 mb-4">
+            {linkedApps.length > 0
+              ? `This also changes your password on your linked ${linkedApps.join(' and ')} account${linkedApps.length > 1 ? 's' : ''}.`
+              : 'This changes your password on this site. It also applies to any Ebooks or Audiobooks accounts you link later.'}
+          </p>
           <form onSubmit={handleSubmit}>
             <div className="mb-4">
               <label htmlFor="new-password" className="block text-sm font-medium mb-2">
