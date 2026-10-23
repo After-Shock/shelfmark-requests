@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   addLibraryAccount,
   changePassword,
@@ -65,6 +65,12 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
       setIsAddingLibrary(false);
     }
   };
+
+  const addFormRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    // On phones the form opens below the fold; bring it into view.
+    if (addingService) addFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [addingService]);
 
   const linkedApps = libraryAccounts
     ? (['calibre_web', 'audiobookshelf'] as LibraryService[])
@@ -175,7 +181,11 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                 </div>
               ))}
               {addingService && (
-                <form onSubmit={handleAddLibrary} className="mt-3">
+                <form
+                  onSubmit={handleAddLibrary}
+                  className="mt-3"
+                  ref={addFormRef}
+                >
                   {isLinking && (
                     <>
                       <label htmlFor="app-password" className="block text-sm font-medium mb-2">
@@ -184,6 +194,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                       <input
                         type="password"
                         id="app-password"
+                        autoFocus
                         value={appPassword}
                         onChange={(e) => setAppPassword(e.target.value)}
                         disabled={isAddingLibrary}
@@ -207,6 +218,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                   <input
                     type="password"
                     id="library-password"
+                    autoFocus={!isLinking}
                     value={libraryPassword}
                     onChange={(e) => setLibraryPassword(e.target.value)}
                     disabled={isAddingLibrary}
