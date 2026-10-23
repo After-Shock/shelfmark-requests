@@ -606,7 +606,7 @@ export const addLibraryAccount = async (data: {
   service: LibraryService;
   password: string;
   app_password?: string;
-}): Promise<{ success: boolean; message: string }> => {
+}): Promise<{ success: boolean; message: string; app_url?: string | null; username?: string }> => {
   return fetchJSON(`${API_BASE}/users/me/library-accounts`, {
     method: 'POST',
     body: JSON.stringify(data),

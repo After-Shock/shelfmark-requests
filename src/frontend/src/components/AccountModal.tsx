@@ -28,6 +28,9 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
   const [libraryPassword, setLibraryPassword] = useState('');
   const [appPassword, setAppPassword] = useState('');
   const [isAddingLibrary, setIsAddingLibrary] = useState(false);
+  const [addedNotice, setAddedNotice] = useState<
+    { label: string; linked: boolean; appUrl?: string | null; username?: string } | null
+  >(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -53,6 +56,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
         ...(isLinking ? { app_password: appPassword } : {}),
       });
       onShowToast(result.message, 'success');
+      setAddedNotice({ label: addingLabel ?? '', linked: isLinking, appUrl: result.app_url, username: result.username });
       setLibraryAccounts((prev) =>
         prev ? { ...prev, [addingService]: { offered: true, has_account: true, linked: true } } : prev,
       );
@@ -113,6 +117,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
   };
 
   const handleClose = () => {
+    setAddedNotice(null);
     setNewPassword('');
     setConfirmPassword('');
     cancelLibrary();
@@ -170,7 +175,10 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setAddingService(key)}
+                      onClick={() => {
+                        setAddedNotice(null);
+                        setAddingService(key);
+                      }}
                       disabled={isAddingLibrary}
                       className="px-3 py-1.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
                       style={{ backgroundColor: theme.button.secondary }}
@@ -180,6 +188,35 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                   )}
                 </div>
               ))}
+              {addedNotice && (
+                <div
+                  role="status"
+                  className="mt-3 p-3 rounded-lg text-sm border"
+                  style={{ borderColor: theme.primary.turquoise, backgroundColor: 'rgba(20, 184, 166, 0.1)' }}
+                >
+                  <p className="font-medium mb-1">
+                    {addedNotice.linked
+                      ? `✓ Your ${addedNotice.label} account is linked`
+                      : `🎉 You're signed up for ${addedNotice.label}!`}
+                  </p>
+                  <p className="opacity-80">
+                    {addedNotice.linked ? 'It now uses your password from this site. ' : ''}
+                    Sign in
+                    {addedNotice.appUrl ? (
+                      <>
+                        {' at '}
+                        <a href={addedNotice.appUrl} target="_blank" rel="noreferrer" className="font-medium underline" style={{ color: theme.primary.turquoise }}>
+                          {addedNotice.appUrl.replace(/^https?:\/\//, '')}
+                        </a>
+                      </>
+                    ) : (
+                      ` to ${addedNotice.label}`
+                    )}
+                    {' with username '}
+                    <span className="font-medium">{addedNotice.username}</span> and your password from this site.
+                  </p>
+                </div>
+              )}
               {addingService && (
                 <form
                   onSubmit={handleAddLibrary}

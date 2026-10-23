@@ -1,7 +1,7 @@
 """Self-service user account routes."""
 
 from functools import wraps
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from flask import Flask, jsonify, request, session
 from shelfmark.core.signup_provisioning import get_warnings, set_password
@@ -163,6 +163,14 @@ def _get_allowed_self_settings_keys(visible_sections: list[str]) -> set[str]:
     return allowed_keys
 
 
+def _app_link(service: str) -> Optional[str]:
+    """Public URL of a library app (e.g. https://audiobooks.example.com), if configured."""
+    from shelfmark.core.password_reset import _app_host
+
+    host = _app_host(service)
+    return f"https://{host}" if "." in host else None
+
+
 def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
     """Register self-service user endpoints."""
 
@@ -270,14 +278,16 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
             results = set_password(user_db, user_db.get_user(user_id=user_id), password)
             if results.get(service, {}).get("status") == "error":
                 return jsonify({"error": results[service].get("message") or "Linked, but the password update failed"}), 502
-            return jsonify({"success": True, "message": "Linked. That app now uses your requests-site password."})
+            return jsonify({"success": True, "message": "Linked. That app now uses your requests-site password.",
+                            "app_url": _app_link(service), "username": user["username"]})
 
         result = provision_signup_accounts(
             user["username"], password, email=user.get("email"), role="user", services={service: True}
         ).get(service, {"status": "error", "message": "Not created"})
         record_provisioned_services(user_db, user_id, {service: result})
         if result["status"] == "created":
-            return jsonify({"success": True, "message": "Account created. Log in there with your Shelfmark username and password."})
+            return jsonify({"success": True, "message": "Account created. Log in there with your Shelfmark username and password.",
+                            "app_url": _app_link(service), "username": user["username"]})
         if result["status"] == "exists":
             return jsonify({"error": "You already have an account there"}), 409
         return jsonify({"error": result.get("message") or "Could not create the account"}), 502
