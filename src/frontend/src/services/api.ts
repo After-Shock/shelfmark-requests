@@ -596,7 +596,12 @@ export const changePassword = async (data: {
 };
 
 export type LibraryService = 'audiobookshelf' | 'calibre_web';
-export type LibraryAccounts = Record<LibraryService, { offered: boolean; has_account: boolean; linked: boolean }>;
+export type LibraryAccounts = Record<LibraryService, {
+  offered: boolean;
+  has_account: boolean;
+  linked: boolean;
+  unavailable?: boolean; // offered, but couldn't be reached just now
+}>;
 
 export const getLibraryAccounts = async (): Promise<LibraryAccounts> => {
   return fetchJSON(`${API_BASE}/users/me/library-accounts`);

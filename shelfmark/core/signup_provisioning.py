@@ -160,7 +160,10 @@ def offered_services() -> set:
 
 
 def library_account_status(user: Dict[str, Any]) -> Dict[str, Dict[str, bool]]:
-    """For each library app: offered here? same-named account there? linked to this user?"""
+    """For each library app: offered here? same-named account there? linked to this user?
+
+    An app that couldn't be reached is reported as {"offered": False, "unavailable": True}.
+    """
     linked = parse_provisioned_services(user.get("provisioned_services"))
     offered = offered_services()
     status = {key: {"offered": False, "has_account": False, "linked": False} for key in _SERVICE_KEYS}
@@ -169,6 +172,8 @@ def library_account_status(user: Dict[str, Any]) -> Dict[str, Dict[str, bool]]:
             has_account = _find_library_account(service, user["username"]) is not None
         except Exception as e:
             logger.warning("Could not check %s account for '%s': %s", service, user["username"], e)
+            # offered stays False so Add/Link refuse; the UI shows "couldn't check".
+            status[service]["unavailable"] = True
             continue
         status[service] = {"offered": True, "has_account": has_account, "linked": has_account and service in linked}
     return status

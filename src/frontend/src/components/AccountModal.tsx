@@ -161,17 +161,30 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
 
         {/* Content */}
         <div className="px-6 py-6">
-          {libraryAccounts && LIBRARY_LABELS.some(([key]) => libraryAccounts[key].offered) && (
+          {libraryAccounts && LIBRARY_LABELS.some(([key]) => libraryAccounts[key].offered || libraryAccounts[key].unavailable) && (
             <div className="mb-6 pb-6 border-b" style={{ borderColor: 'var(--border-muted)' }}>
               <h3 className="text-lg font-medium mb-1">Library Access</h3>
               <p className="text-sm opacity-70 mb-4">
                 Linked apps use your password from this site. Changing or resetting it here updates them too.
               </p>
-              {LIBRARY_LABELS.filter(([key]) => libraryAccounts[key].offered).map(([key, label]) => (
-                <div key={key} className="flex items-center justify-between py-2">
-                  <span className="font-medium">{label}</span>
-                  {libraryAccounts[key].linked ? (
-                    <span className="text-sm opacity-70">&#10003; Linked</span>
+              {LIBRARY_LABELS.filter(([key]) => libraryAccounts[key].offered || libraryAccounts[key].unavailable).map(([key, label]) => (
+                <div key={key} className="flex items-center justify-between gap-3 py-2">
+                  <div>
+                    <div className="font-medium">{label}</div>
+                    {!libraryAccounts[key].linked && (
+                      <div className="text-xs opacity-70">
+                        {libraryAccounts[key].unavailable
+                          ? "Couldn't check right now. Try again later."
+                          : libraryAccounts[key].has_account
+                            ? 'Not linked yet'
+                            : 'No account yet'}
+                      </div>
+                    )}
+                  </div>
+                  {libraryAccounts[key].unavailable ? null : libraryAccounts[key].linked ? (
+                    <span className="px-2.5 py-1 rounded-lg text-sm font-semibold bg-green-500/20 text-green-700 dark:text-green-300">
+                      &#10003; Linked
+                    </span>
                   ) : (
                     <button
                       type="button"

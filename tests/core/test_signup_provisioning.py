@@ -485,3 +485,17 @@ def test_cwa_password_update_matches_name_case_insensitively_only_when_unambiguo
     assert cwa.update_cwa_password("Sarah", "pw")["status"] == "updated"  # exact name wins
     hashes = dict(conn.execute("SELECT name, password FROM user"))
     assert hashes["sarah"] == "x" and check_password_hash(hashes["Sarah"], "pw")
+
+
+def test_unreachable_library_is_reported_unavailable_not_offered(monkeypatch):
+    monkeypatch.setattr(signup_provisioning, "offered_services", lambda: {"calibre_web", "audiobookshelf"})
+
+    def find(service, username):
+        if service == "audiobookshelf":
+            raise ConnectionError("ABS down")
+        return {"username": username}
+
+    monkeypatch.setattr(signup_provisioning, "_find_library_account", find)
+    status = signup_provisioning.library_account_status({"username": "dave", "provisioned_services": "calibre_web"})
+    assert status["calibre_web"] == {"offered": True, "has_account": True, "linked": True}
+    assert status["audiobookshelf"] == {"offered": False, "has_account": False, "linked": False, "unavailable": True}
