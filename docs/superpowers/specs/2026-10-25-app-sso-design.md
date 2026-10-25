@@ -29,7 +29,8 @@ Audiobookshelf mobile apps (they gain an optional "Login with Sullyflix" button)
 `GET /api/sso/<service>` (`calibre_web` | `audiobookshelf`), on books.sullyflix.com.
 The frontend shortcut links always point here.
 
-- Not signed in, not linked, or user inactive → 302 to the app's plain URL (today's behaviour).
+- Not signed in, not linked, or SSO not enabled for that app → 302 to the app's plain URL
+  (today's behaviour). Shelfmark has no disabled-user flag; Audiobookshelf refuses its own inactive users.
 - Linked → start that app's SSO (below).
 
 ## Ebooks: hand the browser a real Calibre-Web session
@@ -69,9 +70,12 @@ Issuer = `PUBLIC_URL`. Endpoints:
 - `sub` = `shelfmark-<users.id>`, never changes.
 - The **linked** check is the security boundary: Audiobookshelf trusts `preferred_username`,
   so only users who proved ownership by linking get a code.
-- Registered redirect URIs: `https://<ABS host>/auth/openid/callback` and `audiobookshelf://oauth`.
+- Registered redirect URIs: `https://<ABS host>/auth/openid/callback` (web) and
+  `https://<ABS host>/auth/openid/mobile-redirect` (ABS's mobile relay to `audiobookshelf://oauth`).
 - Secrets live only on prod: RSA key `/config/oidc_signing_key.pem` (generated on first use, 600),
-  client config `/config/oidc_clients.json` (600). Never in the repo.
+  per-app switch + ABS client id/secret in `/config/app_sso.json` (600). Never in the repo.
+  An app is only used for SSO when `app_sso.json` has `enabled: true` for it, so the code is inert
+  until configured and each app can be switched off without a redeploy.
 - JWT signing with `authlib.jose` (already a dependency). No authlib authorization-server models.
 - Login page honours `?next=` for same-site relative paths only (`/…`, not `//…`).
 
@@ -80,17 +84,18 @@ Audiobookshelf settings (via its admin API, using shelfmark's existing token): a
 button text "Login with Sullyflix", auto-register **off**, match existing by **username**,
 auto-launch **off**, mobile redirect `audiobookshelf://oauth`.
 
-`/api/sso/audiobookshelf` for linked users → 302 to Audiobookshelf's OIDC entry URL (exact URL
-confirmed from its web client during implementation).
+`/api/sso/audiobookshelf` for linked users → 302 to `https://<ABS host>/auth/openid?callback=https://<ABS host>/login`
+(the URL Audiobookshelf's own login button uses).
 
 ## Files
 
 - `shelfmark/core/app_sso.py` — `/api/sso/<service>`, Ebooks pass + `/_sso/login`.
 - `shelfmark/core/oidc_provider.py` — OIDC endpoints, code/token stores, key loading.
 - `shelfmark/main.py` — register routes.
-- Frontend: shortcut hrefs → `/api/sso/<service>`; LoginPage `next` support.
+- Frontend: shortcut hrefs → `/api/sso/<service>` (Header.tsx); after login, `useAuth` follows `?next=`
+  only when it starts with `/api/oidc/`.
 - `deploy/traefik/ebooks-sso.yml`.
-- Tests: `tests/core/test_app_sso.py`, `tests/core/test_oidc_provider.py`.
+- Tests: `tests/core/test_app_sso.py`.
 
 ## Tests
 
@@ -106,7 +111,7 @@ confirmed from its web client during implementation).
    plain URLs on any failure).
 2. Add Traefik file; live-test Ebooks with an admin test account.
 3. Configure Audiobookshelf OIDC; live-test with a linked account.
-4. Rollback: remove `openid` from Audiobookshelf auth methods, delete `ebooks-sso.yml`,
-   redeploy `signup-branch`.
+4. Rollback: set `enabled: false` in `app_sso.json` (instant), remove `openid` from Audiobookshelf
+   auth methods, delete `ebooks-sso.yml`, redeploy `signup-branch`.
 
 Out of scope: single sign-out across sites; auto-registering Audiobookshelf users via OIDC.

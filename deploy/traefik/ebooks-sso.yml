@@ -1,0 +1,21 @@
+# Ebooks shortcut sign-in: books.sullyflix.com/api/sso/calibre_web sends linked
+# users to ebooks.sullyflix.com/_sso/login?t=<60s pass>. This route hands just
+# that path to the requests site, which sets a Calibre-Web session cookie on the
+# ebooks host and redirects to /. Everything else still goes to Calibre-Web.
+# Installed on the host as /opt/traefik/ebooks-sso.yml (file provider).
+# Rollback: delete this file (Traefik reloads it), or set calibre_web.enabled
+# false in /opt/shelfmark-requests/config/app_sso.json.
+http:
+  routers:
+    ebooks-sso:
+      rule: "Host(`ebooks.sullyflix.com`) && PathPrefix(`/_sso/`)"
+      entryPoints:
+        - websecure
+      priority: 100
+      service: books-shelfmark@docker
+      middlewares:
+        - globalHeaders@file
+        - secureHeaders@file
+      tls:
+        certResolver: cfdns
+        options: securetls@file

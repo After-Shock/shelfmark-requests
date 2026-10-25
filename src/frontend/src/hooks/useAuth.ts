@@ -103,6 +103,14 @@ export function useAuth(options: UseAuthOptions = {}): UseAuthReturn {
         setIsAuthenticated(true);
         setIsAdmin(authResponse.is_admin || false);
         setLoginError(null);
+        // Resume an Audiobooks sign-in that sent the user here
+        // (/login?next=/api/oidc/authorize?...). Only that server route, so
+        // `next` can't redirect anywhere else.
+        const next = new URLSearchParams(window.location.search).get('next') || '';
+        if (next.startsWith('/api/oidc/')) {
+          window.location.replace(next);
+          return;
+        }
         navigate('/', { replace: true });
       } else {
         setLoginError(response.error || 'Login failed');

@@ -181,7 +181,7 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
       {/* Book Library Button */}
       {calibreWebUrl && (
         <a
-          href={calibreWebUrl}
+          href="/api/sso/calibre_web"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-3 py-2 rounded-full hover-action transition-all duration-200 text-gray-900 dark:text-gray-100"
@@ -198,7 +198,7 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
       {/* Audiobook Library Button */}
       {audiobookLibraryUrl && (
         <a
-          href={audiobookLibraryUrl}
+          href="/api/sso/audiobookshelf"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 px-3 py-2 rounded-full hover-action transition-all duration-200 text-gray-900 dark:text-gray-100"

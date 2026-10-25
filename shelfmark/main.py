@@ -141,6 +141,10 @@ try:
     register_admin_routes(app, user_db, request_db)
     register_self_user_routes(app, user_db)
     register_request_routes(app, request_db, user_db)
+    from shelfmark.core.app_sso import register_app_sso_routes
+    from shelfmark.core.oidc_provider import register_oidc_provider_routes
+    register_app_sso_routes(app, user_db)
+    register_oidc_provider_routes(app, user_db)
     if not app.config.get("TESTING"):
         from shelfmark.core.request_routes import resume_interrupted_requests
         threading.Thread(
