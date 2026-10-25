@@ -87,7 +87,7 @@ def test_audiobooks_shortcut_starts_abs_openid_login(site):
     sign_in(client, dave)
     loc = client.get("/api/sso/audiobookshelf").location
     assert loc.startswith(f"{ABS}/auth/openid?callback=")
-    assert parse_qs(urlsplit(loc).query)["callback"] == [f"{ABS}/login"]
+    assert parse_qs(urlsplit(loc).query)["callback"] == [f"{ABS}/audiobookshelf/login"]
 
 
 def test_calibre_web_handoff_sets_a_session_calibre_web_accepts(site, cwa_db):

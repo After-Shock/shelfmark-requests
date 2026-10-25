@@ -158,7 +158,10 @@ def register_app_sso_routes(app: Flask, user_db: Any) -> None:
         if service == "calibre_web":
             token = _pass_serializer(app.secret_key).dumps(user["id"])
             return redirect(f"{plain}/_sso/login?t={quote(token)}")
-        return redirect(f"{plain}/auth/openid?callback={quote(plain + '/login', safe='')}")
+        # The callback must sit under ABS's router base path (default /audiobookshelf);
+        # ABS rejects anything else. Unprefixed /auth/openid is rewritten into it.
+        callback = f"{plain}/audiobookshelf/login"
+        return redirect(f"{plain}/auth/openid?callback={quote(callback, safe='')}")
 
     @app.route("/_sso/login")
     def app_sso_calibre_web_login():
