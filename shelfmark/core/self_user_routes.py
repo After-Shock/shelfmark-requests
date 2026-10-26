@@ -1,5 +1,6 @@
 """Self-service user account routes."""
 
+import sqlite3
 from functools import wraps
 from typing import Any, Callable, Mapping, Optional
 
@@ -233,6 +234,13 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
         status = library_account_status(user)
         for service, entry in status.items():
             entry["app_url"] = _app_link(service)
+        if status.get("calibre_web", {}).get("linked"):
+            from shelfmark.core.cwa_user_sync import get_cwa_mail_from
+
+            try:
+                status["calibre_web"]["kindle_sender"] = get_cwa_mail_from()
+            except sqlite3.Error as e:
+                logger.warning("Could not read Calibre-Web mail sender: %s", e)
         return jsonify(status)
 
     @app.route("/api/users/me/library-accounts", methods=["POST"])

@@ -602,6 +602,7 @@ export type LibraryAccounts = Record<LibraryService, {
   linked: boolean;
   unavailable?: boolean; // offered, but couldn't be reached just now
   app_url?: string | null;
+  kindle_sender?: string | null; // Calibre-Web's Send-to-Kindle From address
 }>;
 
 export const getLibraryAccounts = async (): Promise<LibraryAccounts> => {

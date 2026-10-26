@@ -186,6 +186,18 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                         <span className="font-medium select-all break-all">{libraryAccounts[key].app_url}</span>
                       </div>
                     )}
+                    {key === 'calibre_web' && libraryAccounts[key].linked && libraryAccounts[key].kindle_sender && (
+                      <div className="text-xs opacity-70 mt-1">
+                        To send books to your Kindle, open Amazon's{' '}
+                        <a href="https://www.amazon.com/mycd" target="_blank" rel="noreferrer" className="underline">
+                          Manage Your Content and Devices
+                        </a>{' '}
+                        → Preferences → Personal Document Settings and add{' '}
+                        <span className="font-medium select-all break-all">{libraryAccounts[key].kindle_sender}</span> to
+                        the Approved Personal Document E-mail List. Then enter your Kindle's email address in your
+                        Ebooks profile.
+                      </div>
+                    )}
                   </div>
                   {libraryAccounts[key].unavailable ? null : libraryAccounts[key].linked ? (
                     <span className="px-2.5 py-1 rounded-lg text-sm font-semibold bg-green-500/20 text-green-700 dark:text-green-300">

@@ -299,6 +299,19 @@ def find_cwa_names_by_email(email: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def get_cwa_mail_from() -> Optional[str]:
+    """The address Calibre-Web sends Send-to-Kindle mail from, if set."""
+    db_path = _get_cwa_db_path()
+    if not db_path:
+        return None
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = conn.execute("SELECT mail_from FROM settings").fetchone()
+    finally:
+        conn.close()
+    return ((row[0] if row else None) or "").strip() or None
+
+
 def verify_cwa_login(username: str, password: str) -> Optional[dict[str, Any]]:
     """Return the Calibre-Web user when username/password is a valid login there, else None."""
     user = find_cwa_user(username)
