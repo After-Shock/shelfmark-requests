@@ -58,7 +58,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
       onShowToast(result.message, 'success');
       setAddedNotice({ label: addingLabel ?? '', linked: isLinking, appUrl: result.app_url, username: result.username });
       setLibraryAccounts((prev) =>
-        prev ? { ...prev, [addingService]: { offered: true, has_account: true, linked: true } } : prev,
+        prev ? { ...prev, [addingService]: { ...prev[addingService], has_account: true, linked: true } } : prev,
       );
       setAddingService(null);
       setLibraryPassword('');
@@ -178,6 +178,12 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                           : libraryAccounts[key].has_account
                             ? 'Not linked yet'
                             : 'No account yet'}
+                      </div>
+                    )}
+                    {key === 'audiobookshelf' && libraryAccounts[key].linked && libraryAccounts[key].app_url && (
+                      <div className="text-xs opacity-70">
+                        Server address for apps like Prologue:{' '}
+                        <span className="font-medium select-all break-all">{libraryAccounts[key].app_url}</span>
                       </div>
                     )}
                   </div>

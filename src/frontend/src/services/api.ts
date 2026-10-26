@@ -601,6 +601,7 @@ export type LibraryAccounts = Record<LibraryService, {
   has_account: boolean;
   linked: boolean;
   unavailable?: boolean; // offered, but couldn't be reached just now
+  app_url?: string | null;
 }>;
 
 export const getLibraryAccounts = async (): Promise<LibraryAccounts> => {

@@ -230,7 +230,10 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
             return user_error
         from shelfmark.core.signup_provisioning import library_account_status
 
-        return jsonify(library_account_status(user))
+        status = library_account_status(user)
+        for service, entry in status.items():
+            entry["app_url"] = _app_link(service)
+        return jsonify(status)
 
     @app.route("/api/users/me/library-accounts", methods=["POST"])
     @_require_authenticated_user
