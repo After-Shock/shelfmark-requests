@@ -280,8 +280,8 @@ def _send_pushover_new_request(req: dict, user_db: UserDB, heading: str = "New R
         logger.warning(f"Failed to send Pushover notification for request #{req.get('id')}: {e}")
 
 
-def _send_discord_new_request(req: dict, user_db: UserDB) -> None:
-    """Send Discord embed notification on new request (best-effort)."""
+def _send_discord_new_request(req: dict, user_db: UserDB, deleted: bool = False) -> None:
+    """Send Discord embed notification on new request, or its deletion by the user (best-effort)."""
     try:
         from shelfmark.core.discord_notifications import send_discord_new_request
         requester = req.get("requester_username")
@@ -298,6 +298,7 @@ def _send_discord_new_request(req: dict, user_db: UserDB) -> None:
             content_type=req.get("content_type", "ebook"),
             cover_url=req.get("cover_url"),
             prefer_alternate_version=bool(req.get("prefer_alternate_version", False)),
+            deleted=deleted,
         )
     except Exception as e:
         logger.warning(f"Discord new-request notification failed for #{req.get('id')}: {e}")
@@ -574,6 +575,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             # The admin got a push for this request, so tell them it's gone.
             if not is_admin and req["status"] in _ACTIVE_GROUP_STATUSES:
                 _send_pushover_new_request(req, user_db, heading="Request Deleted by User")
+                _send_discord_new_request(req, user_db, deleted=True)
             _broadcast_request_update({"id": request_id, "deleted": True})
             if promoted:
                 _broadcast_request_update(promoted)

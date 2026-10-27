@@ -1,7 +1,7 @@
 """Discord webhook notifications for book request events.
 
 Fires rich embeds to a Discord channel on:
-- New book request (admin notification)
+- New book request (admin notification), and its deletion by the user
 - Book fulfilled / available (fulfilled notification)
 """
 
@@ -16,6 +16,7 @@ logger = setup_logger(__name__)
 
 _DISCORD_COLOR_NEW_REQUEST = 0x5865F2   # Discord blurple
 _DISCORD_COLOR_AVAILABLE   = 0x57F287   # Discord green
+_DISCORD_COLOR_DELETED     = 0xED4245   # Discord red
 
 _VALID_WEBHOOK_PREFIXES = (
     "https://discord.com/api/webhooks/",
@@ -67,8 +68,9 @@ def build_new_request_embed(
     content_type: str = "ebook",
     cover_url: Optional[str] = None,
     prefer_alternate_version: bool = False,
+    deleted: bool = False,
 ) -> dict:
-    """Build a Discord embed dict for a new book request."""
+    """Build a Discord embed dict for a new book request, or for its deletion by the user."""
     fields = [{"name": "Title", "value": title, "inline": True}]
     if author:
         fields.append({"name": "Author", "value": author, "inline": True})
@@ -79,8 +81,8 @@ def build_new_request_embed(
         fields.append({"name": "Version", "value": "Prefers graphic/dramatized", "inline": True})
 
     embed: dict = {
-        "title": "🔖 New Book Request",
-        "color": _DISCORD_COLOR_NEW_REQUEST,
+        "title": "🗑️ Request Deleted by User" if deleted else "🔖 New Book Request",
+        "color": _DISCORD_COLOR_DELETED if deleted else _DISCORD_COLOR_NEW_REQUEST,
         "fields": fields,
     }
     if cover_url and (cover_url.startswith("http://") or cover_url.startswith("https://")):
@@ -139,8 +141,9 @@ def send_discord_new_request(
     content_type: str = "ebook",
     cover_url: Optional[str] = None,
     prefer_alternate_version: bool = False,
+    deleted: bool = False,
 ) -> bool:
-    """Send a Discord embed when a new book request is created. Best-effort; never raises."""
+    """Send a Discord embed when a request is created (or deleted by its user). Best-effort; never raises."""
     try:
         if not _is_enabled():
             return False
@@ -152,11 +155,12 @@ def send_discord_new_request(
         embed = build_new_request_embed(
             title=title, author=author, requester=requester,
             content_type=content_type, cover_url=cover_url,
-            prefer_alternate_version=prefer_alternate_version,
+            prefer_alternate_version=prefer_alternate_version, deleted=deleted,
         )
         result = _post_embed(webhook_url, embed)
         if result:
-            logger.info(f"Discord new-request notification sent for: {title!r}")
+            kind = "deleted-request" if deleted else "new-request"
+            logger.info(f"Discord {kind} notification sent for: {title!r}")
         return result
     except Exception as e:
         logger.warning(f"Discord send_discord_new_request failed: {e}")

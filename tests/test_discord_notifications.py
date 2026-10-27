@@ -22,6 +22,13 @@ def test_build_new_request_embed_basic():
     assert "thumbnail" not in embed
 
 
+def test_build_deleted_request_embed():
+    from shelfmark.core.discord_notifications import build_new_request_embed
+    embed = build_new_request_embed(title="Dune", author=None, requester="alice", deleted=True)
+    assert embed["title"] == "🗑️ Request Deleted by User"
+    assert embed["color"] == 0xED4245
+
+
 def test_build_new_request_embed_with_cover():
     from shelfmark.core.discord_notifications import build_new_request_embed
     embed = build_new_request_embed(

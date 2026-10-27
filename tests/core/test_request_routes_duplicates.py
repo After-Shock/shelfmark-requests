@@ -468,10 +468,13 @@ def test_owner_deleting_open_request_pushes_admin(app, request_db):
     login(client, 1)
 
     with patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"), \
-         patch("shelfmark.core.request_routes._send_pushover_new_request") as pushover:
+         patch("shelfmark.core.request_routes._send_pushover_new_request") as pushover, \
+         patch("shelfmark.core.request_routes._send_discord_new_request") as discord:
         assert client.delete(f"/api/requests/{open_req['id']}").status_code == 200
         assert client.delete(f"/api/requests/{done_req['id']}").status_code == 200
 
     pushover.assert_called_once()
     assert pushover.call_args.args[0]["title"] == "Frankenstein"
     assert pushover.call_args.kwargs["heading"] == "Request Deleted by User"
+    discord.assert_called_once()
+    assert discord.call_args.kwargs["deleted"] is True
