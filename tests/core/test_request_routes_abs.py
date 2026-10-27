@@ -162,3 +162,19 @@ class TestAlternateVersionFlag:
         # Flag is coerced to False for ebooks — no warning
         data = json.loads(resp.data)
         assert 'warning' not in data
+
+
+def test_ebook_request_blocked_when_in_calibre_library(app):
+    match = {"title": "Daggermouth: A Dark Dystopian Romance", "author": "H. M. Wolfe"}
+    with app.test_client() as client:
+        with client.session_transaction() as sess:
+            sess['user_id'] = 'testuser'
+            sess['db_user_id'] = 1
+            sess['is_admin'] = False
+        with patch('shelfmark.core.request_routes._get_auth_mode', return_value='builtin'), \
+             patch('shelfmark.core.request_routes.calibre_library.find_match', return_value=match):
+            resp = client.post('/api/requests', json={
+                'title': 'Daggermouth', 'author': 'H.M. Wolfe', 'content_type': 'ebook',
+            })
+    assert resp.status_code == 409
+    assert json.loads(resp.data)['library_match'] == match

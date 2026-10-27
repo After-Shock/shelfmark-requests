@@ -1,5 +1,6 @@
 """SQLite request database for book/audiobook request workflow."""
 
+import re
 import sqlite3
 import threading
 import unicodedata
@@ -33,15 +34,23 @@ def _same_request_identity(
         return False
     if bool(existing.get("prefer_alternate_version")) != bool(prefer_alternate_version):
         return False
-    if provider and provider_id and existing.get("provider") and existing.get("provider_id"):
-        return (
-            _normalize_match_text(existing["provider"]) == _normalize_match_text(provider)
-            and existing["provider_id"].strip() == provider_id.strip()
-        )
+    if (
+        provider and provider_id and existing.get("provider") and existing.get("provider_id")
+        and _normalize_match_text(existing["provider"]) == _normalize_match_text(provider)
+    ):
+        return existing["provider_id"].strip() == provider_id.strip()
+    # No shared provider (e.g. a Google Books pre-release request, then Hardcover on
+    # release day): match on title and author.
     return (
         _normalize_match_text(existing.get("title")) == _normalize_match_text(title)
-        and _normalize_match_text(existing.get("author")) == _normalize_match_text(author)
+        and _author_key(existing.get("author")) == _author_key(author)
     )
+
+
+def _author_key(value: Optional[str]) -> tuple[str, ...]:
+    """Author names without punctuation or initials, so "Sarah J. Maas" == "Sarah Maas"."""
+    words = re.findall(r"\w+", _normalize_match_text(value))
+    return tuple(sorted(w for w in words if len(w) > 1))
 
 
 class RequestGroupIntegrityError(RuntimeError):

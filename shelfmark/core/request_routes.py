@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request, session
 
+from shelfmark.core import calibre_library
 from shelfmark.core.audiobookshelf import abs_client
 from shelfmark.core.logger import setup_logger
 from shelfmark.core.request_db import RequestDB
@@ -423,6 +424,18 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                         }), 409
             except Exception as e:
                 logger.warning("ABS duplicate check failed (skipping): %s", e)
+        else:
+            # Calibre library duplicate check for ebooks (fail open if unreadable)
+            try:
+                library_match = calibre_library.find_match(title, author or "")
+            except Exception as e:
+                logger.warning("Calibre library duplicate check failed (skipping): %s", e)
+                library_match = None
+            if library_match:
+                return jsonify({
+                    "error": "Already in your Ebooks library",
+                    "library_match": library_match,
+                }), 409
 
         try:
             req, outcome = request_db.create_or_join_request(

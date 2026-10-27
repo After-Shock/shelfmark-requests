@@ -781,3 +781,30 @@ def test_delete_requests_by_user_promotes_shared_group(grouped_requests):
     canonicals = [row["id"] for row in rows if row["canonical_request_id"] is None]
     assert canonicals == [linked["id"]]
     assert all(row["canonical_request_id"] == linked["id"] for row in rows if row["id"] != linked["id"])
+
+
+def test_different_providers_fall_back_to_title_and_author(request_db, two_users):
+    # A pre-release request from Google Books, then the same book from Hardcover on release day.
+    first, _ = request_db.create_or_join_request(
+        user_id=two_users[0], title="A Court of Splintered Harmony", author="Sarah Maas",
+        content_type="ebook", provider="googlebooks", provider_id="FxAIEgAAQBAJ",
+        status="prerelease_requested",
+    )
+    second, outcome = request_db.create_or_join_request(
+        user_id=two_users[1], title="A Court of Splintered Harmony", author="Sarah J. Maas",
+        content_type="ebook", provider="hardcover", provider_id="430559",
+    )
+    assert outcome == "joined"
+    assert second["canonical_request_id"] == first["id"]
+
+
+def test_same_provider_different_ids_do_not_join(request_db, two_users):
+    request_db.create_or_join_request(
+        user_id=two_users[0], title="Dune", author="Frank Herbert",
+        content_type="ebook", provider="hardcover", provider_id="1",
+    )
+    _, outcome = request_db.create_or_join_request(
+        user_id=two_users[1], title="Dune", author="Frank Herbert",
+        content_type="ebook", provider="hardcover", provider_id="2",
+    )
+    assert outcome == "created"

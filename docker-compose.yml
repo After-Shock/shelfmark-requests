@@ -51,6 +51,9 @@ services:
       # Audiobookshelf) and the Windows qBittorrent's save folder (/UnRaid/torrents,
       # \\192.168.0.7\Media\torrents on Windows; see the remote path mapping).
       - /media/UnRaid:/UnRaid
+      # Calibre library, read-only: ebook requests are refused when the book is
+      # already there (reads metadata.db; see core/calibre_library.py).
+      - /media/NASmedia2/ebooks:/calibre-library:ro
 
 networks:
   saltbox:
