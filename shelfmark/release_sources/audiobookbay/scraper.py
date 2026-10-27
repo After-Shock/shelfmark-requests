@@ -131,12 +131,12 @@ def search_audiobookbay(
     rate_limit_delay = config.get("ABB_RATE_LIMIT_DELAY", 1.0)
     session = requests.Session()
 
-    # Bootstrap ABB session cookie (PHPSESSID). ABB increasingly serves reliable
-    # search/detail pages only after session initialization, similar to browsers.
-    _bootstrap_abb_session(hostname, session, SEARCH_PAGE_RETRY_ATTEMPTS)
-    
     # Iterate through pages
     for page in range(1, max_pages + 1):
+        # Search without ABB's PHPSESSID: with it, ABB leaves some new uploads out
+        # of the results (seen 2026-10-27). Every response sets one, so clear it per
+        # page. A bootstrapped session is still the fallback below if ABB balks.
+        session.cookies.clear()
         # Construct URL - use + for spaces (matching audiobookbay-automated implementation)
         # This avoids aggressive encoding that PHP-based sites may reject.
         query_encoded = _encode_search_query(query, exact_phrase)

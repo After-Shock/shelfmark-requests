@@ -101,3 +101,24 @@ def test_audiobook_with_no_matching_release_reports_no_automation_resources():
 def test_audiobook_search_failure_is_not_reported_as_unavailable():
     note = _auto_download_note(search_error=True)
     assert note == "Search failed on AudiobookBay. Try again later."
+
+
+def test_search_pages_are_fetched_without_the_session_cookie():
+    # ABB leaves some new uploads out of search results when PHPSESSID is sent (2026-10-27).
+    from shelfmark.release_sources.audiobookbay import scraper
+
+    post = '<div class="post"><div class="postTitle"><h2><a href="/abss/book/">Book - Author</a></h2></div></div>'
+    cookies_at_search = []
+
+    def fake_get(url, *, session, **kwargs):
+        if "?s=" in url:
+            cookies_at_search.append(dict(session.cookies))
+        session.cookies.set("PHPSESSID", "abc")  # every ABB response sets one
+        return f"<html>{post}</html>", url
+
+    with patch.object(scraper.downloader, "html_get_page", side_effect=fake_get), \
+            patch.object(config, "get", side_effect=lambda k, d=None: 0 if k == "ABB_RATE_LIMIT_DELAY" else d):
+        results = scraper.search_audiobookbay("book", max_pages=2)
+
+    assert cookies_at_search == [{}, {}]
+    assert [r["title"] for r in results] == ["Book - Author", "Book - Author"]
