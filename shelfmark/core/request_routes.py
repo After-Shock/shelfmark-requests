@@ -16,7 +16,7 @@ from flask import Flask, jsonify, request, session
 from shelfmark.core import calibre_library
 from shelfmark.core.audiobookshelf import abs_client
 from shelfmark.core.logger import setup_logger
-from shelfmark.core.request_db import RequestDB
+from shelfmark.core.request_db import _ACTIVE_GROUP_STATUSES, RequestDB
 from shelfmark.core.request_notifications import send_request_notification
 from shelfmark.core.user_db import UserDB
 
@@ -259,8 +259,8 @@ def _broadcast_request_update(request_data: dict | None = None) -> None:
         logger.warning(f"Failed to broadcast request update: {e}")
 
 
-def _send_pushover_new_request(req: dict, user_db: UserDB) -> None:
-    """Send Pushover notification to admin when a new request is created (best-effort)."""
+def _send_pushover_new_request(req: dict, user_db: UserDB, heading: str = "New Request") -> None:
+    """Send Pushover notification to admin about a request, new by default (best-effort)."""
     try:
         from shelfmark.core.pushover_notifications import send_new_request_pushover
         user_id = req.get("user_id")
@@ -274,9 +274,10 @@ def _send_pushover_new_request(req: dict, user_db: UserDB) -> None:
             author=req.get("author"),
             requester=requester,
             content_type=req.get("content_type", "ebook"),
+            heading=heading,
         )
     except Exception as e:
-        logger.warning(f"Failed to send Pushover notification for new request #{req.get('id')}: {e}")
+        logger.warning(f"Failed to send Pushover notification for request #{req.get('id')}: {e}")
 
 
 def _send_discord_new_request(req: dict, user_db: UserDB) -> None:
@@ -570,6 +571,9 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             # Owner permanently deleting their own request.
             promoted = request_db.delete_user_request(request_id, req["user_id"])
             logger.info(f"Request #{request_id} permanently deleted by owner")
+            # The admin got a push for this request, so tell them it's gone.
+            if not is_admin and req["status"] in _ACTIVE_GROUP_STATUSES:
+                _send_pushover_new_request(req, user_db, heading="Request Deleted by User")
             _broadcast_request_update({"id": request_id, "deleted": True})
             if promoted:
                 _broadcast_request_update(promoted)

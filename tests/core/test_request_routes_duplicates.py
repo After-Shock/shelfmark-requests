@@ -454,3 +454,24 @@ def test_admin_non_owner_delete_hides_entire_group_and_broadcasts_canonical(app,
     assert promoted["canonical_request_id"] is None
     assert promoted["hidden_from_admin"] == 1
     assert linked["id"] not in [row["id"] for row in admin_rows]
+
+
+def test_owner_deleting_open_request_pushes_admin(app, request_db):
+    open_req, _ = request_db.create_or_join_request(
+        user_id=1, title="Frankenstein", author="Mary Shelley", content_type="ebook"
+    )
+    done_req, _ = request_db.create_or_join_request(
+        user_id=1, title="Dune", author="Frank Herbert", content_type="ebook"
+    )
+    request_db.update_request_status(done_req["id"], "fulfilled")
+    client = app.test_client()
+    login(client, 1)
+
+    with patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"), \
+         patch("shelfmark.core.request_routes._send_pushover_new_request") as pushover:
+        assert client.delete(f"/api/requests/{open_req['id']}").status_code == 200
+        assert client.delete(f"/api/requests/{done_req['id']}").status_code == 200
+
+    pushover.assert_called_once()
+    assert pushover.call_args.args[0]["title"] == "Frankenstein"
+    assert pushover.call_args.kwargs["heading"] == "Request Deleted by User"
