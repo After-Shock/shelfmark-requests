@@ -6,6 +6,7 @@ Authenticated users can create requests; admins can approve/deny them.
 
 from datetime import date, datetime, time as dt_time
 import os
+import re
 import threading
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -928,8 +929,13 @@ def forget_release_retries(request_id: int) -> None:
         _release_retries.pop(request_id, None)
 
 
-def _release_matches_title(book_title: str | None, release_title: str | None) -> bool:
-    """True when a release is the requested work, also trying the title without its subtitle."""
+_BOOK_NUMBER = re.compile(r"(?:\bbook|#|\bvol(?:ume)?\.?)\s*0*(\d+)\b", re.IGNORECASE)
+
+
+def _release_matches_title(
+    book_title: str | None, release_title: str | None, series_position: float | None = None,
+) -> bool:
+    """True when a release is the requested work, also trying both titles without subtitles."""
     from shelfmark.core.audiobookshelf import _titles_match
     from shelfmark.core.search_plan import _SERIES_SUFFIX
 
@@ -937,7 +943,17 @@ def _release_matches_title(book_title: str | None, release_title: str | None) ->
         return False
     # "The Ice Beyond (The Empress of Thorns Book 1)" is still "The Ice Beyond"
     release_title = _SERIES_SUFFIX.sub("", release_title) or release_title
-    return any(_titles_match(t, release_title) for t in {book_title, book_title.split(":")[0]})
+    release_titles = {release_title}
+    # "He Who Fights with Monsters - A LitRPG Adventure, Book 1" is still the book,
+    # unless the subtitle names a different book of the series.
+    for sep in (" - ", ":"):
+        main, found, subtitle = release_title.partition(sep)
+        numbers = {int(n) for n in _BOOK_NUMBER.findall(subtitle)}
+        if found and (not numbers or numbers == {int(series_position or 1)}):
+            release_titles.add(main)
+    return any(
+        _titles_match(t, r) for t in {book_title, book_title.split(":")[0]} for r in release_titles
+    )
 
 
 def _auto_download_request(
@@ -1008,7 +1024,8 @@ def _auto_download_request(
         # requested title from them.
         all_releases = [
             r for r in all_releases
-            if r.source == "direct_download" or _release_matches_title(book.title, r.title)
+            if r.source == "direct_download"
+            or _release_matches_title(book.title, r.title, book.series_position)
         ]
 
         if not all_releases:

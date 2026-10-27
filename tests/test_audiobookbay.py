@@ -73,7 +73,7 @@ def _auto_download_note(releases=None, search_error=False):
         source.search.side_effect = RuntimeError("ABB down")
     else:
         source.search.return_value = [SimpleNamespace(title=t, source="audiobookbay") for t in (releases or [])]
-    book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"])
+    book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"], series_position=None)
     calls = []
     with patch("shelfmark.release_sources.list_available_sources", return_value=[
         {"name": "audiobookbay", "enabled": True, "supported_content_types": ["audiobook"]},
@@ -122,3 +122,22 @@ def test_search_pages_are_fetched_without_the_session_cookie():
 
     assert cookies_at_search == [{}, {}]
     assert [r["title"] for r in results] == ["Book - Author", "Book - Author"]
+
+
+def test_release_subtitle_is_ignored_unless_it_names_another_book():
+    from shelfmark.core.request_routes import _release_matches_title
+
+    # ABB titles for "He Who Fights with Monsters" (book 1) on 2026-10-27, author already split off.
+    abb_results = [
+        "He Who Fights With Monsters, Books 1-12",
+        "He Who Fights with Monsters 12",
+        "He Who Fights with Monsters 9 [updated]",
+        "He Who Fights with Monsters book 3 A LitRPG Adventure",
+        "He Who Fights with Monsters - A LitRPG Adventure, Book 1",
+        "Doctor Who: The War Doctor Begins: He Who Fights With Monsters",
+    ]
+    assert [t for t in abb_results if _release_matches_title("He Who Fights with Monsters", t, 1)] == [
+        "He Who Fights with Monsters - A LitRPG Adventure, Book 1",
+    ]
+    assert not _release_matches_title("He Who Fights with Monsters", "He Who Fights with Monsters - Book 5", 1)
+    assert _release_matches_title("Sing You Home", "Sing You Home: A Novel")
