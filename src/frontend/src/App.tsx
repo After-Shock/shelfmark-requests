@@ -8,7 +8,7 @@ import {
   AppConfig,
   ContentType,
 } from './types';
-import { getBookInfo, getMetadataBookInfo, downloadBook, downloadRelease, cancelDownload, retryDownload, markDownloadComplete, clearCompleted, getConfig } from './services/api';
+import { getBookInfo, getMetadataBookInfo, downloadBook, downloadRelease, cancelDownload, retryDownload, markDownloadComplete, clearCompleted, getConfig, getLibraryAccounts } from './services/api';
 import { useToast } from './hooks/useToast';
 import { useRealtimeStatus } from './hooks/useRealtimeStatus';
 import { useAuth } from './hooks/useAuth';
@@ -258,6 +258,22 @@ function App() {
   const [requestsSidebarOpen, setRequestsSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  // Invite users to link their library accounts; runs until 2026-11-25 (30 days from launch).
+  const [showSyncBanner, setShowSyncBanner] = useState(() => {
+    try { if (localStorage.getItem('syncBannerDismissed')) return false; } catch { /* private mode */ }
+    return Date.now() < new Date('2026-11-25T00:00:00').getTime();
+  });
+  // Only nag users with nothing linked yet. Rechecked when Account Settings closes.
+  const [needsLibrarySync, setNeedsLibrarySync] = useState(false);
+  useEffect(() => {
+    if (!showSyncBanner || !authRequired || !isAuthenticated || isAdmin || accountOpen) return;
+    getLibraryAccounts()
+      .then((accounts) => {
+        const services = Object.values(accounts);
+        setNeedsLibrarySync(services.some((s) => s.offered) && !services.some((s) => s.linked));
+      })
+      .catch(() => setNeedsLibrarySync(false));
+  }, [showSyncBanner, authRequired, isAuthenticated, isAdmin, accountOpen]);
   const [configBannerOpen, setConfigBannerOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [showManualRequestModal, setShowManualRequestModal] = useState(false);
@@ -822,6 +838,34 @@ function App() {
 
   const mainAppContent = (
     <SearchModeProvider searchMode={searchMode}>
+      {showSyncBanner && needsLibrarySync && authRequired && isAuthenticated && !isAdmin && (
+        <div
+          className="relative flex items-center text-white text-sm font-medium"
+          style={{ background: 'linear-gradient(90deg, #00BCD4 0%, #7B3FF2 100%)' }}
+        >
+          <button
+            type="button"
+            onClick={() => setAccountOpen(true)}
+            className="flex-1 overflow-hidden whitespace-nowrap py-2 text-left"
+          >
+            <span className="sync-banner-marquee">
+              📚🎧 Sync your Ebooks and Audiobooks accounts to use one password everywhere: open the menu (top right) → Account → Library Access, or tap here.
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-label="Close banner"
+            title="Close"
+            onClick={() => {
+              setShowSyncBanner(false);
+              try { localStorage.setItem('syncBannerDismissed', '1'); } catch { /* private mode */ }
+            }}
+            className="self-start mx-2 my-1 w-7 h-7 flex items-center justify-center rounded-full text-base font-bold hover:bg-white/20"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       <Header
         calibreWebUrl={config?.calibre_web_url || ''}
         audiobookLibraryUrl={config?.audiobook_library_url || ''}

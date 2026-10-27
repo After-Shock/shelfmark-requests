@@ -183,7 +183,21 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
                     {key === 'audiobookshelf' && libraryAccounts[key].linked && libraryAccounts[key].app_url && (
                       <div className="text-xs opacity-70">
                         Server address for apps like Prologue:{' '}
-                        <span className="font-medium select-all break-all">{libraryAccounts[key].app_url}</span>
+                        <span className="font-medium select-all break-all">{libraryAccounts[key].app_url}</span>{' '}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            // clipboard is undefined over plain http; the .catch covers that too.
+                            Promise.resolve()
+                              .then(() => navigator.clipboard.writeText(libraryAccounts[key].app_url ?? ''))
+                              .then(() => onShowToast('Server address copied', 'success'))
+                              .catch(() => onShowToast("Couldn't copy. Tap the address to select it.", 'error'))
+                          }
+                          className="underline font-medium"
+                          style={{ color: theme.primary.turquoise }}
+                        >
+                          Copy
+                        </button>
                       </div>
                     )}
                     {key === 'calibre_web' && libraryAccounts[key].linked && libraryAccounts[key].kindle_sender && (
