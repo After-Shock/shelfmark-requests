@@ -64,6 +64,25 @@ def test_auto_download_only_keeps_releases_of_the_requested_title():
     assert not _release_matches_title(None, "Dune")
 
 
+def test_release_must_be_by_one_of_the_books_authors():
+    from types import SimpleNamespace
+    from shelfmark.core.request_routes import _release_matches_author
+
+    def abb(raw):
+        title, _, author = raw.rpartition(" - ")
+        return SimpleNamespace(extra={"author": author, "title_raw": raw})
+
+    authors = ["Rebecca Stead", "Wendy Mass"]
+    assert not _release_matches_author(authors, abb("The Lost Library - A.M. Dean"))
+    assert _release_matches_author(authors, abb("The Lost Library - Rebecca Stead, Wendy Mass"))
+    # Narrator last: the author is still in the raw title.
+    assert _release_matches_author(["H. D. Carlton"], abb("Haunting Adeline - H.D. Carlton - Teddy Hamilton"))
+    assert _release_matches_author(["Kate Quinn"], abb("The Astral Library - ate Quinn"))
+    # Nothing to compare against: don't reject.
+    assert _release_matches_author(authors, SimpleNamespace(extra={}))
+    assert _release_matches_author([], abb("The Lost Library - A.M. Dean"))
+
+
 def _auto_download_note(releases=None, search_error=False):
     from types import SimpleNamespace
     from shelfmark.core import request_routes
@@ -72,7 +91,9 @@ def _auto_download_note(releases=None, search_error=False):
     if search_error:
         source.search.side_effect = RuntimeError("ABB down")
     else:
-        source.search.return_value = [SimpleNamespace(title=t, source="audiobookbay") for t in (releases or [])]
+        source.search.return_value = [
+            SimpleNamespace(title=t, source="audiobookbay", extra={}) for t in (releases or [])
+        ]
     book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"], series_position=None)
     calls = []
     with patch("shelfmark.release_sources.list_available_sources", return_value=[

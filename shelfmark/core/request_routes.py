@@ -962,6 +962,25 @@ def _release_matches_title(
     )
 
 
+def _release_matches_author(book_authors: list[str] | None, release) -> bool:
+    """False when the release names its author and none of the book's authors appear.
+
+    "The Lost Library - A.M. Dean" is not Rebecca Stead and Wendy Mass's book.
+    Checks the raw ABB title too, since its last " - " part can be the narrator.
+    """
+    from shelfmark.core.audiobookshelf import _normalize
+
+    extra = release.extra or {}
+    named = " ".join(filter(None, (extra.get("author"), extra.get("title_raw"))))
+    if not named or not book_authors:
+        return True
+    words = set(re.findall(r"\w+", _normalize(named)))
+    # Initials ("J.", "A.M.") are too common to count.
+    return any(
+        w in words for a in book_authors for w in re.findall(r"\w+", _normalize(a)) if len(w) > 2
+    )
+
+
 def _auto_download_request(
     request_db: RequestDB,
     user_db: UserDB,
@@ -1027,11 +1046,12 @@ def _auto_download_request(
 
         # ABB, Libgen and Z-Library match loosely (descriptions, title-only
         # fallback queries), so their top hits can be other books. Only grab the
-        # requested title from them.
+        # requested title, by the requested author, from them.
         all_releases = [
             r for r in all_releases
             if r.source == "direct_download"
-            or _release_matches_title(book.title, r.title, book.series_position)
+            or (_release_matches_title(book.title, r.title, book.series_position)
+                and _release_matches_author(book.authors, r))
         ]
 
         if not all_releases:

@@ -49,6 +49,9 @@ _METADATA_DOWNLOAD_STATES = {"forcedMetaDL", "metaDL"}
 # hash it already knows, rather than holding the download queue on a thin swarm.
 _METADATA_WAIT_POLLS = 20
 _METADATA_WAIT_INTERVAL_SECONDS = 0.5
+# A magnet whose metadata hasn't arrived by then has no live peers. Failing it lets
+# the request move on to its next release; the poll keeps the stall watchdog quiet.
+_METADATA_TIMEOUT_SECONDS = 20 * 60
 _ONE_WEEK_IN_SECONDS = 604800
 
 
@@ -597,6 +600,7 @@ class QBittorrentClient(DownloadClient):
                 ),  # None = use default progress message
                 "stalledDL": ("downloading", "Stalled"),
                 "metaDL": ("downloading", "Fetching metadata"),
+                "forcedMetaDL": ("downloading", "Fetching metadata"),
                 "forcedDL": ("downloading", None),
                 "allocating": ("downloading", "Allocating space"),
                 "uploading": ("seeding", "Seeding"),
@@ -617,6 +621,12 @@ class QBittorrentClient(DownloadClient):
 
             torrent_state = getattr(torrent, "state", "unknown")
             state, message = state_info.get(torrent_state, ("unknown", str(torrent_state)))
+            added_on = getattr(torrent, "added_on", 0) or 0
+            if (torrent_state in _METADATA_DOWNLOAD_STATES and added_on
+                    and time.time() - added_on > _METADATA_TIMEOUT_SECONDS):
+                return DownloadStatus.error(
+                    f"No peers: torrent metadata never arrived ({_METADATA_TIMEOUT_SECONDS // 60} min)"
+                )
 
             torrent_progress = getattr(torrent, "progress", 0.0)
             # Don't mark complete while files are being moved to final location

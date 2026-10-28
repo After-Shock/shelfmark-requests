@@ -28,7 +28,9 @@ class MockTorrent:
         content_path="/downloads/test.txt",
         infohash_v1=None,
         infohash_v2=None,
+        added_on=None,
     ):
+        self.added_on = added_on
         self.hash = hash_val
         self.name = name
         self.progress = progress
@@ -54,6 +56,8 @@ class MockTorrent:
             result["infohash_v1"] = self.infohash_v1
         if self.infohash_v2 is not None:
             result["infohash_v2"] = self.infohash_v2
+        if self.added_on is not None:
+            result["added_on"] = self.added_on
         return result
 
 
@@ -348,6 +352,35 @@ class TestQBittorrentClientGetStatus:
             assert status.complete is False
             assert status.download_speed == 1024000
             assert status.eta == 3600
+
+    @pytest.mark.parametrize("age_minutes, expected", [(5, "downloading"), (25, "error")])
+    def test_get_status_gives_up_on_magnet_metadata(self, monkeypatch, age_minutes, expected):
+        """A magnet stuck fetching metadata (no peers) errors after 20 min so the next release is tried."""
+        import time
+
+        config_values = {"QBITTORRENT_URL": "http://localhost:8080", "QBITTORRENT_CATEGORY": "test"}
+        monkeypatch.setattr(
+            "shelfmark.download.clients.qbittorrent.config.get",
+            lambda key, default="": config_values.get(key, default),
+        )
+        mock_torrent = MockTorrent(
+            progress=0, state="forcedMetaDL", added_on=int(time.time()) - age_minutes * 60
+        )
+        mock_client_instance = MagicMock()
+        mock_client_instance._session.get.return_value = create_mock_session_response([mock_torrent])
+        mock_client_class = MagicMock(return_value=mock_client_instance)
+
+        with patch.dict("sys.modules", {"qbittorrentapi": MagicMock(Client=mock_client_class)}):
+            import importlib
+
+            import shelfmark.download.clients.qbittorrent as qb_module
+
+            importlib.reload(qb_module)
+            status = qb_module.QBittorrentClient().get_status("abc123")
+
+        assert status.state_value == expected
+        if expected == "downloading":
+            assert status.message == "Fetching metadata"
 
     def test_get_status_complete(self, monkeypatch):
         """Test status for completed torrent."""
