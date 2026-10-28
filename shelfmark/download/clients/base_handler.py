@@ -592,7 +592,9 @@ class ExternalClientHandler(DownloadHandler, ABC):
 
                     if result:
                         self._on_download_complete(task)
-                        self._cleanup_refs[task.task_id] = (client, download_id, request.protocol)
+                        # Shelfmark didn't add this torrent, so it never removes it.
+                        if request.protocol != "torrent":
+                            self._cleanup_refs[task.task_id] = (client, download_id, request.protocol)
                     return result
 
                 # Existing but still downloading - join the progress polling
@@ -626,6 +628,7 @@ class ExternalClientHandler(DownloadHandler, ABC):
                 cancel_flag=cancel_flag,
                 progress_callback=progress_callback,
                 status_callback=status_callback,
+                added_by_shelfmark=not existing,
             )
 
         except Exception as e:
@@ -652,6 +655,7 @@ class ExternalClientHandler(DownloadHandler, ABC):
         cancel_flag: Event,
         progress_callback: Callable[[float], None],
         status_callback: Callable[[str, Optional[str]], None],
+        added_by_shelfmark: bool = True,
     ) -> Optional[str]:
         """Poll the download client for progress and handle completion."""
         poll_interval = self._poll_interval()
@@ -774,7 +778,9 @@ class ExternalClientHandler(DownloadHandler, ABC):
             # Clean up on success
             if result:
                 self._on_download_complete(task)
-                self._cleanup_refs[task.task_id] = (client, download_id, protocol)
+                # Only remove torrents Shelfmark added itself.
+                if added_by_shelfmark or protocol != "torrent":
+                    self._cleanup_refs[task.task_id] = (client, download_id, protocol)
 
             return result
 

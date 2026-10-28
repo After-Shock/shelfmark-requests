@@ -349,6 +349,37 @@ class TestProwlarrHandlerExistingDownload:
                 assert "resolving" in recorder.statuses
                 # Should NOT have called add_download
                 mock_client.add_download.assert_not_called()
+                # Shelfmark didn't add this torrent, so it must never remove it.
+                assert task.task_id not in handler._cleanup_refs
+
+    @pytest.mark.parametrize("existing", [True, False])
+    def test_only_torrents_shelfmark_added_are_marked_for_removal(self, existing):
+        mock_client = MagicMock()
+        mock_client.name = "qbittorrent"
+        mock_client.find_existing.return_value = (
+            ("their_id", DownloadStatus(progress=10, state=DownloadState.DOWNLOADING,
+                                        message=None, complete=False, file_path=None))
+            if existing else None
+        )
+        mock_client.add_download.return_value = "our_id"
+
+        with patch(
+            "shelfmark.release_sources.prowlarr.handler.get_release",
+            return_value={"protocol": "torrent", "magnetUrl": "magnet:?xt=urn:btih:abc123"},
+        ), patch(
+            "shelfmark.release_sources.prowlarr.handler.get_client", return_value=mock_client,
+        ), patch(
+            "shelfmark.release_sources.prowlarr.handler.remove_release",
+        ), patch.object(ProwlarrHandler, "_poll_and_complete", return_value=None) as poll:
+            recorder = ProgressRecorder()
+            ProwlarrHandler().download(
+                task=DownloadTask(task_id="t", source="prowlarr", title="Test Book"),
+                cancel_flag=Event(),
+                progress_callback=recorder.progress_callback,
+                status_callback=recorder.status_callback,
+            )
+
+        assert poll.call_args.kwargs["added_by_shelfmark"] is (not existing)
 
 
 class TestProwlarrHandlerPolling:
