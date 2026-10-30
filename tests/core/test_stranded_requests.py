@@ -64,3 +64,22 @@ def test_user_cancel_fails_request_without_retrying():
     request_db.update_request_status.assert_called_once_with(
         367, status="failed", admin_note="Download was cancelled. Retry to search again."
     )
+
+
+def test_restart_resumes_an_approved_request_only_once(tmp_path, monkeypatch):
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(request_routes, "_resume_lock", None)
+    statuses = {398: "approved"}
+    request_db = MagicMock()
+    request_db.list_requests.side_effect = lambda status, **kw: [
+        {"id": rid, "approved_by": 1} for rid, s in statuses.items() if s == status
+    ]
+
+    def resume(db, udb, rid, *a):
+        statuses[rid] = "downloading"  # queuing the release moves it on
+
+    with patch.object(request_routes, "_auto_download_request", side_effect=resume) as auto, \
+         patch.object(request_routes, "_acquire_download_slot", return_value=True):
+        request_routes.resume_interrupted_requests(request_db, MagicMock())
+
+    assert [c.args[2] for c in auto.call_args_list] == [398]
