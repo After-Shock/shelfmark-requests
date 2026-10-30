@@ -94,7 +94,7 @@ def _auto_download_note(releases=None, search_error=False):
         source.search.return_value = [
             SimpleNamespace(title=t, source="audiobookbay", extra={}) for t in (releases or [])
         ]
-    book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"], series_position=None)
+    book = SimpleNamespace(title="The Snow Child", authors=["Eowyn Ivey"], series_position=None, series_name=None)
     calls = []
     with patch("shelfmark.release_sources.list_available_sources", return_value=[
         {"name": "audiobookbay", "enabled": True, "supported_content_types": ["audiobook"]},
@@ -193,3 +193,95 @@ def test_junk_only_results_fall_through_to_the_next_query():
         "extreme ownership jocko willink",
     ]
     assert [r.title for r in releases] == ["Extreme Ownership"]
+
+
+def test_release_title_led_by_the_series_name_is_the_book():
+    from shelfmark.core.request_routes import _release_matches_title
+
+    assert _release_matches_title("The Dead Guy Next Door", "Riley Thorn and the Dead Guy Next Door", 1, "Riley Thorn")
+    assert not _release_matches_title("The Dead Guy Next Door", "Riley Thorn and the Blast from the Past", 1, "Riley Thorn")
+    assert not _release_matches_title("The Dead Guy Next Door", "Riley Thorn and the Dead Guy Next Door", 1, None)
+
+
+def test_series_pack_must_hold_the_book_and_be_by_its_author():
+    from types import SimpleNamespace
+    from shelfmark.core.request_routes import _release_is_series_pack
+
+    book = SimpleNamespace(title="The Dead Guy Next Door", authors=["Lucy Score"], series_name="Riley Thorn", series_position=1)
+
+    def abb(raw):
+        title, _, author = raw.rpartition(" - ")
+        return SimpleNamespace(title=title, extra={"author": author, "title_raw": raw})
+
+    assert _release_is_series_pack(book, abb("Riley Thorn Series 1 -4 - Lucy Score"))
+    assert not _release_is_series_pack(SimpleNamespace(**{**vars(book), "series_position": 5}), abb("Riley Thorn Series 1 -4 - Lucy Score"))
+    assert not _release_is_series_pack(book, abb("Riley Thorn Series 1 -4 - Someone Else"))
+    # A single other book of the series is not a pack.
+    assert not _release_is_series_pack(book, abb("Riley Thorn and the Blast from the Past - Lucy Score"))
+    assert not _release_is_series_pack(SimpleNamespace(**{**vars(book), "series_name": None}), abb("Riley Thorn Series 1 -4 - Lucy Score"))
+
+
+def test_series_pack_is_used_only_when_the_book_has_no_release_of_its_own():
+    from types import SimpleNamespace
+    from shelfmark.core import request_routes
+
+    def rel(raw):
+        title, _, author = raw.rpartition(" - ")
+        return SimpleNamespace(title=title, source="audiobookbay", source_id=raw, extra={"author": author, "title_raw": raw})
+
+    book = SimpleNamespace(
+        title="The Dead Guy Next Door", authors=["Lucy Score"], series_name="Riley Thorn", series_position=1,
+        publish_year=None, cover_url=None, isbn_13=None, isbn_10=None,
+    )
+
+    def queued(results):
+        source = MagicMock()
+        source.search.side_effect = lambda b, plan, **_: results
+        captured = {}
+        with patch("shelfmark.release_sources.list_available_sources", return_value=[
+            {"name": "audiobookbay", "enabled": True, "supported_content_types": ["audiobook"]},
+        ]), patch("shelfmark.release_sources.get_source", return_value=source), patch(
+            "shelfmark.metadata_providers.is_provider_registered", return_value=True
+        ), patch("shelfmark.metadata_providers.get_provider_kwargs", return_value={}), patch(
+            "shelfmark.metadata_providers.get_provider", return_value=MagicMock(get_book=MagicMock(return_value=book))
+        ), patch("shelfmark.core.search_plan.build_release_search_plan"), patch(
+            "dataclasses.asdict", side_effect=lambda r: dict(vars(r))
+        ), patch.object(request_routes, "_queue_next_release", side_effect=lambda db, rid: captured.update(
+            request_routes._release_retries[rid]) or True
+        ):
+            request_routes._auto_download_request(
+                MagicMock(), MagicMock(), 999,
+                {"provider": "hardcover", "provider_id": "x", "content_type": "audiobook"},
+            )
+        return [(c["title"], c["series_pack"]) for c in captured["candidates"]]
+
+    pack, solo = rel("Riley Thorn Series 1 -4 - Lucy Score"), rel("Riley Thorn and the Dead Guy Next Door - Lucy Score")
+    assert queued([pack, solo]) == [("Riley Thorn and the Dead Guy Next Door", False)]
+    assert queued([pack]) == [("Riley Thorn Series 1 -4", True)]
+
+
+def test_series_pack_keeps_one_folder_per_book(tmp_path):
+    from shelfmark.download.postprocess.transfer import transfer_book_files
+
+    def run(files, name):
+        src = tmp_path / name
+        for rel in files:
+            (src / rel).parent.mkdir(parents=True, exist_ok=True)
+            (src / rel).write_bytes(b"x")
+        dest = tmp_path / f"{name}-library"
+        task = DownloadTask(task_id="t", source="audiobookbay", title="The Dead Guy Next Door", author="Lucy Score",
+                            content_type="audiobook", series_name="Riley Thorn", series_pack=True)
+        paths, error, _ = transfer_book_files(sorted(src / f for f in files), dest, task, use_hardlink=False,
+                                              is_torrent=True, organization_mode="organize")
+        assert error is None
+        return sorted(str(p.relative_to(dest)) for p in paths)
+
+    assert run(["Pack/1 Dead Guy/01.mp3", "Pack/1 Dead Guy/02.mp3", "Pack/2 Corpse/01.mp3"], "dirs") == [
+        "Lucy Score/Riley Thorn/1 Dead Guy/01.mp3",
+        "Lucy Score/Riley Thorn/1 Dead Guy/02.mp3",
+        "Lucy Score/Riley Thorn/2 Corpse/01.mp3",
+    ]
+    assert run(["Pack/Book 1.m4b", "Pack/Book 2.m4b"], "flat") == [
+        "Lucy Score/Riley Thorn/Book 1/Book 1.m4b",
+        "Lucy Score/Riley Thorn/Book 2/Book 2.m4b",
+    ]

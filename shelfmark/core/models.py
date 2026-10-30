@@ -83,6 +83,7 @@ class DownloadTask:
     series_position: Optional[float] = None  # Float for novellas (e.g., 1.5)
     subtitle: Optional[str] = None  # Book subtitle for naming templates
     isbn: Optional[str] = None  # Written into EPUBs so library metadata lookups match by ISBN
+    series_pack: bool = False  # Release holds several books of the series; keep one folder per book
 
     # Hardlinking support
     original_download_path: Optional[str] = None  # Path in download client (for hardlinking)

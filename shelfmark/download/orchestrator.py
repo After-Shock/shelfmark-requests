@@ -238,6 +238,7 @@ def queue_release(
             series_position=series_position,
             subtitle=subtitle,
             isbn=isbn,
+            series_pack=bool(release_data.get('series_pack')),
             search_mode=SearchMode.UNIVERSAL,
             output_mode=output_mode,
             output_args=output_args,

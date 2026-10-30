@@ -155,6 +155,35 @@ def transfer_book_files(
     final_paths: List[Path] = []
     op_counts: Dict[str, int] = {"hardlink": 0, "copy": 0, "move": 0}
 
+    if is_audiobook and task.series_pack and organization_mode != "none":
+        # Renaming would fold every book of the pack into the requested one, so each book
+        # keeps its own folder under Author/Series: one per pack subfolder, or one per
+        # file when the pack is a flat folder of single-file books.
+        base = destination / sanitize_filename(task.author or "Unknown") / sanitize_filename(task.series_name or task.title)
+        root = Path(os.path.commonpath([str(f.parent) for f in book_files]))
+        single_files = all(f.parent == root for f in book_files) and all(
+            f.suffix.lower() in (".m4b", ".m4a") for f in book_files
+        )
+        for source_file in book_files:
+            if single_files:
+                book_dir = source_file.stem
+            else:
+                parts = source_file.parent.relative_to(root).parts
+                book_dir = parts[0] if parts else root.name
+            dest_path = base / sanitize_filename(book_dir) / source_file.name
+            run_blocking_io(dest_path.parent.mkdir, parents=True, exist_ok=True)
+            final_path, op = _transfer_single_file(
+                source_file,
+                dest_path,
+                use_hardlink,
+                is_torrent,
+                preserve_source=preserve_source,
+                max_attempts=max_attempts,
+            )
+            final_paths.append(final_path)
+            op_counts[op] = op_counts.get(op, 0) + 1
+        return final_paths, None, op_counts
+
     if organization_mode == "organize":
         template = get_template(is_audiobook, "organize")
         metadata = build_metadata_dict(task)

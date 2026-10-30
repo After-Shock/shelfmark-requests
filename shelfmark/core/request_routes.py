@@ -939,10 +939,13 @@ _BOOK_NUMBER = re.compile(r"(?:\bbook|#|\bvol(?:ume)?\.?)\s*0*(\d+)\b", re.IGNOR
 
 
 def _release_matches_title(
-    book_title: str | None, release_title: str | None, series_position: float | None = None,
+    book_title: str | None,
+    release_title: str | None,
+    series_position: float | None = None,
+    series_name: str | None = None,
 ) -> bool:
     """True when a release is the requested work, also trying both titles without subtitles."""
-    from shelfmark.core.audiobookshelf import _titles_match
+    from shelfmark.core.audiobookshelf import _normalize, _titles_match
     from shelfmark.core.search_plan import _SERIES_SUFFIX
 
     if not book_title or not release_title:
@@ -950,6 +953,11 @@ def _release_matches_title(
     # "The Ice Beyond (The Empress of Thorns Book 1)" is still "The Ice Beyond"
     release_title = _SERIES_SUFFIX.sub("", release_title) or release_title
     release_titles = {release_title}
+    # "Riley Thorn and the Dead Guy Next Door" is "The Dead Guy Next Door" of the Riley Thorn series
+    if series_name:
+        prefix = re.match(rf"\s*{re.escape(_normalize(series_name))}\s+(?:and|in)\s+(.+)", _normalize(release_title))
+        if prefix:
+            release_titles.add(prefix.group(1))
     # "He Who Fights with Monsters - A LitRPG Adventure, Book 1" is still the book,
     # unless the subtitle names a different book of the series.
     for sep in (" - ", ":"):
@@ -979,6 +987,34 @@ def _release_matches_author(book_authors: list[str] | None, release) -> bool:
     return any(
         w in words for a in book_authors for w in re.findall(r"\w+", _normalize(a)) if len(w) > 2
     )
+
+
+_PACK_WORDS = re.compile(
+    r"\b(?:series|books|collection|box\s*set|omnibus|complete|saga|trilogy|duology)\b|\d+\s*-\s*\d+", re.IGNORECASE
+)
+_PACK_RANGE = re.compile(r"(\d+)\s*-\s*(\d+)")
+
+
+def _release_is_series_pack(book, release) -> bool:
+    """True for a multi-book release of the book's series that includes the book.
+
+    "Riley Thorn Series 1 -4 - Lucy Score" holds book 1 of Riley Thorn. Only used when no
+    release of the book itself was found.
+    """
+    from shelfmark.core.audiobookshelf import _normalize
+
+    if not book.series_name or not release.title:
+        return False
+    title = _normalize(release.title)
+    series = _normalize(re.sub(r"\bseries\b", "", book.series_name, flags=re.IGNORECASE))
+    if not series or not re.search(rf"\b{re.escape(series)}\b", title) or not _PACK_WORDS.search(release.title):
+        return False
+    span = _PACK_RANGE.search(release.title)
+    if span and book.series_position is not None:
+        low, high = int(span.group(1)), int(span.group(2))
+        if not low <= book.series_position <= high:
+            return False
+    return _release_matches_author(book.authors, release)
 
 
 def _auto_download_request(
@@ -1032,27 +1068,43 @@ def _auto_download_request(
             _safe_update_status("failed", admin_note=f"No {content_type} download sources are enabled. Check settings.")
             return
 
-        all_releases = []
+        def _search_all(manual_query=None):
+            found = []
+            for source_name in sources_to_search:
+                try:
+                    source = get_source(source_name)
+                    plan = build_release_search_plan(book, manual_query=manual_query)
+                    found.extend(source.search(book, plan, expand_search=True, content_type=content_type))
+                except Exception as e:
+                    logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
+                    source_errors.append(source_name)
+            return found
+
         source_errors = []
-        for source_name in sources_to_search:
-            try:
-                source = get_source(source_name)
-                plan = build_release_search_plan(book)
-                releases = source.search(book, plan, expand_search=True, content_type=content_type)
-                all_releases.extend(releases)
-            except Exception as e:
-                logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
-                source_errors.append(source_name)
+        searched_releases = _search_all()
 
         # ABB, Libgen and Z-Library match loosely (descriptions, title-only
         # fallback queries), so their top hits can be other books. Only grab the
         # requested title, by the requested author, from them.
         all_releases = [
-            r for r in all_releases
+            r for r in searched_releases
             if r.source == "direct_download"
-            or (_release_matches_title(book.title, r.title, book.series_position)
+            or (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
                 and _release_matches_author(book.authors, r))
         ]
+
+        # No release of the book itself: take a pack of its series that contains it.
+        series_pack = False
+        if not all_releases and content_type == "audiobook" and book.series_name:
+            author = book.authors[0] if book.authors else ""
+            pool = searched_releases + _search_all(f"{book.series_name} {author}".strip())
+            all_releases = [r for r in pool if r.source != "direct_download" and _release_is_series_pack(book, r)]
+            series_pack = bool(all_releases)
+            if series_pack:
+                logger.info(
+                    "Request #%s: no release of '%s' on its own; using series pack '%s'",
+                    request_id, book.title, all_releases[0].title,
+                )
 
         if not all_releases:
             from shelfmark.release_sources import get_source_display_name
@@ -1087,6 +1139,7 @@ def _auto_download_request(
             release_data["content_type"] = content_type
             release_data["series_name"] = book.series_name
             release_data["series_position"] = book.series_position
+            release_data["series_pack"] = series_pack
             release_data["isbn"] = (
                 book.isbn_13 or book.isbn_10 or req.get("isbn_13") or req.get("isbn_10")
             )
