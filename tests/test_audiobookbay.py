@@ -162,3 +162,34 @@ def test_release_subtitle_is_ignored_unless_it_names_another_book():
     ]
     assert not _release_matches_title("He Who Fights with Monsters", "He Who Fights with Monsters - Book 5", 1)
     assert _release_matches_title("Sing You Home", "Sing You Home: A Novel")
+
+
+def test_junk_only_results_fall_through_to_the_next_query():
+    from shelfmark.core.search_plan import ReleaseSearchPlan, ReleaseSearchVariant
+    from shelfmark.release_sources.audiobookbay import source
+
+    plan = ReleaseSearchPlan(
+        languages=None, isbn_candidates=[], author="Jocko Willink", manual_query=None, indexers=None,
+        title_variants=[ReleaseSearchVariant(title="Extreme Ownership: How U.S. Navy SEALs Lead and Win", author="Jocko Willink")],
+        grouped_title_variants=[],
+    )
+    hit = {"title": "Extreme Ownership - Jocko Willink", "link": "https://audiobookbay.lu/abss/eo/"}
+    queries = []
+
+    def fake_search(query, **_):
+        queries.append(query)
+        # The full-title queries only find a homepage "Latest" item, which the relevance check drops.
+        return [hit] if query == "extreme ownership jocko willink" else [{"title": "SUSPENSE Radio", "link": "x"}]
+
+    settings = {"ABB_HOSTNAME": "audiobookbay.lu", "ABB_PAGE_LIMIT": 1}
+    with patch.object(config, "get", side_effect=lambda k, d=None: settings.get(k, d)), patch.object(
+        source.scraper, "search_audiobookbay", side_effect=fake_search
+    ):
+        releases = source.AudiobookBaySource().search(MagicMock(), plan, content_type="audiobook")
+
+    assert queries == [
+        "extreme ownership: how u.s. navy seals lead and win jocko willink",
+        "extreme ownership: how u.s. navy seals lead and win",
+        "extreme ownership jocko willink",
+    ]
+    assert [r.title for r in releases] == ["Extreme Ownership"]

@@ -18,6 +18,11 @@ def test_series_suffix_is_dropped_from_search_title():
     assert title("Hexes Go Well with Tequila (The Lost Souls Series, Book 1)") == "Hexes Go Well with Tequila"
     assert title("Notes (Annotated)") == "Notes (Annotated)"
     assert title("The Washwoman at the River's End") == "The Washwoman at the River's End"
+    assert title("Land: A Novel") == "Land"
+    assert title("The Inmate: A gripping psychological thriller") == "The Inmate"
+    assert title("Lilac Girls (A Novel)") == "Lilac Girls"
+    assert title("Star Wars: Thrawn") == "Star Wars: Thrawn"
+    assert title("A Novel Approach") == "A Novel Approach"
 
 
 def test_metadata_backfill_falls_back_when_configured_provider_is_down():

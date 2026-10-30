@@ -182,6 +182,10 @@ class AudiobookBaySource(ReleaseSource):
                 query_candidates.append(combined_query)
             if title_only_query and title_only_query.lower() != combined_query.lower():
                 query_candidates.append(title_only_query)
+            # "Extreme Ownership: How U.S. Navy SEALs Lead and Win" -> "Extreme Ownership Jocko Willink"
+            main_title = title_only_query.split(":")[0].strip()
+            if main_title and main_title != title_only_query:
+                query_candidates.append(f"{main_title} {variant.author}".strip())
         elif book.title:
             query_candidates.append(book.title.strip())
 
@@ -228,6 +232,14 @@ class AudiobookBaySource(ReleaseSource):
                         exact_phrase=False,
                     )
 
+                # Only stop once something survives the relevance check below; a query
+                # that returns nothing but junk should still fall through to the next one.
+                query_words = set(word.lower() for word in normalize_search_punctuation(query_lower).split() if len(word) > 2)
+                results = [
+                    r for r in results
+                    if not query_words
+                    or any(word in normalize_search_punctuation(r['title']).lower() for word in query_words)
+                ]
                 if results:
                     break
 
@@ -238,23 +250,12 @@ class AudiobookBaySource(ReleaseSource):
                         deduped_queries[index + 1].lower(),
                     )
             
-            # Extract query words for relevance checking
-            query_words = set(word.lower() for word in normalize_search_punctuation(query_lower).split() if len(word) > 2)
-            
             releases = []
             for result in results:
                 try:
                     raw_title = result['title']
                     title, author = _split_title_and_author(raw_title)
-                    title_for_filter = normalize_search_punctuation(raw_title).lower()
-                    
-                    # Basic relevance check: ensure title contains at least one query word
-                    # This filters out homepage "Latest" feed items that may leak through
-                    if query_words:
-                        if not any(word in title_for_filter for word in query_words):
-                            logger.debug(f"Filtering out irrelevant result: {title}")
-                            continue
-                    
+
                     # Generate unique source ID
                     source_id = _generate_source_id(result['link'])
                     

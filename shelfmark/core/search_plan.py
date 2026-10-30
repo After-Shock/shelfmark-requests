@@ -88,9 +88,18 @@ _SERIES_SUFFIX = re.compile(
 )
 
 
+# "Land: A Novel" -> "Land": marketing subtitles that release titles leave out, and whose
+# words ("novel") match unrelated releases.
+_GENERIC_SUBTITLE = re.compile(
+    r"\s*(?::\s*|\(\s*)an?\b[^:()]*\b(?:novel|novella|thriller|mystery|memoir|romance|story|stories)\s*\)?\s*$",
+    re.IGNORECASE,
+)
+
+
 def _pick_search_title(book: BookMetadata) -> str:
     title = book.search_title or book.title
-    return _SERIES_SUFFIX.sub("", title or "") or title
+    stripped = _SERIES_SUFFIX.sub("", title or "") or title
+    return _GENERIC_SUBTITLE.sub("", stripped or "") or stripped
 
 
 def build_release_search_plan(
