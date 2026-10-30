@@ -285,3 +285,26 @@ def test_series_pack_keeps_one_folder_per_book(tmp_path):
         "Lucy Score/Riley Thorn/Book 1/Book 1.m4b",
         "Lucy Score/Riley Thorn/Book 2/Book 2.m4b",
     ]
+
+
+def test_audiobook_goes_to_a_new_folder_when_the_book_folder_is_taken(tmp_path, monkeypatch):
+    from shelfmark.download.postprocess import transfer
+
+    monkeypatch.setattr(transfer, "get_template", lambda *_: "{Author}/{Title}/{Title}{ - Part }{PartNumber}")
+    existing = tmp_path / "lib" / "Lucy Score" / "Riley Thorn and the Dead Guy Next Door"
+    existing.mkdir(parents=True)
+    (existing / "Riley Thorn and the Dead Guy Next Door - 01.mp3").write_bytes(b"old")
+    src = tmp_path / "dl" / "Lucy Score - Riley Thorn and the Dead Guy Next Door.mp3"
+    src.parent.mkdir()
+    src.write_bytes(b"new")
+    task = DownloadTask(task_id="t", source="audiobookbay", title="Riley Thorn and the Dead Guy Next Door",
+                        author="Lucy Score", content_type="audiobook")
+
+    paths, error, _ = transfer.transfer_book_files([src], tmp_path / "lib", task, use_hardlink=False,
+                                                   is_torrent=True, organization_mode="organize")
+
+    assert error is None
+    assert [str(p.relative_to(tmp_path / "lib")) for p in paths] == [
+        "Lucy Score/Riley Thorn and the Dead Guy Next Door (2)/Riley Thorn and the Dead Guy Next Door.mp3"
+    ]
+    assert sorted(f.name for f in existing.iterdir()) == ["Riley Thorn and the Dead Guy Next Door - 01.mp3"]

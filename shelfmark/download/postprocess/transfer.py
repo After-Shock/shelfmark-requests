@@ -136,6 +136,24 @@ def _transfer_single_file(
     return atomic_move(source_path, dest_path, max_attempts=max_attempts), "move"
 
 
+def _avoid_existing_book_folder(planned: List[Tuple[Path, Path]], destination: Path) -> List[Tuple[Path, Path]]:
+    """Move an audiobook into "Title (2)" when its folder already holds a book.
+
+    Audiobookshelf treats a folder as one book, so a second copy (an alternate
+    narration, or a re-download of a book already in the library) dropped into
+    the same folder would play as one item with the audio twice.
+    """
+    book_dir = Path(os.path.commonpath([str(dest.parent) for _, dest in planned]))
+    if book_dir == destination or not run_blocking_io(book_dir.is_dir) or not any(run_blocking_io(book_dir.iterdir)):
+        return planned
+    n = 2
+    while run_blocking_io(book_dir.with_name(f"{book_dir.name} ({n})").exists):
+        n += 1
+    free_dir = book_dir.with_name(f"{book_dir.name} ({n})")
+    logger.info("%s already holds a book; importing into %s", book_dir, free_dir)
+    return [(src, free_dir / dest.relative_to(book_dir)) for src, dest in planned]
+
+
 def transfer_book_files(
     book_files: List[Path],
     destination: Path,
@@ -189,17 +207,32 @@ def transfer_book_files(
         metadata = build_metadata_dict(task)
 
         if len(book_files) == 1:
-            source_file = book_files[0]
-            ext = source_file.suffix.lstrip(".") or task.format or ""
-            dest_path = run_blocking_io(
-                build_library_path,
-                str(destination),
-                template,
-                metadata,
-                extension=ext or None,
-            )
-            run_blocking_io(dest_path.parent.mkdir, parents=True, exist_ok=True)
+            files_with_metadata = [(book_files[0], metadata)]
+        else:
+            zero_pad_width = max(len(str(len(book_files))), 2)
+            files_with_metadata = [
+                (source_file, {**metadata, "PartNumber": part_number})
+                for source_file, part_number in assign_part_numbers(book_files, zero_pad_width)
+            ]
 
+        planned = [
+            (
+                source_file,
+                run_blocking_io(
+                    build_library_path,
+                    str(destination),
+                    template,
+                    file_metadata,
+                    extension=(source_file.suffix.lstrip(".") or task.format or None),
+                ),
+            )
+            for source_file, file_metadata in files_with_metadata
+        ]
+        if is_audiobook:
+            planned = _avoid_existing_book_folder(planned, destination)
+
+        for source_file, dest_path in planned:
+            run_blocking_io(dest_path.parent.mkdir, parents=True, exist_ok=True)
             final_path, op = _transfer_single_file(
                 source_file,
                 dest_path,
@@ -211,33 +244,6 @@ def transfer_book_files(
             final_paths.append(final_path)
             op_counts[op] = op_counts.get(op, 0) + 1
             logger.debug(f"{op.capitalize()} to destination: {final_path.name}")
-        else:
-            zero_pad_width = max(len(str(len(book_files))), 2)
-            files_with_parts = assign_part_numbers(book_files, zero_pad_width)
-
-            for source_file, part_number in files_with_parts:
-                ext = source_file.suffix.lstrip(".") or task.format or ""
-                file_metadata = {**metadata, "PartNumber": part_number}
-                dest_path = run_blocking_io(
-                    build_library_path,
-                    str(destination),
-                    template,
-                    file_metadata,
-                    extension=ext or None,
-                )
-                run_blocking_io(dest_path.parent.mkdir, parents=True, exist_ok=True)
-
-                final_path, op = _transfer_single_file(
-                    source_file,
-                    dest_path,
-                    use_hardlink,
-                    is_torrent,
-                    preserve_source=preserve_source,
-                    max_attempts=max_attempts,
-                )
-                final_paths.append(final_path)
-                op_counts[op] = op_counts.get(op, 0) + 1
-                logger.debug(f"{op.capitalize()} to destination: {final_path.name}")
 
         return final_paths, None, op_counts
 

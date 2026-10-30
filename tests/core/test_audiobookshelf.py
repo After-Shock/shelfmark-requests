@@ -20,6 +20,20 @@ class TestABSClientFindMatch:
         client._cache = items
         return client
 
+    def test_title_led_by_series_name_matches(self):
+        """ABS "Riley Thorn and the Dead Guy Next Door" is the provider's "The Dead Guy Next Door"."""
+        client = self._client_with_cache([
+            {"id": "1", "title": "Riley Thorn and the Dead Guy Next Door", "author": "Lucy Score", "series": "Riley Thorn #1"},
+        ])
+        assert client.find_match("The Dead Guy Next Door", "Lucy Score") is not None
+        assert client.find_match("The Corpse in the Closet", "Lucy Score") is None
+
+    def test_series_prefix_needs_the_series(self):
+        client = self._client_with_cache([
+            {"id": "1", "title": "Riley Thorn and the Dead Guy Next Door", "author": "Lucy Score"},
+        ])
+        assert client.find_match("The Dead Guy Next Door", "Lucy Score") is None
+
     def test_exact_title_author_match(self):
         client = self._client_with_cache([
             {"id": "1", "title": "The Hobbit", "author": "J.R.R. Tolkien"},

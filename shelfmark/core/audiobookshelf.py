@@ -80,6 +80,22 @@ def _titles_match(query_title: str, item_title: str) -> bool:
     return False
 
 
+def _titles_without_series(item_title: str, series: str) -> list[str]:
+    """The title, plus the title without a leading series name.
+
+    ABS item "Riley Thorn and the Dead Guy Next Door" (series "Riley Thorn #1") is the
+    book a provider calls "The Dead Guy Next Door".
+    """
+    titles = [item_title]
+    norm_title = _normalize(item_title)
+    for name in series.split(','):
+        name = _normalize(re.sub(r'\s*#\s*[\d.]+\s*$', '', name))
+        match = name and re.match(rf'{re.escape(name)}\s+(?:and|in)\s+(.+)', norm_title)
+        if match:
+            titles.append(match.group(1))
+    return titles
+
+
 class ABSClient:
     """Audiobookshelf API client with in-memory library cache."""
 
@@ -132,6 +148,7 @@ class ABSClient:
                             'id': item.get('id', ''),
                             'title': title,
                             'author': author,
+                            'series': meta.get('seriesName') or '',  # "Riley Thorn #1, Other #2"
                         })
 
             with self._cache_lock:
@@ -189,7 +206,7 @@ class ABSClient:
             # ABS often lists the narrator too ("Therese Plummer/Eowyn Ivey"), so match any name.
             item_authors = [_normalize(a) for a in re.split(r'[/,;&]', item.get('author', '') or '') if a.strip()]
 
-            if not _titles_match(title, item_title):
+            if not any(_titles_match(title, t) for t in _titles_without_series(item_title, item.get('series', ''))):
                 continue
 
             if not norm_author or not item_authors:
