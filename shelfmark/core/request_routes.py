@@ -280,6 +280,22 @@ def _send_pushover_new_request(req: dict, user_db: UserDB, heading: str = "New R
         logger.warning(f"Failed to send Pushover notification for request #{req.get('id')}: {e}")
 
 
+def _notify_admin(req: dict, user_db: UserDB, event: str, heading: str, note: str) -> None:
+    """Pushover + Discord alert for an admin event on an existing request (best-effort)."""
+    try:
+        from shelfmark.core.pushover_notifications import send_new_request_pushover
+        from shelfmark.core.discord_notifications import send_discord_new_request
+
+        user = user_db.get_user(user_id=req["user_id"]) if req.get("user_id") else None
+        requester = (user or {}).get("username")
+        common = dict(title=req.get("title", "Unknown"), author=req.get("author"), requester=requester,
+                      content_type=req.get("content_type", "ebook"), note=note)
+        send_new_request_pushover(heading=heading, **common)
+        send_discord_new_request(cover_url=req.get("cover_url"), event=event, **common)
+    except Exception as e:
+        logger.warning(f"Admin '{event}' notification failed for request #{req.get('id')}: {e}")
+
+
 def _send_discord_new_request(req: dict, user_db: UserDB, deleted: bool = False) -> None:
     """Send Discord embed notification on new request, or its deletion by the user (best-effort)."""
     try:
@@ -810,6 +826,41 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         return jsonify(updated)
 
 
+    @app.route("/api/requests/<int:request_id>/series-pack", methods=["POST"])
+    @_require_admin
+    def series_pack_route(request_id):
+        """Grab ({"accept": true}) or decline the series pack offered for a request."""
+        req = request_db.get_request(request_id)
+        if not req:
+            return jsonify({"error": "Request not found"}), 404
+        if not req.get("series_pack_offer"):
+            return jsonify({"error": "No series pack is on offer for this request"}), 409
+        admin_user_id = _get_db_user_id()
+
+        if not (request.get_json(silent=True) or {}).get("accept"):
+            updated = request_db.update_request_status(
+                request_id, "failed", series_pack_offer="",
+                admin_note=f"Series pack '{req['series_pack_offer']}' declined",
+            )
+            logger.info(f"Request #{request_id}: series pack declined by admin {admin_user_id}")
+            _broadcast_request_update(updated)
+            return jsonify(updated)
+
+        updated = request_db.update_request_status(request_id, "approved", approved_by=admin_user_id)
+        logger.info(f"Request #{request_id}: series pack accepted by admin {admin_user_id}")
+        _broadcast_request_update(updated)
+        download_request = _resolve_canonical_request(request_db, updated)
+        if _acquire_download_slot(download_request["id"]):
+            threading.Thread(
+                target=_auto_download_request,
+                args=(request_db, user_db, download_request["id"], download_request, admin_user_id,
+                      session.get("user_id")),
+                kwargs={"allow_series_pack": True},
+                daemon=True,
+            ).start()
+        return jsonify(updated)
+
+
 # Top search hit is often a dead md5 even when other copies download fine, so
 # keep a few spares per request and fall through on download failure.
 _MAX_RELEASE_ATTEMPTS = 3
@@ -869,7 +920,9 @@ def _queue_next_release(request_db: RequestDB, request_id: int) -> bool:
 
     task_id = release_data.get("source_id", "")
     # Clear any note from an earlier failed attempt ("Not found on ...").
-    _set_request_status(request_db, user_db, request_id, "downloading", download_task_id=task_id, admin_note="")
+    _set_request_status(
+        request_db, user_db, request_id, "downloading", download_task_id=task_id, admin_note="", series_pack_offer=""
+    )
     logger.info(
         "Request #%s: download queued (task=%s, release %s/%s)",
         request_id, task_id, attempt, _MAX_RELEASE_ATTEMPTS,
@@ -1030,11 +1083,14 @@ def _auto_download_request(
     req: dict,
     admin_user_id: int | None = None,
     admin_username: str | None = None,
+    allow_series_pack: bool = False,
 ) -> None:
     """Search for and queue a download for an approved request.
 
     Runs in a background thread. Updates the request status to
-    'downloading' or 'failed' depending on the outcome.
+    'downloading' or 'failed' depending on the outcome. A series pack is only
+    downloaded with allow_series_pack (the admin accepted the offer); otherwise
+    it is offered to the admin and the request waits as 'failed'.
     """
     def _safe_update_status(status: str, **kwargs) -> None:
         _set_request_status(request_db, user_db, request_id, status, **kwargs)
@@ -1064,8 +1120,26 @@ def _auto_download_request(
             _safe_update_status("failed", admin_note=f"Book not found in {provider_name} — metadata provider returned no data.")
             return
 
-        # Search for releases
         content_type = req.get("content_type", "ebook")
+
+        # The book may have reached Audiobookshelf since it was requested, or been missed
+        # at request time. Don't download it twice unless another version was asked for.
+        if content_type == "audiobook" and not req.get("prefer_alternate_version"):
+            try:
+                abs_client.refresh()
+                author = book.authors[0] if book.authors else (req.get("author") or "")
+                owned = abs_client.find_match(book.title, author) or abs_client.find_match(req.get("title") or "", author)
+            except Exception as e:
+                logger.warning(f"ABS check failed for request #{request_id}: {e}")
+                owned = None
+            if owned:
+                note = f"Already in Audiobookshelf as '{owned['title']}'"
+                logger.info("Request #%s: %s; not downloading", request_id, note)
+                _safe_update_status("fulfilled", admin_note=note)
+                _notify_admin(req, user_db, "already_exists", "Audiobook Already Exists", note)
+                return
+
+        # Search for releases
         sources_to_search = [
             src["name"] for src in list_available_sources()
             if src["enabled"] and content_type in src["supported_content_types"]
@@ -1106,6 +1180,15 @@ def _auto_download_request(
             pool = searched_releases + _search_all(f"{book.series_name} {author}".strip())
             all_releases = [r for r in pool if r.source != "direct_download" and _release_is_series_pack(book, r)]
             series_pack = bool(all_releases)
+            if series_pack and not allow_series_pack:
+                pack = all_releases[0]
+                note = f"Not available on its own. Series pack available: '{pack.title}'" + (
+                    f" ({pack.size})" if getattr(pack, "size", None) else ""
+                )
+                logger.info("Request #%s: %s; waiting for the admin", request_id, note)
+                _safe_update_status("failed", admin_note=note, series_pack_offer=pack.title)
+                _notify_admin(req, user_db, "series_pack", "Series Pack Available", note + ". Grab it from the requests page.")
+                return
             if series_pack:
                 logger.info(
                     "Request #%s: no release of '%s' on its own; using series pack '%s'",

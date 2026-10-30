@@ -407,6 +407,13 @@ class RequestDB:
             )
             conn.execute("UPDATE schema_version SET version = 9")
 
+        if current_version < 10:
+            # Title of a series pack an admin can choose to grab when the book has no release of its own.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(requests)")}
+            if "series_pack_offer" not in columns:
+                conn.execute("ALTER TABLE requests ADD COLUMN series_pack_offer TEXT DEFAULT NULL")
+            conn.execute("UPDATE schema_version SET version = 10")
+
     def _insert_request(
         self,
         conn: sqlite3.Connection,
@@ -783,8 +790,12 @@ class RequestDB:
         admin_note: Optional[str] = None,
         approved_by: Optional[int] = None,
         download_task_id: Optional[str] = None,
+        series_pack_offer: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Atomically update every non-cancelled member of a request group."""
+        """Atomically update every non-cancelled member of a request group.
+
+        series_pack_offer: pack title to offer, "" to clear, None to leave as is.
+        """
         if status not in _VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}")
         with self._lock:
@@ -808,6 +819,9 @@ class RequestDB:
                 if download_task_id is not None:
                     sets.append("download_task_id = ?")
                     params.append(download_task_id)
+                if series_pack_offer is not None:
+                    sets.append("series_pack_offer = ?")
+                    params.append(series_pack_offer or None)
                 sets.append(
                     "completed_at = CURRENT_TIMESTAMP" if status in _TERMINAL_STATUSES else "completed_at = NULL"
                 )

@@ -17,6 +17,14 @@ logger = setup_logger(__name__)
 _DISCORD_COLOR_NEW_REQUEST = 0x5865F2   # Discord blurple
 _DISCORD_COLOR_AVAILABLE   = 0x57F287   # Discord green
 _DISCORD_COLOR_DELETED     = 0xED4245   # Discord red
+_DISCORD_COLOR_NEEDS_ADMIN = 0xFEE75C   # Discord yellow
+
+# Admin events besides a new request: (embed title, color)
+_ADMIN_EVENTS = {
+    "deleted": ("🗑️ Request Deleted by User", _DISCORD_COLOR_DELETED),
+    "already_exists": ("📚 Audiobook Already Exists", _DISCORD_COLOR_AVAILABLE),
+    "series_pack": ("📦 Series Pack Available", _DISCORD_COLOR_NEEDS_ADMIN),
+}
 
 _VALID_WEBHOOK_PREFIXES = (
     "https://discord.com/api/webhooks/",
@@ -69,8 +77,10 @@ def build_new_request_embed(
     cover_url: Optional[str] = None,
     prefer_alternate_version: bool = False,
     deleted: bool = False,
+    event: Optional[str] = None,
+    note: Optional[str] = None,
 ) -> dict:
-    """Build a Discord embed dict for a new book request, or for its deletion by the user."""
+    """Build a Discord embed dict for a new book request, or another admin event (see _ADMIN_EVENTS)."""
     fields = [{"name": "Title", "value": title, "inline": True}]
     if author:
         fields.append({"name": "Author", "value": author, "inline": True})
@@ -79,12 +89,11 @@ def build_new_request_embed(
         fields.append({"name": "Requested by", "value": requester, "inline": True})
     if prefer_alternate_version:
         fields.append({"name": "Version", "value": "Prefers graphic/dramatized", "inline": True})
+    if note:
+        fields.append({"name": "Details", "value": note, "inline": False})
 
-    embed: dict = {
-        "title": "🗑️ Request Deleted by User" if deleted else "🔖 New Book Request",
-        "color": _DISCORD_COLOR_DELETED if deleted else _DISCORD_COLOR_NEW_REQUEST,
-        "fields": fields,
-    }
+    heading, color = _ADMIN_EVENTS.get(event or ("deleted" if deleted else ""), ("🔖 New Book Request", _DISCORD_COLOR_NEW_REQUEST))
+    embed: dict = {"title": heading, "color": color, "fields": fields}
     if cover_url and (cover_url.startswith("http://") or cover_url.startswith("https://")):
         embed["thumbnail"] = {"url": cover_url}
     return embed
@@ -142,8 +151,10 @@ def send_discord_new_request(
     cover_url: Optional[str] = None,
     prefer_alternate_version: bool = False,
     deleted: bool = False,
+    event: Optional[str] = None,
+    note: Optional[str] = None,
 ) -> bool:
-    """Send a Discord embed when a request is created (or deleted by its user). Best-effort; never raises."""
+    """Send a Discord embed when a request is created, or for another admin event. Best-effort; never raises."""
     try:
         if not _is_enabled():
             return False
@@ -156,10 +167,11 @@ def send_discord_new_request(
             title=title, author=author, requester=requester,
             content_type=content_type, cover_url=cover_url,
             prefer_alternate_version=prefer_alternate_version, deleted=deleted,
+            event=event, note=note,
         )
         result = _post_embed(webhook_url, embed)
         if result:
-            kind = "deleted-request" if deleted else "new-request"
+            kind = event or ("deleted-request" if deleted else "new-request")
             logger.info(f"Discord {kind} notification sent for: {title!r}")
         return result
     except Exception as e:

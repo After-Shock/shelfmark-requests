@@ -155,6 +155,7 @@ function App() {
     handleApprove: handleRequestApprove,
     handleDeny: handleRequestDeny,
     handleRetry: handleRequestRetry,
+    handleSeriesPack: handleRequestSeriesPack,
     handleActivatePrerelease: handleRequestActivatePrerelease,
     handleMoveToPrerelease: handleRequestMoveToPrerelease,
     handleSetStatus: handleRequestSetStatus,
@@ -193,6 +194,16 @@ function App() {
       throw error;
     }
   }, [handleRequestRetry, showToast]);
+
+  const handleSeriesPackWithToast = useCallback(async (requestId: number, accept: boolean) => {
+    try {
+      await handleRequestSeriesPack(requestId, accept);
+      showToast(accept ? 'Series pack download queued' : 'Series pack declined', 'success');
+    } catch (error) {
+      showToast('Failed to answer series pack offer', 'error');
+      throw error;
+    }
+  }, [handleRequestSeriesPack, showToast]);
 
   const handleActivatePrereleaseWithToast = useCallback(async (requestId: number) => {
     try {
@@ -1077,6 +1088,7 @@ function App() {
           onApprove={handleApproveWithToast}
           onDeny={handleDenyWithToast}
           onRetry={handleRetryWithToast}
+          onSeriesPack={handleSeriesPackWithToast}
           onActivatePrerelease={handleActivatePrereleaseWithToast}
           onMoveToPrerelease={handleMoveToPrereleaseWithToast}
           onSetStatus={handleSetStatusWithToast}

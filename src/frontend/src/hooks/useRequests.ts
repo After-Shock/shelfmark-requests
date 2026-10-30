@@ -7,6 +7,7 @@ import {
   approveRequest,
   denyRequest,
   retryRequest,
+  respondToSeriesPack,
   activatePrereleaseRequest,
   deleteBookRequest,
   moveRequestToPrerelease,
@@ -26,6 +27,7 @@ interface UseRequestsReturn {
   handleApprove: (requestId: number) => Promise<void>;
   handleDeny: (requestId: number, adminNote?: string) => Promise<void>;
   handleRetry: (requestId: number) => Promise<void>;
+  handleSeriesPack: (requestId: number, accept: boolean) => Promise<void>;
   handleActivatePrerelease: (requestId: number) => Promise<void>;
   handleMoveToPrerelease: (requestId: number, expectedReleaseDate: string) => Promise<void>;
   handleSetStatus: (requestId: number, status: BookRequest['status']) => Promise<void>;
@@ -165,6 +167,16 @@ export const useRequests = ({
     }
   }, [fetchAll]);
 
+  const handleSeriesPack = useCallback(async (requestId: number, accept: boolean) => {
+    try {
+      await respondToSeriesPack(requestId, accept);
+      await fetchAll();
+    } catch (error) {
+      console.error('Failed to answer series pack offer:', error);
+      throw error;
+    }
+  }, [fetchAll]);
+
   const handleDelete = useCallback(async (requestId: number) => {
     // Optimistic update: remove from UI immediately
     const previousRequests = requests;
@@ -245,6 +257,7 @@ export const useRequests = ({
     handleApprove,
     handleDeny,
     handleRetry,
+    handleSeriesPack,
     handleActivatePrerelease,
     handleMoveToPrerelease,
     handleSetStatus,

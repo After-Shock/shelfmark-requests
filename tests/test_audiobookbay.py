@@ -221,43 +221,84 @@ def test_series_pack_must_hold_the_book_and_be_by_its_author():
     assert not _release_is_series_pack(SimpleNamespace(**{**vars(book), "series_name": None}), abb("Riley Thorn Series 1 -4 - Lucy Score"))
 
 
-def test_series_pack_is_used_only_when_the_book_has_no_release_of_its_own():
-    from types import SimpleNamespace
+def _run_auto_download(book, results, req_extra=None, owned=None, **kwargs):
+    """Run _auto_download_request against canned ABB results; return (queued candidates, status updates, alerts)."""
     from shelfmark.core import request_routes
+
+    source = MagicMock()
+    source.search.side_effect = lambda b, plan, **_: results
+    captured, statuses, alerts = {}, [], []
+    with patch("shelfmark.release_sources.list_available_sources", return_value=[
+        {"name": "audiobookbay", "enabled": True, "supported_content_types": ["audiobook"]},
+    ]), patch("shelfmark.release_sources.get_source", return_value=source), patch(
+        "shelfmark.metadata_providers.is_provider_registered", return_value=True
+    ), patch("shelfmark.metadata_providers.get_provider_kwargs", return_value={}), patch(
+        "shelfmark.metadata_providers.get_provider", return_value=MagicMock(get_book=MagicMock(return_value=book))
+    ), patch("shelfmark.core.search_plan.build_release_search_plan"), patch(
+        "dataclasses.asdict", side_effect=lambda r: dict(vars(r))
+    ), patch.object(request_routes, "_queue_next_release", side_effect=lambda db, rid: captured.update(
+        request_routes._release_retries[rid]) or True
+    ), patch.object(request_routes, "_set_request_status", side_effect=lambda db, udb, rid, status, **k: statuses.append((status, k))
+    ), patch.object(request_routes, "_notify_admin", side_effect=lambda req, udb, event, heading, note: alerts.append((event, note))
+    ), patch.object(request_routes.abs_client, "refresh"), patch.object(
+        request_routes.abs_client, "find_match", return_value=owned
+    ):
+        request_routes._auto_download_request(
+            MagicMock(), MagicMock(), 999,
+            {"provider": "hardcover", "provider_id": "x", "content_type": "audiobook", **(req_extra or {})},
+            **kwargs,
+        )
+    return [(c["title"], c["series_pack"]) for c in captured.get("candidates", [])], statuses, alerts
+
+
+def _riley():
+    from types import SimpleNamespace
 
     def rel(raw):
         title, _, author = raw.rpartition(" - ")
-        return SimpleNamespace(title=title, source="audiobookbay", source_id=raw, extra={"author": author, "title_raw": raw})
+        return SimpleNamespace(title=title, source="audiobookbay", source_id=raw, size="2.68 GB",
+                               extra={"author": author, "title_raw": raw})
 
     book = SimpleNamespace(
         title="The Dead Guy Next Door", authors=["Lucy Score"], series_name="Riley Thorn", series_position=1,
         publish_year=None, cover_url=None, isbn_13=None, isbn_10=None,
     )
+    return book, rel("Riley Thorn Series 1 -4 - Lucy Score"), rel("Riley Thorn and the Dead Guy Next Door - Lucy Score")
 
-    def queued(results):
-        source = MagicMock()
-        source.search.side_effect = lambda b, plan, **_: results
-        captured = {}
-        with patch("shelfmark.release_sources.list_available_sources", return_value=[
-            {"name": "audiobookbay", "enabled": True, "supported_content_types": ["audiobook"]},
-        ]), patch("shelfmark.release_sources.get_source", return_value=source), patch(
-            "shelfmark.metadata_providers.is_provider_registered", return_value=True
-        ), patch("shelfmark.metadata_providers.get_provider_kwargs", return_value={}), patch(
-            "shelfmark.metadata_providers.get_provider", return_value=MagicMock(get_book=MagicMock(return_value=book))
-        ), patch("shelfmark.core.search_plan.build_release_search_plan"), patch(
-            "dataclasses.asdict", side_effect=lambda r: dict(vars(r))
-        ), patch.object(request_routes, "_queue_next_release", side_effect=lambda db, rid: captured.update(
-            request_routes._release_retries[rid]) or True
-        ):
-            request_routes._auto_download_request(
-                MagicMock(), MagicMock(), 999,
-                {"provider": "hardcover", "provider_id": "x", "content_type": "audiobook"},
-            )
-        return [(c["title"], c["series_pack"]) for c in captured["candidates"]]
 
-    pack, solo = rel("Riley Thorn Series 1 -4 - Lucy Score"), rel("Riley Thorn and the Dead Guy Next Door - Lucy Score")
-    assert queued([pack, solo]) == [("Riley Thorn and the Dead Guy Next Door", False)]
-    assert queued([pack]) == [("Riley Thorn Series 1 -4", True)]
+def test_solo_release_wins_over_a_series_pack():
+    book, pack, solo = _riley()
+    queued, _, alerts = _run_auto_download(book, [pack, solo])
+    assert queued == [("Riley Thorn and the Dead Guy Next Door", False)]
+    assert alerts == []
+
+
+def test_series_pack_waits_for_the_admin():
+    book, pack, _ = _riley()
+    queued, statuses, alerts = _run_auto_download(book, [pack])
+    assert queued == []
+    assert statuses[-1] == ("failed", {
+        "admin_note": "Not available on its own. Series pack available: 'Riley Thorn Series 1 -4' (2.68 GB)",
+        "series_pack_offer": "Riley Thorn Series 1 -4",
+    })
+    assert [a[0] for a in alerts] == ["series_pack"]
+
+    # Once the admin accepts, the pack is queued with one folder per book.
+    queued, _, _ = _run_auto_download(book, [pack], allow_series_pack=True)
+    assert queued == [("Riley Thorn Series 1 -4", True)]
+
+
+def test_audiobook_already_in_abs_is_not_downloaded():
+    book, pack, solo = _riley()
+    owned = {"title": "Riley Thorn and the Dead Guy Next Door"}
+    queued, statuses, alerts = _run_auto_download(book, [solo], owned=owned)
+    assert queued == []
+    assert statuses[-1] == ("fulfilled", {"admin_note": "Already in Audiobookshelf as 'Riley Thorn and the Dead Guy Next Door'"})
+    assert [a[0] for a in alerts] == ["already_exists"]
+
+    # Asking for another version (graphic/dramatized) still downloads.
+    queued, _, _ = _run_auto_download(book, [solo], req_extra={"prefer_alternate_version": True}, owned=owned)
+    assert queued == [("Riley Thorn and the Dead Guy Next Door", False)]
 
 
 def test_series_pack_keeps_one_folder_per_book(tmp_path):

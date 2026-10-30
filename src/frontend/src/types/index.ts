@@ -366,6 +366,8 @@ export interface BookRequest {
   handled_by_display_name?: string;
   canonical_request_id?: number | null;
   requester_count?: number;
+  /** Title of a series pack the admin can grab because the book has no release of its own. */
+  series_pack_offer?: string | null;
 }
 
 /** Response from POST /api/requests — extends BookRequest with optional creation-time warning. */

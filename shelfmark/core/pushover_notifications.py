@@ -36,6 +36,7 @@ def send_new_request_pushover(
     requester: Optional[str] = None,
     content_type: str = "ebook",
     heading: str = "New Request",
+    note: Optional[str] = None,
 ) -> bool:
     """Send a Pushover notification to the admin about a request (new by default).
 
@@ -63,6 +64,8 @@ def send_new_request_pushover(
             lines.append(f"By {author}")
         if requester:
             lines.append(f"Requested by {requester}")
+        if note:
+            lines.append(note)
         message = "\n".join(lines)
 
         payload = urllib.parse.urlencode({

@@ -695,6 +695,13 @@ export const retryRequest = async (requestId: number): Promise<BookRequest> => {
   });
 };
 
+export const respondToSeriesPack = async (requestId: number, accept: boolean): Promise<BookRequest> => {
+  return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/series-pack`, {
+    method: 'POST',
+    body: JSON.stringify({ accept }),
+  });
+};
+
 export const activatePrereleaseRequest = async (requestId: number): Promise<BookRequest> => {
   return fetchJSON<BookRequest>(`${API_BASE}/requests/${requestId}/activate`, {
     method: 'POST',

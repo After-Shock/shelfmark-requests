@@ -11,6 +11,7 @@ interface RequestsSidebarProps {
   onApprove: (requestId: number) => Promise<void>;
   onDeny: (requestId: number, adminNote?: string) => Promise<void>;
   onRetry: (requestId: number) => Promise<void>;
+  onSeriesPack?: (requestId: number, accept: boolean) => Promise<void>;
   onActivatePrerelease: (requestId: number) => Promise<void>;
   onMoveToPrerelease: (requestId: number, expectedReleaseDate: string) => Promise<void>;
   onSetStatus: (requestId: number, status: RequestStatus) => Promise<void>;
@@ -127,6 +128,7 @@ export const RequestsSidebar = ({
   onApprove,
   onDeny,
   onRetry,
+  onSeriesPack,
   onActivatePrerelease,
   onMoveToPrerelease,
   onSetStatus,
@@ -208,6 +210,18 @@ export const RequestsSidebar = ({
       await onRetry(requestId);
     } catch (error) {
       console.error('Failed to retry request:', error);
+    } finally {
+      removeProcessing(requestId);
+    }
+  };
+
+  const handleSeriesPackClick = async (requestId: number, accept: boolean) => {
+    if (!onSeriesPack) return;
+    addProcessing(requestId);
+    try {
+      await onSeriesPack(requestId, accept);
+    } catch (error) {
+      console.error('Failed to answer series pack offer:', error);
     } finally {
       removeProcessing(requestId);
     }
@@ -466,6 +480,33 @@ export const RequestsSidebar = ({
                   >
                     {isProcessing(req.id) && denyNoteId === req.id ? 'Processing...' : 'Deny'}
                   </button>
+                </div>
+              )}
+
+              {/* Series pack offer: the book has no release of its own */}
+              {isAdmin && req.series_pack_offer && onSeriesPack && (
+                <div className="flex flex-col gap-1 rounded-lg bg-amber-500/10 px-2 py-1.5">
+                  <p className="text-xs text-amber-800 dark:text-amber-200">
+                    Not available on its own. Grab the whole series pack <span className="font-medium">{req.series_pack_offer}</span>?
+                  </p>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSeriesPackClick(req.id, true)}
+                      disabled={isProcessing(req.id)}
+                      className="px-2 py-0.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isProcessing(req.id) ? 'Processing...' : 'Grab Series'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSeriesPackClick(req.id, false)}
+                      disabled={isProcessing(req.id)}
+                      className="px-2 py-0.5 text-xs font-medium rounded-lg bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Decline
+                    </button>
+                  </div>
                 </div>
               )}
 
