@@ -553,12 +553,29 @@ class RequestDB:
                     )),
                     None,
                 )
-                if canonical is None:
+                # The same user asking again for a book that failed or was denied gets
+                # their earlier request back; the admin retries it from there.
+                closed = None if canonical else next(
+                    (dict(row) for row in conn.execute(
+                        "SELECT * FROM requests WHERE user_id = ? AND content_type = ? "
+                        "AND status IN ('failed', 'denied') ORDER BY id DESC",
+                        (user_id, content_type),
+                    ) if _same_request_identity(
+                        dict(row), title=title, author=author, content_type=content_type,
+                        provider=metadata.get("provider"), provider_id=metadata.get("provider_id"),
+                        prefer_alternate_version=metadata.get("prefer_alternate_version"),
+                    )),
+                    None,
+                )
+                if closed:
+                    result = self._get_request(conn, closed["id"])
+                    outcome: CreateRequestOutcome = "already_joined"
+                elif canonical is None:
                     result = self._insert_request(
                         conn, user_id=user_id, title=title, content_type=content_type,
                         author=author, **create_metadata,
                     )
-                    outcome: CreateRequestOutcome = "created"
+                    outcome = "created"
                 else:
                     existing_member = conn.execute(
                         "SELECT id FROM requests WHERE user_id = ? "

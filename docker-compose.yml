@@ -45,8 +45,10 @@ services:
       - ./.local/tmp:/tmp/shelfmark
       # Calibre-Web's user database, for CWA user sync and signup provisioning.
       # Without it CWA_USER_SYNC_ENABLED has no effect and provisioning reports
-      # "Calibre-Web database not mounted".
-      - /opt/calibre-web/config/app.db:/auth/app.db
+      # "Calibre-Web database not mounted". Mount the folder, not the file: SQLite
+      # writes a journal beside app.db, and a root-owned /auth refuses it
+      # ("attempt to write a readonly database").
+      - /opt/calibre-web/config:/auth
       # UnRaid NFS share: audiobook library (/UnRaid/audiobooks, read by
       # Audiobookshelf) and the Windows qBittorrent's save folder (/UnRaid/torrents,
       # \\192.168.0.7\Media\torrents on Windows; see the remote path mapping).
