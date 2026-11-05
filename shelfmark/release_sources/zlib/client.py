@@ -50,14 +50,23 @@ def _login() -> Any:
 
 
 def _api(method: str, path: str, **kwargs: Any) -> dict:
-    """Call the EAPI, logging in on first use and once more if the session expired."""
+    """Call the EAPI, logging in on first use and once more if the session expired
+    or its connection went stale (Z-Library resets idle keep-alives)."""
     global _session
     for attempt in range(2):
         with _session_lock:
             if _session is None:
                 _session = _login()
             session = _session
-        data = _json(session.request(method, _base_url() + path, timeout=30, **kwargs))
+        try:
+            response = session.request(method, _base_url() + path, timeout=30, **kwargs)
+        except OSError:  # curl_cffi's CurlError, e.g. "(35) Recv failure: Connection reset"
+            if attempt:
+                raise
+            with _session_lock:
+                _session = None
+            continue
+        data = _json(response)
         if data.get("success") or attempt:
             return data
         with _session_lock:

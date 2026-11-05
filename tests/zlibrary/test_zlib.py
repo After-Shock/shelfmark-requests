@@ -79,3 +79,14 @@ def test_auto_download_drops_other_books_from_loose_sources():
     releases = [SimpleNamespace(source="zlib", title="Anathema"), SimpleNamespace(source="libgen", title="Bad Things")]
     kept = [r for r in releases if r.source == "direct_download" or _release_matches_title("Anathema", r.title)]
     assert [r.title for r in kept] == ["Anathema"]
+
+
+def test_stale_connection_retries_on_a_fresh_session():
+    class Stale:
+        def request(self, *a, **k):
+            raise OSError("Failed to perform, curl: (35) Recv failure: Connection reset by peer")
+
+    fresh = SimpleNamespace(request=lambda *a, **k: SimpleNamespace(
+        headers={"content-type": "application/json"}, json=lambda: {"success": 1, "books": [BOOK]}))
+    with patch.object(client, "_session", Stale()), patch.object(client, "_login", return_value=fresh):
+        assert client.search("Anathema", ["epub"], 5) == [BOOK]
