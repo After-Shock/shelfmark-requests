@@ -446,7 +446,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         else:
             # Calibre library duplicate check for ebooks (fail open if unreadable)
             try:
-                library_match = calibre_library.find_match(title, author or "")
+                library_match = calibre_library.find_match(_strip_edition_tags(title), author or "")
             except Exception as e:
                 logger.warning("Calibre library duplicate check failed (skipping): %s", e)
                 library_match = None
@@ -1011,6 +1011,14 @@ def _is_extra_release(book_title: str | None, release_title: str | None) -> bool
     return bool(_EXTRA_WORDS.search(release_title or "")) and not _EXTRA_WORDS.search(book_title or "")
 
 
+_EDITION_TAGS = re.compile(r"\s*\[[^\]]*\]|,?\s*\(?\b\d+\s+of\s+\d+\b\)?", re.I)
+
+
+def _strip_edition_tags(title: str) -> str:
+    """'Dark Age, 3 of 3 [Dramatized Adaptation]: Red Rising 5' -> 'Dark Age: Red Rising 5'."""
+    return _EDITION_TAGS.sub("", title or "").strip() or title
+
+
 _SERIES_PREFIX = re.compile(r"^.*?\d+\s*:\s*")
 
 
@@ -1157,6 +1165,28 @@ def _auto_download_request(
 
         content_type = req.get("content_type", "ebook")
 
+        # "Iron Gold (1 of 2) [Dramatized Adaptation]" is an audio edition's title; search
+        # for the book itself, and drop that edition's ISBN so it isn't written into the EPUB.
+        edition_isbns: set = set()
+        clean_title = _strip_edition_tags(book.title)
+        if clean_title != book.title:
+            logger.info("Request #%s: searching '%s' instead of '%s'", request_id, clean_title, book.title)
+            edition_isbns = {book.isbn_13, book.isbn_10, req.get("isbn_13"), req.get("isbn_10")}
+            book.title = clean_title
+            book.isbn_13 = book.isbn_10 = None
+
+        if content_type == "ebook" and not req.get("prefer_alternate_version"):
+            try:
+                owned = calibre_library.find_match(book.title, book.authors[0] if book.authors else (req.get("author") or ""))
+            except Exception as e:
+                logger.warning(f"Calibre check failed for request #{request_id}: {e}")
+                owned = None
+            if owned:
+                note = f"Already in the Ebooks library as '{owned['title']}'"
+                logger.info("Request #%s: %s; not downloading", request_id, note)
+                _safe_update_status("fulfilled", admin_note=note)
+                return
+
         # The book may have reached Audiobookshelf since it was requested, or been missed
         # at request time. Don't download it twice unless another version was asked for.
         if content_type == "audiobook" and not req.get("prefer_alternate_version"):
@@ -1274,8 +1304,10 @@ def _auto_download_request(
             release_data["series_name"] = book.series_name
             release_data["series_position"] = book.series_position
             release_data["series_pack"] = series_pack
-            release_data["isbn"] = (
-                book.isbn_13 or book.isbn_10 or req.get("isbn_13") or req.get("isbn_10")
+            release_data["isbn"] = next(
+                (i for i in (book.isbn_13, book.isbn_10, req.get("isbn_13"), req.get("isbn_10"))
+                 if i and i not in edition_isbns),
+                None,
             )
             candidates.append(release_data)
             if len(candidates) >= _MAX_RELEASE_ATTEMPTS:

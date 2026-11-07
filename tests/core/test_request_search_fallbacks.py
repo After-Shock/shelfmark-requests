@@ -115,3 +115,12 @@ def test_anna_titles_must_start_with_the_requested_title():
         ("Magical Midlife Conclave: Leveling Up, Book 13", "Magical Midlife Invasion (Leveling Up #3)(Paranormal Women's Fiction)"),
     ]:
         assert not ok(want, got), (want, got)
+
+
+def test_edition_tags_are_stripped_from_request_titles():
+    from shelfmark.core.request_routes import _strip_edition_tags as strip
+
+    assert strip("Iron Gold (1 of 2) [Dramatized Adaptation]") == "Iron Gold"
+    assert strip("Dark Age, 3 of 3 [Dramatized Adaptation]: Red Rising 5") == "Dark Age: Red Rising 5"
+    assert strip("Catch-22") == "Catch-22"
+    assert strip("One of Us Is Lying") == "One of Us Is Lying"
