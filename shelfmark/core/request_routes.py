@@ -1011,6 +1011,27 @@ def _is_extra_release(book_title: str | None, release_title: str | None) -> bool
     return bool(_EXTRA_WORDS.search(release_title or "")) and not _EXTRA_WORDS.search(book_title or "")
 
 
+_SERIES_PREFIX = re.compile(r"^.*?\d+\s*:\s*")
+
+
+def _release_starts_with_title(book_title: str | None, release_title: str | None) -> bool:
+    """Looser check for Anna's Archive, whose titles carry series prefixes and junk suffixes.
+
+    "Ariana Jones 1: Watch Your Back" and "The Book of Azrael (Gods & Monsters 1)" are the
+    book; "Family of Liars: The Prequel to We Were Liars" is not "We Were Liars".
+    """
+    from shelfmark.core.audiobookshelf import _normalize
+
+    want = _normalize(re.split(r"\s*(?:\(|:| - )", book_title or "")[0])
+    if not want or not release_title:
+        return False
+    for candidate in (release_title, _SERIES_PREFIX.sub("", release_title)):
+        got = _normalize(re.sub(r"--+|\u2014", " ", candidate))
+        if got == want or got.startswith(want + " "):
+            return True
+    return False
+
+
 def _release_matches_title(
     book_title: str | None,
     release_title: str | None,
@@ -1183,9 +1204,9 @@ def _auto_download_request(
         all_releases = [
             r for r in searched_releases
             if not _is_extra_release(book.title, r.title)
-            and (r.source == "direct_download"
-                 or (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
-                     and _release_matches_author(book.authors, r)))
+            and (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
+                 or (r.source == "direct_download" and _release_starts_with_title(book.title, r.title)))
+            and (r.source == "direct_download" or _release_matches_author(book.authors, r))
         ]
 
         # No release of the book itself: take a pack of its series that contains it.

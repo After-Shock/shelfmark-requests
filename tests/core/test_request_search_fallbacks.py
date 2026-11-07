@@ -89,3 +89,29 @@ def test_extra_releases_are_not_the_book():
     assert _is_extra_release("Dune", "Dune (Sample)")
     assert not _is_extra_release("Glow of the Everflame", "Glow of the Everflame")
     assert not _is_extra_release("The Sample", "The Sample")
+
+
+def test_anna_titles_must_start_with_the_requested_title():
+    from shelfmark.core.request_routes import _release_starts_with_title as ok
+
+    # Real Anna's Archive downloads that were the right book.
+    for want, got in [
+        ("The Book of Azrael", "The Book of Azrael (Gods & Monsters 1)"),
+        ("All In", "Full Tilt 2: All In"),
+        ("Family of Liars", "We Were Liars 2: Family of Liars"),
+        ("Watch Your Back", "Ariana Jones 1: Watch Your Back"),
+        ("The Long Game", "The Long Game--A Gay Sports Romance"),
+        ("Health Informatics - E-Book", "Health Informatics - An Interprofessional Approach"),
+        ("Hexes Go Well with Tequila (The Lost Souls Series, Book 1)", "Hexes Go Well with Tequila"),
+        ("The Casting Call", "The Ether Witch: Volume 1: The Casting Call"),
+        ("Absolutely Normal Chaos", "Absolutely normal chaos [eBook - NC Kids Digital Library"),
+    ]:
+        assert ok(want, got), (want, got)
+    # Real ones that were the wrong book.
+    for want, got in [
+        ("We Were Liars", "Family of Liars: The Prequel to We Were Liars"),
+        ("The Mysterious Benedict Society", "The Extraordinary Education of Nicholas Benedict (The Mysterious Benedict Society)"),
+        ("The Sneaky Chef", "BBQ : healthy and delicious recipes from the sneaky chef"),
+        ("Magical Midlife Conclave: Leveling Up, Book 13", "Magical Midlife Invasion (Leveling Up #3)(Paranormal Women's Fiction)"),
+    ]:
+        assert not ok(want, got), (want, got)
