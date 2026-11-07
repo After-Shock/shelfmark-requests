@@ -997,6 +997,14 @@ def forget_release_retries(request_id: int) -> None:
 _BOOK_NUMBER = re.compile(r"(?:\bbook|#|\bvol(?:ume)?\.?)\s*0*(\d+)\b", re.IGNORECASE)
 
 
+_EXTRA_WORDS = re.compile(r"\b(bonus chapter|bonus scene|sample|excerpt|preview|teaser|sneak peek)\b", re.I)
+
+
+def _is_extra_release(book_title: str | None, release_title: str | None) -> bool:
+    """'Bonus Chapter for Glow of the Everflame' is not the book, unless that's what was asked for."""
+    return bool(_EXTRA_WORDS.search(release_title or "")) and not _EXTRA_WORDS.search(book_title or "")
+
+
 def _release_matches_title(
     book_title: str | None,
     release_title: str | None,
@@ -1168,9 +1176,10 @@ def _auto_download_request(
         # requested title, by the requested author, from them.
         all_releases = [
             r for r in searched_releases
-            if r.source == "direct_download"
-            or (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
-                and _release_matches_author(book.authors, r))
+            if not _is_extra_release(book.title, r.title)
+            and (r.source == "direct_download"
+                 or (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
+                     and _release_matches_author(book.authors, r)))
         ]
 
         # No release of the book itself: take a pack of its series that contains it.

@@ -80,3 +80,12 @@ def test_release_title_with_series_suffix_matches():
 
     assert _release_matches_title("The ice beyond", "The Ice Beyond (The Empress of Thorns Book 1)")
     assert not _release_matches_title("The Ice Beyond", "Ice Cold Player (Beyond the Ice Book 1)")
+
+
+def test_extra_releases_are_not_the_book():
+    from shelfmark.core.request_routes import _is_extra_release
+
+    assert _is_extra_release("Glow of the Everflame", "Bonus Chapter for Glow of the Everflame")
+    assert _is_extra_release("Dune", "Dune (Sample)")
+    assert not _is_extra_release("Glow of the Everflame", "Glow of the Everflame")
+    assert not _is_extra_release("The Sample", "The Sample")
