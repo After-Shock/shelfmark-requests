@@ -285,6 +285,13 @@ class BookQueue:
                 return True
             return any(status == QueueStatus.QUEUED for status in self._status.values())
 
+    def forget(self, task_id: str) -> None:
+        """Drop a task from tracking entirely (e.g. a superseded retry attempt)."""
+        with self._lock:
+            for store in (self._status, self._status_timestamps, self._task_data,
+                          self._cancel_flags, self._active_downloads):
+                store.pop(task_id, None)
+
     def clear_completed(self, user_id: Optional[int] = None) -> int:
         """Remove terminal tasks from tracking, optionally scoped to one user.
 

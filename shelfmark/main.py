@@ -1108,8 +1108,12 @@ def _notify_admin_for_terminal_download_status(*, task_id: str, status: QueueSta
 
 
 def _record_download_terminal_snapshot(task_id: str, status: QueueStatus, task: Any) -> None:
+    if _sync_request_db_on_terminal(task_id, status):
+        # Superseded attempt: the next release is already queued, so don't show
+        # or notify a "cancelled"/"failed" item for this one.
+        backend.book_queue.forget(task_id)
+        return
     _notify_admin_for_terminal_download_status(task_id=task_id, status=status, task=task)
-    _sync_request_db_on_terminal(task_id, status)
 
     final_status = _queue_status_to_final_activity_status(status)
     if final_status is None:
@@ -1198,16 +1202,21 @@ def _record_download_terminal_snapshot(task_id: str, status: QueueStatus, task: 
         )
 
 
-def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
-    """Update our custom request_db when a download task reaches a terminal state."""
+def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
+    """Update our custom request_db when a download task reaches a terminal state.
+
+    Returns True when a request moved on to its next release, i.e. this task
+    was only a superseded attempt.
+    """
+    retried = False
     if request_db is None:
-        return
+        return retried
     try:
         from shelfmark.core import request_routes
 
         reqs = request_db.get_requests_by_download_task(task_id)
         if not reqs:
-            return
+            return retried
         for req in reqs:
             # Status updates already cover the whole group; linked rows would
             # re-run retries (with no retry state) and duplicate notifications.
@@ -1235,6 +1244,7 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
                     logger.info(
                         "Request #%s: download %s errored, trying next release", req_id, task_id
                     )
+                    retried = True
                     continue
                 request_db.update_request_status(req_id, status="failed")
                 logger.info("Request #%s marked failed after download %s errored", req_id, task_id)
@@ -1244,6 +1254,7 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
                 stalled = "stalled" in str(getattr(task, "status_message", "") or "").lower()
                 if stalled and request_routes.retry_next_release(request_db, req_id):
                     logger.info("Request #%s: download %s stalled, trying next release", req_id, task_id)
+                    retried = True
                     continue
                 note = (
                     "Download stalled and no other releases were left to try."
@@ -1253,6 +1264,7 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> None:
                 logger.info("Request #%s marked failed after download %s was cancelled", req_id, task_id)
     except Exception as exc:
         logger.warning("Failed to sync request_db for task %s: %s", task_id, exc)
+    return retried
 
 
 def _task_owned_by_actor(task: Any, *, actor_user_id: int | None, actor_username: str | None) -> bool:
