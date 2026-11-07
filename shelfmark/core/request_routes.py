@@ -865,6 +865,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 # keep a few spares per request and fall through on download failure.
 _MAX_RELEASE_ATTEMPTS = 3
 _release_retries: dict[int, dict] = {}
+# ponytail: in-memory, so a restart forgets dead copies; persist if retries keep repeating them
+_failed_release_ids: dict[int, set[str]] = {}
 _retry_lock = threading.Lock()
 
 
@@ -932,6 +934,10 @@ def _queue_next_release(request_db: RequestDB, request_id: int) -> bool:
 
 def retry_next_release(request_db: RequestDB, request_id: int) -> bool:
     """Try the next release candidate after a download failed. False = give up."""
+    failed = (request_db.get_request(request_id) or {}).get("download_task_id")
+    if failed:
+        with _retry_lock:
+            _failed_release_ids.setdefault(request_id, set()).add(failed)
     if not _acquire_download_slot(request_id):
         return False
     try:
@@ -1223,9 +1229,18 @@ def _auto_download_request(
         user_overrides = user_db.get_user_settings(admin_user_id) if admin_user_id else {}
 
         from dataclasses import asdict
-        candidates = []
-        seen_source_ids = set()
+        from itertools import zip_longest
+        # Alternate sources so one source's dead top hits can't use up every
+        # attempt, and skip copies that already failed for this request.
+        by_source: dict[str, list] = {}
         for release in all_releases:
+            by_source.setdefault(release.source, []).append(release)
+        ordered = [r for group in zip_longest(*by_source.values()) for r in group if r is not None]
+        with _retry_lock:
+            failed_ids = set(_failed_release_ids.get(request_id, ()))
+        candidates = []
+        seen_source_ids = set(failed_ids)
+        for release in ordered:
             release_data = asdict(release)
             source_id = release_data.get("source_id", "")
             if source_id in seen_source_ids:

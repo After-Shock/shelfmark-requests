@@ -11,7 +11,7 @@ class FakeRequestDB:
         self.task_id = None
 
     def get_request(self, request_id):
-        return {"id": request_id}
+        return {"id": request_id, "download_task_id": self.task_id}
 
     def update_request_status(self, request_id, status, **kwargs):
         self.status = status
@@ -63,6 +63,7 @@ def main():
     assert rr.retry_next_release(db, 1) is False, "must give up after the cap"
     assert tried == ["aaa", "bbb", "ccc"], tried
     assert 1 not in rr._release_retries, "state must not leak"
+    assert rr._failed_release_ids[1] == {"aaa", "bbb", "ccc"}, "dead copies are remembered"
 
     # A release that won't even queue is skipped rather than stalling the request.
     tried = _install_fake_orchestrator([False, True])
