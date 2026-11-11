@@ -57,3 +57,25 @@ describe('pre-release lifecycle', () => {
     expect(render('approved', isAdmin)).toContain('Future book');
   });
 });
+
+describe('pre-release permissions', () => {
+  it('gives regular users a view-only pre-release tab', () => {
+    tab.value = 'prerelease';
+    const html = render('prerelease_requested', false);
+    expect(html).toContain('Future book');
+    expect(html).not.toMatch(/<(?:input|select|textarea)\b/);
+    for (const action of ['Activate Now', 'Deny', 'Apply', 'Clear Completed', 'Remove from history']) {
+      expect(html).not.toContain(action);
+    }
+  });
+
+  it('preserves admin pre-release controls', () => {
+    tab.value = 'prerelease';
+    const html = render('prerelease_requested', true);
+    expect(html).toContain('Activate Now');
+    expect(html).toContain('Deny');
+    expect(html).toContain('Status for Future book');
+    expect(html).toContain('Release date for Future book');
+    expect(html).toContain('Apply');
+  });
+});

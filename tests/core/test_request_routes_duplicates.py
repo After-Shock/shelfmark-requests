@@ -569,3 +569,26 @@ def test_admin_history_removal_keeps_list_and_badges_consistent(app, builtin_aut
         counts = client.get("/api/requests/counts").get_json()
     assert data["requests"] == []
     assert data["total"] == counts["total"] == 0
+
+
+@pytest.mark.parametrize('viewer', [1, 2])
+@pytest.mark.parametrize('method,path,payload', [
+    ('POST', 'approve', {}),
+    ('POST', 'deny', {'admin_note': 'Not allowed'}),
+    ('POST', 'activate', {}),
+    ('POST', 'retry', {}),
+    ('POST', 'series-pack', {'accept': True}),
+    ('POST', 'move-to-prerelease', {'expected_release_date': '2099-01-01'}),
+    ('PUT', 'status', {'status': 'approved'}),
+    ('DELETE', '', None),
+])
+def test_regular_users_can_read_but_cannot_modify_prereleases(app, builtin_auth, viewer, method, path, payload):
+    req = _create_with_status(app.request_db, user_id=1, title='View-only pre-release', status='prerelease_requested')
+    app.request_db.update_request_metadata(req['id'], expected_release_date='2099-01-01', is_released=False)
+    before = app.request_db.get_request(req['id'])
+    with app.test_client() as client:
+        login(client, viewer)
+        assert client.get(f"/api/requests/{req['id']}").status_code == 200
+        response = client.open(f"/api/requests/{req['id']}" + (f'/{path}' if path else ''), method=method, json=payload)
+    assert response.status_code == (400 if method == 'DELETE' and viewer == 1 else 403)
+    assert app.request_db.get_request(req['id']) == before
