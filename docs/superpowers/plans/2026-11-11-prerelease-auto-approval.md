@@ -10,7 +10,7 @@
 - [x] Implement atomic group approval and background download callback, wire scheduler, preserve notifications and error isolation.
 - [x] Exclude pre-releases from Active and update explanatory text.
 - [x] Run request backend tests, frontend tests/typecheck/build; review the changes.
-- [ ] Deploy to the existing production stack, verify health, ensure current future pre-release remains on hold and test the scheduled workflow against an isolated database in the deployed image (without sending notifications or queuing real downloads).
+- [x] Deploy to the existing production stack, verify health, ensure current future pre-release remains on hold and test the scheduled workflow against an isolated database in the deployed image (without sending notifications or queuing real downloads).
 
 ## Validation
 
@@ -23,3 +23,11 @@
 
 - Review found a notification ordering race. Fixed it by sending approval emails and the admin push before starting the worker; a regression test verifies email → push → processing order.
 - Focused re-review passed with no further issues.
+
+## Production rollout
+
+- Deployed implementation commit `7301b31` on `app-sso`; container health and `/api/health` passed.
+- Deployed frontend asset contains the auto-approval release-day message.
+- Ran the deployed scheduler and real download-start callback on an isolated SQLite backup with mocked outgoing messages/download worker: held at 08:59:59 ET, approved at 09:00 ET, sent the approval push, started processing once, and skipped the next scan.
+- Verified live request 461 (Peculiar Stars) remains `prerelease_requested` for `2026-11-17`.
+- No real test notifications or downloads were sent.
