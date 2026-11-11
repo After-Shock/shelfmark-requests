@@ -12,7 +12,7 @@
 - [x] Implement consistent database visibility and route protections; preserve private non-pre-release requests.
 - [x] Restrict row X to History. Make status controls fit narrow cards and safe viewport height.
 - [x] Run request backend tests, frontend tests/typecheck/build and browser layout checks.
-- [ ] Review changes, back up production SQLite, restore hidden active rows, deploy tested changes, and verify production health and restored visibility.
+- [x] Review changes, back up production SQLite, restore hidden active rows, deploy tested changes, and verify production health and restored visibility.
 
 ## Recovery evidence
 
@@ -25,3 +25,11 @@ Read-only production inspection found hidden active IDs 220, 407, 408 (pending) 
 - Chromium and WebKit browser checks at 320, 375, 393, 402, 440 and 1280 px: status dropdown/date/Apply remain inside the viewport, Apply successfully calls both status actions, removal X appears only in History.
 - Live SQLite backup: `/opt/shelfmark-requests/config/backups/users-before-request-visibility-20261111T232635Z.db`.
 - Restored `hidden_from_admin=0` for active IDs 220, 407, 408 and 461. SQLite quick_check returned ok. All other fields preserved.
+
+## Rollout
+
+- Independent review found no blocking defects; corrected a stale admin-visibility comment.
+- Deployed implementation commit `6dd0c21` on the production `app-sso` branch with a rebuilt `shelfmark-dev` image.
+- Kept rollback image tag `shelfmark-dev:before-request-visibility-20261111`.
+- Production container reports healthy and `/api/health` returns `{"status":"ok"}`.
+- Read-only route smoke checks against production data passed for all 30 user accounts: all see the single current pre-release (Peculiar Stars), totals/counts match, private non-pre-release rows stay private, and all four recovered IDs appear in the admin list.
