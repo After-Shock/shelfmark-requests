@@ -496,7 +496,7 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests", methods=["GET"])
     @_require_auth
     def list_requests_route():
-        """List requests. Admins see all, users see own."""
+        """List own requests and shared pre-releases; admins see all canonical rows."""
         status_filter = request.args.get("status")
         try:
             limit = min(int(request.args.get("limit", 100)), 1000)
@@ -515,10 +515,17 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             "offset": offset,
         }
         if _is_admin():
-            list_kwargs["include_hidden_completed_for_admin"] = True
+            list_kwargs["include_hidden_active_for_admin"] = True
+        else:
+            list_kwargs["include_shared_prereleases"] = True
 
         requests_list = request_db.list_requests(**list_kwargs)
-        total = request_db.count_requests(user_id=user_id, status=status_filter)
+        count_kwargs = {"user_id": user_id, "status": status_filter}
+        if _is_admin():
+            count_kwargs["include_hidden_active_for_admin"] = True
+        else:
+            count_kwargs["include_shared_prereleases"] = True
+        total = request_db.count_requests(**count_kwargs)
 
         return jsonify({
             "requests": requests_list,
@@ -532,7 +539,12 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     def request_counts_route():
         """Get request counts by status for badge display."""
         user_id = None if _is_admin() else _get_db_user_id()
-        counts = request_db.get_request_counts(user_id=user_id)
+        count_kwargs = {"user_id": user_id}
+        if _is_admin():
+            count_kwargs["include_hidden_active_for_admin"] = True
+        else:
+            count_kwargs["include_shared_prereleases"] = True
+        counts = request_db.get_request_counts(**count_kwargs)
 
         # Get unviewed count for non-admins
         if not _is_admin():
@@ -553,12 +565,12 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
     @app.route("/api/requests/<int:request_id>", methods=["GET"])
     @_require_auth
     def get_request_route(request_id):
-        """Get a single request. Owner or admin only."""
+        """Read an owned request or shared pre-release; admins can read all."""
         req = request_db.get_request(request_id)
         if not req:
             return jsonify({"error": "Request not found"}), 404
 
-        if not _is_admin() and req["user_id"] != _get_db_user_id():
+        if not _is_admin() and req["user_id"] != _get_db_user_id() and req["status"] != "prerelease_requested":
             return jsonify({"error": "Access denied"}), 403
 
         return jsonify(req)
@@ -576,6 +588,9 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
 
         if not is_admin and not is_owner:
             return jsonify({"error": "Access denied"}), 403
+
+        if req["status"] not in {"fulfilled", "denied", "failed", "cancelled"}:
+            return jsonify({"error": "Only requests in History can be removed"}), 400
 
         if is_admin and not is_owner:
             # Admin hiding a request removes the entire group from the admin queue.

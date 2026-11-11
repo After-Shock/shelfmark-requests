@@ -680,10 +680,10 @@ class TestAdminPrereleaseTransitions:
             status=None,
             limit=100,
             offset=0,
-            include_hidden_completed_for_admin=True,
+            include_hidden_active_for_admin=True,
         )
 
-    def test_admin_list_requests_includes_hidden_completed_history(self, app):
+    def test_admin_list_requests_includes_hidden_active_requests(self, app):
         request_db = app.request_db
         request_db.list_requests.return_value = []
         request_db.count_requests.return_value = 0
@@ -698,7 +698,7 @@ class TestAdminPrereleaseTransitions:
             status=None,
             limit=100,
             offset=0,
-            include_hidden_completed_for_admin=True,
+            include_hidden_active_for_admin=True,
         )
 
     def test_move_pending_request_to_prerelease(self, app):
@@ -918,7 +918,7 @@ class TestAdminPrereleaseTransitions:
             status="prerelease_requested",
             limit=100,
             offset=0,
-            include_hidden_completed_for_admin=True,
+            include_hidden_active_for_admin=True,
         )
 
     def test_activating_linked_prerelease_row_returns_canonical_transition(self, app):

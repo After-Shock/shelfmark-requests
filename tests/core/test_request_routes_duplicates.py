@@ -16,7 +16,7 @@ def request_db(tmp_path):
     db_path = tmp_path / "requests.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, role TEXT)"
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, role TEXT, requests_last_viewed_at TIMESTAMP)"
         )
         conn.executemany(
             "INSERT INTO users (id, username, display_name, role) VALUES (?, ?, ?, 'user')",
@@ -150,6 +150,7 @@ def test_owner_delete_uses_user_scoped_deletion_and_broadcasts_promotion(app):
         canonical = create_request(client, 1).get_json()
         linked = create_request(client, 2).get_json()
 
+    app.request_db.update_request_status(canonical["id"], "fulfilled")
     with patch.object(app.request_db, "delete_user_request", wraps=app.request_db.delete_user_request) as delete_user, \
          patch("shelfmark.core.request_routes._broadcast_request_update") as broadcast:
         with app.test_client() as client:
@@ -429,8 +430,8 @@ def test_failed_group_recipient_notification_does_not_stop_other_recipients(
 
 
 @pytest.mark.parametrize("target", ["canonical", "linked"])
-def test_admin_non_owner_delete_hides_entire_group_and_broadcasts_canonical(app, target):
-    canonical, linked = _group(app)
+def test_admin_non_owner_delete_hides_entire_history_group_and_broadcasts_canonical(app, target):
+    canonical, linked = _group(app, status="fulfilled")
     target_id = canonical["id"] if target == "canonical" else linked["id"]
 
     with patch("shelfmark.core.request_routes._broadcast_request_update") as broadcast:
@@ -456,7 +457,7 @@ def test_admin_non_owner_delete_hides_entire_group_and_broadcasts_canonical(app,
     assert linked["id"] not in [row["id"] for row in admin_rows]
 
 
-def test_owner_deleting_open_request_pushes_admin(app, request_db):
+def test_owner_cannot_delete_open_request_but_can_remove_history(app, request_db):
     open_req, _ = request_db.create_or_join_request(
         user_id=1, title="Frankenstein", author="Mary Shelley", content_type="ebook"
     )
@@ -470,11 +471,100 @@ def test_owner_deleting_open_request_pushes_admin(app, request_db):
     with patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"), \
          patch("shelfmark.core.request_routes._send_pushover_new_request") as pushover, \
          patch("shelfmark.core.request_routes._send_discord_new_request") as discord:
-        assert client.delete(f"/api/requests/{open_req['id']}").status_code == 200
+        assert client.delete(f"/api/requests/{open_req['id']}").status_code == 400
         assert client.delete(f"/api/requests/{done_req['id']}").status_code == 200
 
-    pushover.assert_called_once()
-    assert pushover.call_args.args[0]["title"] == "Frankenstein"
-    assert pushover.call_args.kwargs["heading"] == "Request Deleted by User"
-    discord.assert_called_once()
-    assert discord.call_args.kwargs["deleted"] is True
+    pushover.assert_not_called()
+    discord.assert_not_called()
+    assert request_db.get_request(open_req["id"]) is not None
+    assert request_db.get_request(done_req["id"]) is None
+
+
+@pytest.fixture
+def builtin_auth():
+    with patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"):
+        yield
+
+
+def _create_with_status(db, *, status="pending", **kwargs):
+    row = db.create_request(**kwargs)
+    db.update_request_status(row["id"], status)
+    return db.get_request(row["id"])
+
+
+@pytest.mark.parametrize("status", ["pending", "prerelease_requested", "approved", "downloading", "no_sources_requested"])
+@pytest.mark.parametrize("actor", ["owner", "admin"])
+def test_active_request_cannot_be_removed(app, builtin_auth, status, actor):
+    req = _create_with_status(app.request_db, user_id=1, title="Keep visible", status=status)
+    with app.test_client() as client:
+        login(client, 1 if actor == "owner" else 3, is_admin=actor == "admin")
+        response = client.delete(f"/api/requests/{req['id']}")
+    assert response.status_code == 400
+    assert app.request_db.get_request(req["id"])["hidden_from_admin"] == 0
+
+
+def test_admin_list_restores_hidden_active_requests(app, builtin_auth):
+    req = _create_with_status(app.request_db, user_id=1, title="Hidden future book", status="prerelease_requested")
+    app.request_db.hide_request_group_from_admin(req["id"])
+    with app.test_client() as client:
+        login(client, 3, is_admin=True)
+        data = client.get("/api/requests").get_json()
+    assert [r["id"] for r in data["requests"]] == [req["id"]]
+    assert data["total"] == 1
+
+
+def test_prereleases_are_shared_but_other_users_requests_stay_private(app, builtin_auth):
+    db = app.request_db
+    future = _create_with_status(db, user_id=1, title="Future", status="prerelease_requested")
+    _create_with_status(db, user_id=1, title="Private pending")
+    _create_with_status(db, user_id=1, title="Private history", status="fulfilled")
+    own = _create_with_status(db, user_id=2, title="Own pending")
+    with app.test_client() as client:
+        login(client, 2)
+        data = client.get("/api/requests").get_json()
+        counts = client.get("/api/requests/counts").get_json()
+        filtered = client.get("/api/requests?status=prerelease_requested").get_json()
+        assert client.get(f"/api/requests/{future['id']}").status_code == 200
+        assert client.delete(f"/api/requests/{future['id']}").status_code == 403
+        assert client.post(f"/api/requests/{future['id']}/activate").status_code == 403
+    assert {r["id"] for r in data["requests"]} == {future["id"], own["id"]}
+    assert data["total"] == counts["total"] == 2
+    assert counts["prerelease_requested"] == 1
+    assert counts["pending"] == 1
+    assert filtered["total"] == 1
+    assert [r["id"] for r in filtered["requests"]] == [future["id"]]
+
+
+def test_shared_prerelease_is_deduplicated_for_tracking_user(app, builtin_auth):
+    db = app.request_db
+    canonical = _create_with_status(db, user_id=1, title="Future", status="prerelease_requested")
+    linked = _create_with_status(db, user_id=2, title="Future", status="prerelease_requested", canonical_request_id=canonical["id"])
+    with app.test_client() as client:
+        login(client, 2)
+        data = client.get("/api/requests").get_json()
+        counts = client.get("/api/requests/counts").get_json()
+    assert [r["id"] for r in data["requests"]] == [linked["id"]]
+    assert data["total"] == counts["total"] == 1
+
+
+def test_shared_prerelease_stops_being_public_after_activation(app, builtin_auth):
+    db = app.request_db
+    req = _create_with_status(db, user_id=1, title="Future", status="prerelease_requested")
+    with app.test_client() as client:
+        login(client, 2)
+        assert client.get("/api/requests").get_json()["total"] == 1
+        db.update_request_status(req["id"], "pending")
+        assert client.get("/api/requests").get_json()["requests"] == []
+        assert client.get("/api/requests/counts").get_json()["total"] == 0
+        assert client.get(f"/api/requests/{req['id']}").status_code == 403
+
+
+def test_admin_history_removal_keeps_list_and_badges_consistent(app, builtin_auth):
+    req = _create_with_status(app.request_db, user_id=1, title="History", status="fulfilled")
+    with app.test_client() as client:
+        login(client, 3, is_admin=True)
+        assert client.delete(f"/api/requests/{req['id']}").status_code == 200
+        data = client.get("/api/requests").get_json()
+        counts = client.get("/api/requests/counts").get_json()
+    assert data["requests"] == []
+    assert data["total"] == counts["total"] == 0

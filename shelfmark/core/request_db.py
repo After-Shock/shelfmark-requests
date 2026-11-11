@@ -11,6 +11,26 @@ from shelfmark.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+_ADMIN_ACTIVE_VISIBILITY = (
+    "((r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL) "
+    "OR r.status NOT IN ('fulfilled','denied','failed','cancelled'))"
+)
+
+
+def _user_request_visibility(user_id: int, include_shared_prereleases: bool) -> tuple[str, list]:
+    """Own rows plus one shared pre-release per group, using the viewer's row if tracked."""
+    if not include_shared_prereleases:
+        return "r.user_id = ?", [user_id]
+    return """(r.user_id = ? OR (
+        r.status = 'prerelease_requested' AND r.canonical_request_id IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM requests own
+            WHERE own.user_id = ? AND own.canonical_request_id = r.id
+              AND own.status = 'prerelease_requested'
+        )
+    ))""", [user_id, user_id]
+
+
 def _sanitize_url(url: Optional[str]) -> Optional[str]:
     """Return url only if it uses http:// or https://, else None."""
     if url and (url.startswith("http://") or url.startswith("https://")):
@@ -667,6 +687,8 @@ class RequestDB:
         offset: int = 0,
         include_hidden_from_admin: bool = False,
         include_hidden_completed_for_admin: bool = False,
+        include_hidden_active_for_admin: bool = False,
+        include_shared_prereleases: bool = False,
     ) -> List[Dict[str, Any]]:
         """List requests with optional filters. Returns list of request dicts.
 
@@ -677,24 +699,30 @@ class RequestDB:
             offset: Result offset
             include_hidden_from_admin: If False and user_id is None (admin view),
                                       exclude requests hidden from admin
+            include_hidden_active_for_admin: Surface active rows hidden by older clients
+            include_shared_prereleases: Include other users' canonical pre-releases,
+                                        excluding groups already represented by an owned row
         """
         conn = self._connect()
         try:
             conditions = []
             params: list = []
             if user_id is not None:
-                conditions.append("r.user_id = ?")
-                params.append(user_id)
+                visibility, visibility_params = _user_request_visibility(user_id, include_shared_prereleases)
+                conditions.append(visibility)
+                params.extend(visibility_params)
             else:
                 conditions.append("r.canonical_request_id IS NULL")
-                # Admin view - exclude hidden requests unless explicitly requested.
-                # History should still surface hidden completed rows.
+                # Admin callers choose which previously hidden rows to surface.
+                # The requests sidebar recovers active rows while preserving History removals.
                 if not include_hidden_from_admin:
                     if include_hidden_completed_for_admin:
                         conditions.append(
                             "((r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL) "
                             "OR r.status IN ('fulfilled','denied','failed','cancelled'))"
                         )
+                    elif include_hidden_active_for_admin:
+                        conditions.append(_ADMIN_ACTIVE_VISIBILITY)
                     else:
                         conditions.append("(r.hidden_from_admin = 0 OR r.hidden_from_admin IS NULL)")
             if status is not None:
@@ -726,6 +754,8 @@ class RequestDB:
         self,
         user_id: Optional[int] = None,
         status: Optional[str] = None,
+        include_shared_prereleases: bool = False,
+        include_hidden_active_for_admin: bool = False,
     ) -> int:
         """Count requests with optional filters."""
         conn = self._connect()
@@ -733,34 +763,42 @@ class RequestDB:
             conditions = []
             params: list = []
             if user_id is not None:
-                conditions.append("user_id = ?")
-                params.append(user_id)
+                visibility, visibility_params = _user_request_visibility(user_id, include_shared_prereleases)
+                conditions.append(visibility)
+                params.extend(visibility_params)
             else:
-                conditions.append("canonical_request_id IS NULL")
+                conditions.append("r.canonical_request_id IS NULL")
+                if include_hidden_active_for_admin:
+                    conditions.append(_ADMIN_ACTIVE_VISIBILITY)
             if status is not None:
                 conditions.append("status = ?")
                 params.append(status)
             where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
             row = conn.execute(
-                f"SELECT COUNT(*) AS cnt FROM requests {where}", params
+                f"SELECT COUNT(*) AS cnt FROM requests r {where}", params
             ).fetchone()
             return row["cnt"] if row else 0
         finally:
             conn.close()
 
-    def get_request_counts(self, user_id: Optional[int] = None) -> Dict[str, int]:
+    def get_request_counts(
+        self, user_id: Optional[int] = None, include_shared_prereleases: bool = False,
+        include_hidden_active_for_admin: bool = False,
+    ) -> Dict[str, int]:
         """Get counts per status. Admins see all (user_id=None), users see own."""
         conn = self._connect()
         try:
             if user_id is not None:
+                visibility, params = _user_request_visibility(user_id, include_shared_prereleases)
                 rows = conn.execute(
-                    "SELECT status, COUNT(*) AS cnt FROM requests WHERE user_id = ? GROUP BY status",
-                    (user_id,),
+                    f"SELECT r.status, COUNT(*) AS cnt FROM requests r WHERE {visibility} GROUP BY r.status",
+                    params,
                 ).fetchall()
             else:
+                visibility = f" AND {_ADMIN_ACTIVE_VISIBILITY}" if include_hidden_active_for_admin else ""
                 rows = conn.execute(
-                    "SELECT status, COUNT(*) AS cnt FROM requests "
-                    "WHERE canonical_request_id IS NULL GROUP BY status"
+                    "SELECT r.status, COUNT(*) AS cnt FROM requests r "
+                    f"WHERE r.canonical_request_id IS NULL{visibility} GROUP BY r.status"
                 ).fetchall()
             counts: Dict[str, int] = {s: 0 for s in _VALID_STATUSES}
             total = 0

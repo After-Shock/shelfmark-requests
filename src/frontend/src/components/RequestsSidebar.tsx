@@ -326,8 +326,7 @@ export const RequestsSidebar = ({
     const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
     // Show "Mark Completed" for any non-fulfilled/non-cancelled request
     const canMarkCompleted = req.status !== 'fulfilled' && req.status !== 'cancelled';
-    // Users can now delete their own requests (any status), admins can delete any request
-    const canDelete = true;
+    const canDelete = filter === 'history' && isHistoryItem;
 
     return (
       <div
@@ -341,8 +340,8 @@ export const RequestsSidebar = ({
             type="button"
             onClick={() => onDelete(req.id)}
             className="absolute top-1 right-1 z-10 flex h-8 w-8 items-center justify-center rounded-full transition-colors text-gray-500 hover:text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
-            title="Cancel request"
-            aria-label="Cancel request"
+            title="Remove from history"
+            aria-label="Remove from history"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -617,11 +616,11 @@ export const RequestsSidebar = ({
             )}
 
             {isAdmin && (
-              <div className="flex gap-1 mt-1.5">
+              <div className="flex flex-col gap-1 mt-1.5">
                 <select
                   value={selectedStatus}
                   onChange={(e) => setSelectedStatusById(prev => ({ ...prev, [req.id]: e.target.value as RequestStatus }))}
-                  className="flex-1 px-2 py-1 text-xs rounded border border-[var(--border-muted)] bg-[var(--bg)]"
+                  className="w-full min-w-0 px-2 py-2 text-base rounded border border-[var(--border-muted)] bg-[var(--bg)]"
                   disabled={isProcessing(req.id)}
                   aria-label={`Status for ${req.title}`}
                 >
@@ -640,7 +639,7 @@ export const RequestsSidebar = ({
                     type="date"
                     value={getPrereleaseDateValue(req)}
                     onChange={(e) => setPrereleaseDateById(prev => ({ ...prev, [req.id]: e.target.value }))}
-                    className="flex-1 px-2 py-1 text-xs rounded border border-[var(--border-muted)] bg-[var(--bg)]"
+                    className="w-full min-w-0 max-w-full px-2 py-2 text-base rounded border border-[var(--border-muted)] bg-[var(--bg)]"
                     disabled={isProcessing(req.id)}
                     aria-label={`Release date for ${req.title}`}
                   />
@@ -653,7 +652,7 @@ export const RequestsSidebar = ({
                     selectedStatus === req.status ||
                     (selectedStatus === 'prerelease_requested' && !getPrereleaseDateValue(req))
                   }
-                  className="px-2 py-1 text-xs font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full min-h-10 shrink-0 px-2 py-2 text-sm font-medium rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isProcessing(req.id) ? 'Applying...' : 'Apply'}
                 </button>
@@ -677,7 +676,7 @@ export const RequestsSidebar = ({
 
       {/* Sidebar */}
       <div
-        className={`fixed top-0 right-0 h-full w-full sm:w-96 z-50 flex flex-col shadow-2xl transition-transform duration-300 ${
+        className={`fixed top-0 right-0 h-[100dvh] w-full sm:w-96 z-50 flex flex-col shadow-2xl transition-transform duration-300 ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
         style={{ background: 'var(--bg)' }}
@@ -730,7 +729,7 @@ export const RequestsSidebar = ({
 
         {/* Request Items */}
         <div
-          className="flex-1 overflow-y-auto p-4 space-y-3"
+          className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
           style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
         >
           {filteredRequests.length > 0 ? (
