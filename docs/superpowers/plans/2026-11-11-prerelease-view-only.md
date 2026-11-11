@@ -11,3 +11,9 @@ Validation:
 - Independent focused review passed.
 - Isolated production-database-copy smoke check passed for all 30 regular-user sessions: read access succeeds, eight mutation endpoints reject changes, request remains unchanged, and no messages/downloads are sent.
 - Rollback image: shelfmark-dev:before-prerelease-view-only-20261111.
+
+Deployment:
+- Deployed implementation commit cdc0a4c; production serves the tested index-Bu-f8NuN.js bundle.
+- Confirmed configured authentication is builtin, with authenticated admin-role checks active.
+- Re-ran the 30-session/eight-endpoint permission audit against an isolated database copy inside the new image; passed.
+- Container healthy and /api/health reports ok.
