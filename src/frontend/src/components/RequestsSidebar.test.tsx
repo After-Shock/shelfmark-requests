@@ -28,7 +28,7 @@ describe('request removal', () => {
   it.each([true, false])('omits removal outside History (admin=%s)', (isAdmin) => {
     for (const [filter, status] of [
       ['all', 'approved'], ['all', 'no_sources_requested'],
-      ['all', 'downloading'], ['all', 'prerelease_requested'],
+      ['all', 'downloading'],
       ['prerelease', 'prerelease_requested'], ['pending', 'pending'],
     ] as const) {
       tab.value = filter;
@@ -44,5 +44,16 @@ describe('request removal', () => {
     for (const status of ['fulfilled', 'denied', 'failed', 'cancelled'] as const) {
       expect(render(status, isAdmin)).toContain('aria-label="Remove from history"');
     }
+  });
+});
+
+describe('pre-release lifecycle', () => {
+  it.each([true, false])('shows pre-releases only in their own tab (admin=%s)', (isAdmin) => {
+    tab.value = 'all';
+    expect(render('prerelease_requested', isAdmin)).not.toContain('Future book');
+    tab.value = 'prerelease';
+    expect(render('prerelease_requested', isAdmin)).toContain('Future book');
+    tab.value = 'all';
+    expect(render('approved', isAdmin)).toContain('Future book');
   });
 });

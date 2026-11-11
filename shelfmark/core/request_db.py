@@ -1031,6 +1031,39 @@ class RequestDB:
         was_deleted, _ = self._delete_request(request_id)
         return was_deleted
 
+    def approve_due_prerelease_request(
+        self, request_id: int, expected_release_date: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Claim a pre-release group once, provided its release date has not changed."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                canonical_id = _canonical_id_for_row(conn, request_id)
+                if canonical_id is None:
+                    conn.rollback()
+                    return None
+                row = self._get_request(conn, canonical_id)
+                if row["status"] != "prerelease_requested" or row["expected_release_date"] != expected_release_date:
+                    conn.rollback()
+                    return None
+                _validate_group_descendants(conn, canonical_id)
+                conn.execute(
+                    "UPDATE requests SET status = 'approved', is_released = 1, "
+                    "expected_release_date = NULL, completed_at = NULL, hidden_from_admin = 0, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE (id = ? OR canonical_request_id = ?) AND status = 'prerelease_requested'",
+                    (canonical_id, canonical_id),
+                )
+                updated = self._get_request(conn, canonical_id)
+                conn.commit()
+                return updated
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def hide_request_group_from_admin(self, request_id: int) -> Optional[Dict[str, Any]]:
         """Hide every request in a group and return its canonical request."""
         with self._lock:

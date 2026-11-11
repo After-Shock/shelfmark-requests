@@ -165,7 +165,7 @@ export const RequestsSidebar = ({
     if (filter === 'prerelease') return req.status === 'prerelease_requested';
     if (filter === 'pending') return req.status === 'pending';
     if (filter === 'history') return HISTORY_STATUSES.includes(req.status);
-    return !HISTORY_STATUSES.includes(req.status);
+    return req.status !== 'prerelease_requested' && !HISTORY_STATUSES.includes(req.status);
   }).sort((a, b) => {
     if (filter !== 'history') return 0;
     const aTime = new Date(normalizeTimestamp(a.completed_at || a.updated_at)).getTime();
@@ -413,7 +413,7 @@ export const RequestsSidebar = ({
             )}
             {isPrerelease && req.expected_release_date && (
               <p className="text-xs mt-0.5 text-amber-700 dark:text-amber-300">
-                Returns to pending at 9:00 AM ET on release day
+                Automatically approved at 9:00 AM ET on release day
               </p>
             )}
             {req.is_released != null && !!req.is_released && (

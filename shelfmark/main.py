@@ -146,7 +146,7 @@ try:
     register_app_sso_routes(app, user_db)
     register_oidc_provider_routes(app, user_db)
     if not app.config.get("TESTING"):
-        from shelfmark.core.request_routes import resume_interrupted_requests
+        from shelfmark.core.request_routes import resume_interrupted_requests, start_prerelease_download
         threading.Thread(
             target=resume_interrupted_requests,
             args=(request_db, user_db),
@@ -156,7 +156,10 @@ try:
         threading.Thread(
             target=run_prerelease_request_loop,
             args=(request_db, user_db),
-            kwargs={"on_request_update": _broadcast_request_update},
+            kwargs={
+                "on_request_update": _broadcast_request_update,
+                "on_request_approved": lambda req: start_prerelease_download(request_db, user_db, req),
+            },
             daemon=True,
             name="prerelease-request-loop",
         ).start()

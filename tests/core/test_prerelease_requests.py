@@ -1,180 +1,191 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import sqlite3
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from shelfmark.core.request_db import RequestDB
+from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
 
 
-def test_promote_due_prerelease_requests_moves_due_rows_to_pending():
-    from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
-
-    request_db = MagicMock()
-    user_db = MagicMock()
-    request_db.list_requests.return_value = [
-        {
-            "id": 10,
-            "status": "prerelease_requested",
-            "title": "Due Book",
-            "user_id": 3,
-            "expected_release_date": "2000-01-01",
-        }
-    ]
-    request_db.update_request_status.return_value = {
-        "id": 10,
-        "status": "pending",
-        "title": "Due Book",
-        "user_id": 3,
-        "expected_release_date": None,
-        "is_released": True,
-    }
-    user_db.get_user.return_value = {"id": 3, "email": "reader@example.com"}
-    request_db.get_request_group.return_value = [request_db.update_request_status.return_value]
-
-    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify, \
-         patch("shelfmark.core.prerelease_requests.send_new_request_pushover") as mock_push:
-        promoted = promote_due_prerelease_requests(request_db, user_db)
-
-    assert [row["id"] for row in promoted] == [10]
-    assert mock_push.call_args.kwargs["heading"] == "Pre-release Now Active"
-    assert mock_push.call_args.kwargs["title"] == "Due Book"
-    request_db.update_request_metadata.assert_called_once_with(
-        10,
-        is_released=True,
-        clear_expected_release_date=True,
-    )
-    request_db.update_request_status.assert_called_once_with(10, "pending")
-    mock_notify.assert_called_once()
+@pytest.fixture
+def db(tmp_path):
+    path = tmp_path / "requests.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, role TEXT)")
+        conn.executemany("INSERT INTO users VALUES (?, ?, ?, 'user')", [(1, 'first', 'First'), (2, 'second', 'Second')])
+    db = RequestDB(str(path))
+    db.initialize()
+    return db
 
 
-def test_promote_due_prerelease_requests_waits_until_9am_eastern():
-    from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
-
-    request_db = MagicMock()
-    user_db = MagicMock()
-    request_db.list_requests.return_value = [
-        {
-            "id": 13,
-            "status": "prerelease_requested",
-            "title": "Morning Book",
-            "user_id": 3,
-            "expected_release_date": "2026-05-05",
-        }
-    ]
-
-    before_nine = datetime(2026, 5, 5, 8, 59, tzinfo=ZoneInfo("America/New_York"))
-    at_nine = datetime(2026, 5, 5, 9, 0, tzinfo=ZoneInfo("America/New_York"))
-
-    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
-        promoted = promote_due_prerelease_requests(request_db, user_db, now=before_nine)
-
-    assert promoted == []
-    request_db.update_request_status.assert_not_called()
-    mock_notify.assert_not_called()
-
-    request_db.update_request_status.reset_mock()
-    request_db.update_request_metadata.reset_mock()
-    request_db.update_request_status.return_value = {
-        "id": 13,
-        "status": "pending",
-        "title": "Morning Book",
-        "user_id": 3,
-        "expected_release_date": None,
-        "is_released": True,
-    }
-    user_db.get_user.return_value = {"id": 3, "email": "reader@example.com"}
-    request_db.get_request_group.return_value = [request_db.update_request_status.return_value]
-
-    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
-        promoted = promote_due_prerelease_requests(request_db, user_db, now=at_nine)
-
-    assert [row["id"] for row in promoted] == [13]
-    request_db.update_request_status.assert_called_once_with(13, "pending")
-    mock_notify.assert_called_once()
+@pytest.fixture
+def user_db():
+    users = MagicMock()
+    users.get_user.side_effect = lambda *, user_id: {"username": f"reader-{user_id}", "email": f"reader-{user_id}@example.com"}
+    return users
 
 
-def test_promote_due_prerelease_requests_processes_only_canonical_group_member(tmp_path):
-    from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
-
-    db_path = tmp_path / "requests.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, role TEXT)"
-        )
-        conn.executemany(
-            "INSERT INTO users (id, username, display_name, role) VALUES (?, ?, ?, 'user')",
-            [(1, "first", "First"), (2, "second", "Second")],
-        )
-    request_db = RequestDB(str(db_path))
-    request_db.initialize()
-    canonical, _ = request_db.create_or_join_request(
-        user_id=1, title="Due Book", author="Author", content_type="ebook"
-    )
-    linked, _ = request_db.create_or_join_request(
-        user_id=2, title="Due Book", author="Author", content_type="ebook"
-    )
-    request_db.update_request_metadata(canonical["id"], expected_release_date="2000-01-01")
-    request_db.update_request_status(canonical["id"], "prerelease_requested")
-    user_db = MagicMock()
-    user_db.get_user.side_effect = lambda *, user_id: {
-        1: {"email": "first@example.com"},
-        2: {"email": "second@example.com"},
-    }.get(user_id)
-
-    with patch.object(request_db, "update_request_status", wraps=request_db.update_request_status) as update_status, \
-         patch("shelfmark.core.prerelease_requests.send_request_notification") as notify:
-        promoted = promote_due_prerelease_requests(request_db, user_db)
-
-    assert [row["id"] for row in promoted] == [canonical["id"]]
-    update_status.assert_called_once_with(canonical["id"], "pending")
-    assert request_db.get_request(linked["id"])["status"] == "pending"
-    assert {call.kwargs["user_email"] for call in notify.call_args_list} == {
-        "first@example.com",
-        "second@example.com",
-    }
+@pytest.fixture(autouse=True)
+def notifications():
+    with patch("shelfmark.core.prerelease_requests.send_request_notification") as email, \
+         patch("shelfmark.core.prerelease_requests.send_new_request_pushover") as push:
+        yield email, push
 
 
-def test_promote_due_prerelease_requests_ignores_future_rows():
-    from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
-
-    request_db = MagicMock()
-    user_db = MagicMock()
-    request_db.list_requests.return_value = [
-        {
-            "id": 11,
-            "status": "prerelease_requested",
-            "title": "Future Book",
-            "user_id": 4,
-            "expected_release_date": "2099-01-01",
-        }
-    ]
-
-    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
-        promoted = promote_due_prerelease_requests(request_db, user_db)
-
-    assert promoted == []
-    request_db.update_request_status.assert_not_called()
-    mock_notify.assert_not_called()
+def prerelease(db, release_date="2026-11-17"):
+    row = db.create_request(user_id=1, title="Due Book", author="Author")
+    db.update_request_metadata(row["id"], expected_release_date=release_date, is_released=False)
+    db.update_request_status(row["id"], "prerelease_requested")
+    return row["id"]
 
 
-def test_promote_due_prerelease_requests_skips_invalid_dates():
-    from shelfmark.core.prerelease_requests import promote_due_prerelease_requests
+@pytest.mark.parametrize("release_date,utc_hour", [("2026-11-17", 14), ("2026-05-05", 13)])
+def test_auto_approval_waits_until_nine_eastern(db, user_db, notifications, release_date, utc_hour):
+    request_id = prerelease(db, release_date)
+    year, month, day = map(int, release_date.split('-'))
+    before = datetime(year, month, day, utc_hour - 1, 59, 59, tzinfo=timezone.utc)
+    at_nine = datetime(year, month, day, utc_hour, 0, tzinfo=timezone.utc)
+    assert promote_due_prerelease_requests(db, user_db, now=before) == []
+    assert db.get_request(request_id)["status"] == "prerelease_requested"
+    notifications[0].assert_not_called()
+    notifications[1].assert_not_called()
+    promoted = promote_due_prerelease_requests(db, user_db, now=at_nine)
+    assert [row["id"] for row in promoted] == [request_id]
+    assert db.get_request(request_id)["status"] == "approved"
+    assert db.get_request(request_id)["is_released"] == 1
+    assert db.get_request(request_id)["expected_release_date"] is None
+    notifications[1].assert_called_once()
+    assert notifications[1].call_args.kwargs["heading"] == "Pre-release Auto-approved"
+    assert "approved" in notifications[1].call_args.kwargs["note"].lower()
+    assert notifications[0].call_args.kwargs["new_status"] == "approved"
 
-    request_db = MagicMock()
-    user_db = MagicMock()
-    request_db.list_requests.return_value = [
-        {
-            "id": 12,
-            "status": "prerelease_requested",
-            "title": "Broken Date Book",
-            "user_id": 5,
-            "expected_release_date": "not-a-date",
-        }
-    ]
 
-    with patch("shelfmark.core.prerelease_requests.send_request_notification") as mock_notify:
-        promoted = promote_due_prerelease_requests(request_db, user_db)
+def test_due_group_downloads_and_notifies_once_across_repeated_scans(db, user_db, notifications):
+    request_id = prerelease(db)
+    linked = db.create_request(user_id=2, title="Due Book", canonical_request_id=request_id)
+    db.update_request_status(request_id, "prerelease_requested")
+    download = MagicMock()
+    updates = MagicMock()
+    now = datetime(2026, 11, 17, 9, tzinfo=ZoneInfo("America/New_York"))
+    first = promote_due_prerelease_requests(db, user_db, now=now, on_request_approved=download, on_request_update=updates)
+    assert len(first) == 1
+    assert promote_due_prerelease_requests(db, user_db, now=now, on_request_approved=download, on_request_update=updates) == []
+    download.assert_called_once_with(first[0])
+    updates.assert_called_once_with(first[0])
+    assert db.get_request(linked["id"])["status"] == "approved"
+    assert db.get_request(linked["id"])["expected_release_date"] is None
+    assert {call.kwargs["user_email"] for call in notifications[0].call_args_list} == {"reader-1@example.com", "reader-2@example.com"}
+    notifications[1].assert_called_once()
 
-    assert promoted == []
-    request_db.update_request_status.assert_not_called()
-    mock_notify.assert_not_called()
+
+@pytest.mark.parametrize("release_date", ["2099-01-01", "not-a-date", ""])
+def test_future_or_invalid_dates_do_not_approve(db, user_db, notifications, release_date):
+    request_id = prerelease(db, release_date)
+    assert promote_due_prerelease_requests(db, user_db) == []
+    assert db.get_request(request_id)["status"] == "prerelease_requested"
+    notifications[0].assert_not_called()
+    notifications[1].assert_not_called()
+
+
+def test_due_request_catches_up_after_missed_release_time(db, user_db):
+    request_id = prerelease(db, "2000-01-01")
+    assert promote_due_prerelease_requests(db, user_db)[0]["status"] == "approved"
+    assert db.get_request(request_id)["status"] == "approved"
+
+
+def test_rescheduled_request_is_not_approved_from_stale_scan(db, user_db, notifications):
+    request_id = prerelease(db, '2000-01-01')
+    stale_rows = db.list_requests(status='prerelease_requested')
+    db.update_request_metadata(request_id, expected_release_date='2099-01-01')
+    with patch.object(db, 'list_requests', return_value=stale_rows):
+        assert promote_due_prerelease_requests(db, user_db) == []
+    assert db.get_request(request_id)['status'] == 'prerelease_requested'
+    notifications[1].assert_not_called()
+
+
+def test_download_callback_is_forwarded_by_loop(db, user_db):
+    from shelfmark.core.prerelease_requests import run_prerelease_request_loop
+    callback = MagicMock()
+    with patch('shelfmark.core.prerelease_requests.promote_due_prerelease_requests') as promote, \
+         patch('shelfmark.core.prerelease_requests.time.sleep', side_effect=InterruptedError):
+        with pytest.raises(InterruptedError):
+            run_prerelease_request_loop(db, user_db, on_request_approved=callback)
+    promote.assert_called_once_with(db, user_db, on_request_update=None, on_request_approved=callback)
+
+
+def test_automatic_download_reserves_slot_and_backfills_metadata():
+    from shelfmark.core.request_routes import start_prerelease_download
+    request_db, user_db = MagicMock(), MagicMock()
+    req = {'id': 123456, 'status': 'approved', 'title': 'Manual pre-release'}
+    request_db.get_request.return_value = req
+    enriched = {**req, 'provider': 'googlebooks', 'provider_id': 'book-id'}
+    with patch('shelfmark.core.request_routes.threading.Thread') as thread, \
+         patch('shelfmark.core.request_routes._backfill_missing_metadata', return_value=enriched) as backfill, \
+         patch('shelfmark.core.request_routes._auto_download_request') as download, \
+         patch('shelfmark.core.request_routes._acquire_download_slot', return_value=True) as acquire:
+        start_prerelease_download(request_db, user_db, req)
+        acquire.assert_called_once_with(req['id'])
+        thread.return_value.start.assert_called_once()
+        thread.call_args.kwargs['target']()
+        backfill.assert_called_once_with(request_db, req['id'], req)
+        download.assert_called_once_with(request_db, user_db, req['id'], enriched)
+
+
+def test_automatic_download_skips_already_reserved_request():
+    from shelfmark.core.request_routes import start_prerelease_download
+    with patch('shelfmark.core.request_routes._acquire_download_slot', return_value=False), \
+         patch('shelfmark.core.request_routes.threading.Thread') as thread:
+        start_prerelease_download(MagicMock(), MagicMock(), {'id': 123456})
+    thread.assert_not_called()
+
+
+def test_concurrent_scanners_claim_group_only_once(db, user_db, notifications):
+    from concurrent.futures import ThreadPoolExecutor
+    request_id = prerelease(db, '2000-01-01')
+    second_db = RequestDB(db._db_path)
+    snapshots = db.list_requests(status='prerelease_requested')
+    download = MagicMock()
+    with patch.object(db, 'list_requests', return_value=snapshots), \
+         patch.object(second_db, 'list_requests', return_value=snapshots), \
+         ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda scan_db: promote_due_prerelease_requests(scan_db, user_db, on_request_approved=download), [db, second_db]))
+    assert sorted(map(len, results)) == [0, 1]
+    assert db.get_request(request_id)['status'] == 'approved'
+    download.assert_called_once()
+    notifications[1].assert_called_once()
+
+
+def test_automatic_download_releases_slot_if_thread_cannot_start():
+    from shelfmark.core.request_routes import start_prerelease_download
+    with patch('shelfmark.core.request_routes._acquire_download_slot', return_value=True), \
+         patch('shelfmark.core.request_routes._release_download_slot') as release, \
+         patch('shelfmark.core.request_routes.threading.Thread') as thread:
+        thread.return_value.start.side_effect = RuntimeError('cannot start thread')
+        with pytest.raises(RuntimeError):
+            start_prerelease_download(MagicMock(), MagicMock(), {'id': 123456})
+        release.assert_called_once_with(123456)
+
+
+def test_download_does_not_start_if_admin_changed_status():
+    from shelfmark.core.request_routes import start_prerelease_download
+    db = MagicMock()
+    db.get_request.return_value = {'id': 123456, 'status': 'denied'}
+    with patch('shelfmark.core.request_routes._acquire_download_slot', return_value=True), \
+         patch('shelfmark.core.request_routes._release_download_slot') as release, \
+         patch('shelfmark.core.request_routes.threading.Thread') as thread, \
+         patch('shelfmark.core.request_routes._auto_download_request') as download:
+        start_prerelease_download(db, MagicMock(), {'id': 123456})
+        thread.call_args.kwargs['target']()
+        download.assert_not_called()
+        release.assert_called_once_with(123456)
+
+
+def test_approval_notifications_precede_download_status_changes(db, user_db, notifications):
+    prerelease(db, '2000-01-01')
+    events = []
+    notifications[0].side_effect = lambda **kwargs: events.append('email')
+    notifications[1].side_effect = lambda **kwargs: events.append('push')
+    promote_due_prerelease_requests(db, user_db, on_request_approved=lambda req: events.append('download'))
+    assert events == ['email', 'push', 'download']

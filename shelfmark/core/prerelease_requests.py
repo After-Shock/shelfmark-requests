@@ -1,4 +1,4 @@
-"""Helpers for promoting prerelease requests into the normal pending queue."""
+"""Approve due pre-release requests and start their normal processing workflow."""
 
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ def _parse_release_date(raw_value: Any) -> date | None:
         return None
 
 
-def _notify_group_activated(request_db: Any, user_db: Any, request_id: int) -> None:
-    """Notify every active member after a prerelease group is activated."""
+def _notify_group_approved(request_db: Any, user_db: Any, request_id: int) -> None:
+    """Notify every active member after a pre-release group is approved."""
     for member in request_db.get_request_group(request_id, active_only=True):
         try:
             user = user_db.get_user(user_id=member["user_id"])
@@ -41,11 +41,11 @@ def _notify_group_activated(request_db: Any, user_db: Any, request_id: int) -> N
             send_request_notification(
                 user_email=email,
                 request_title=member.get("title", "Unknown"),
-                new_status="activated",
+                new_status="approved",
             )
         except Exception as exc:
             logger.warning(
-                "Prerelease activation notification failed for user %s: %s",
+                "Prerelease approval notification failed for user %s: %s",
                 member["user_id"],
                 exc,
             )
@@ -56,9 +56,10 @@ def promote_due_prerelease_requests(
     user_db: Any,
     *,
     on_request_update: Callable[[dict[str, Any]], None] | None = None,
+    on_request_approved: Callable[[dict[str, Any]], None] | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Promote due prerelease requests to pending and notify requesters."""
+    """Auto-approve due groups once and notify requesters and the admin."""
     current_time = now.astimezone(RELEASE_NOTIFICATION_TZ) if now else datetime.now(RELEASE_NOTIFICATION_TZ)
     promoted: list[dict[str, Any]] = []
     rows = request_db.list_requests(
@@ -83,31 +84,44 @@ def promote_due_prerelease_requests(
         if current_time < release_ready_at:
             continue
 
-        request_db.update_request_metadata(
-            row["id"],
-            is_released=True,
-            clear_expected_release_date=True,
-        )
-        updated = request_db.update_request_status(row["id"], "pending")
+        updated = request_db.approve_due_prerelease_request(row["id"], row["expected_release_date"])
         if not updated:
             continue
         promoted.append(updated)
         logger.info(
-            "Promoted prerelease request #%s to pending after release date %s",
+            "Auto-approved prerelease request #%s after release date %s",
             updated.get("id"),
             release_date.isoformat(),
         )
         if on_request_update is not None:
-            on_request_update(updated)
-        _notify_group_activated(request_db, user_db, updated["id"])
-        requester = (user_db.get_user(user_id=updated["user_id"]) or {}).get("username") if updated.get("user_id") else None
+            try:
+                on_request_update(updated)
+            except Exception as exc:
+                logger.warning("Pre-release update broadcast failed for #%s: %s", updated["id"], exc)
+        try:
+            _notify_group_approved(request_db, user_db, updated["id"])
+        except Exception as exc:
+            logger.warning("Pre-release approval emails failed for #%s: %s", updated["id"], exc)
+        requester = None
+        try:
+            if updated.get("user_id"):
+                requester = (user_db.get_user(user_id=updated["user_id"]) or {}).get("username")
+        except Exception as exc:
+            logger.warning("Pre-release requester lookup failed for #%s: %s", updated["id"], exc)
         send_new_request_pushover(
             title=updated.get("title", "Unknown"),
             author=updated.get("author"),
             requester=requester,
             content_type=updated.get("content_type", "ebook"),
-            heading="Pre-release Now Active",
+            heading="Pre-release Auto-approved",
+            note="Status changed from Pre-release to Approved on release day.",
         )
+        # Approval notifications must precede any status changes from the worker.
+        if on_request_approved is not None:
+            try:
+                on_request_approved(updated)
+            except Exception as exc:
+                logger.warning("Pre-release download could not start for #%s: %s", updated["id"], exc)
     return promoted
 
 
@@ -116,6 +130,7 @@ def run_prerelease_request_loop(
     user_db: Any,
     *,
     on_request_update: Callable[[dict[str, Any]], None] | None = None,
+    on_request_approved: Callable[[dict[str, Any]], None] | None = None,
     interval_seconds: int = PRERELEASE_SCAN_INTERVAL_SECONDS,
 ) -> None:
     """Continuously promote due prerelease requests at a fixed interval."""
@@ -126,6 +141,7 @@ def run_prerelease_request_loop(
                 request_db,
                 user_db,
                 on_request_update=on_request_update,
+                on_request_approved=on_request_approved,
             )
         except Exception as exc:
             logger.warning("Prerelease promotion loop failed: %s", exc)

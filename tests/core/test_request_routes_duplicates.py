@@ -335,8 +335,9 @@ def test_simultaneous_canonical_and_linked_routes_start_one_worker(app, route):
     initial_reads = Barrier(2)
 
     def synchronized_initial_read(request_id):
+        row = original_get_request(request_id)
         initial_reads.wait()
-        return original_get_request(request_id)
+        return row
 
     from shelfmark.core import request_routes
     request_routes._in_flight_downloads.clear()

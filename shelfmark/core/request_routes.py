@@ -964,6 +964,33 @@ def retry_next_release(request_db: RequestDB, request_id: int) -> bool:
         _release_download_slot(request_id)
 
 
+def start_prerelease_download(request_db: RequestDB, user_db: UserDB, req: dict) -> None:
+    """Start normal processing for an automatically approved canonical request."""
+    request_id = req["id"]
+    if not _acquire_download_slot(request_id):
+        return
+
+    def download() -> None:
+        try:
+            current = request_db.get_request(request_id)
+            if not current or current["status"] != "approved":
+                _release_download_slot(request_id)
+                return
+            enriched = _backfill_missing_metadata(request_db, request_id, current)
+        except Exception:
+            _release_download_slot(request_id)
+            logger.exception("Unable to prepare auto-approved pre-release #%s", request_id)
+            return
+        # The normal worker releases the reserved slot in its finally block.
+        _auto_download_request(request_db, user_db, request_id, enriched)
+
+    try:
+        threading.Thread(target=download, daemon=True, name=f"prerelease-download-{request_id}").start()
+    except Exception:
+        _release_download_slot(request_id)
+        raise
+
+
 _resume_lock = None  # held open for the process lifetime once taken
 
 
