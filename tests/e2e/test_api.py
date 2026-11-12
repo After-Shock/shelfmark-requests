@@ -6,6 +6,8 @@ Tests the full application flow through the HTTP API.
 Run with: docker exec test-cwabd python3 -m pytest tests/e2e/ -v -m e2e
 """
 
+from pathlib import Path
+
 import pytest
 
 from .conftest import AA_TIMEOUT, APIClient, DownloadTracker
@@ -77,7 +79,8 @@ class TestConfigEndpoint:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["release_version"] == "1.6.0"
+        expected = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip()
+        assert data["release_version"] == expected
 
     def test_config_returns_supported_formats(self, api_client: APIClient):
         """Test that config includes supported formats."""
