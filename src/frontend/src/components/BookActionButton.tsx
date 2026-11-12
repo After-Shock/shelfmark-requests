@@ -55,19 +55,14 @@ export function BookActionButton({
       );
     }
 
-    const sulleyBlue = '#00BCD4'; // Sulley from Monsters Inc - teal/turquoise
-    const sulleyBlueHover = '#00ACC1';
     return (
       <button
         onClick={() => onRequest(book)}
-        className={`${sizeClasses} rounded font-medium text-white transition-colors ${fullWidth ? 'w-full' : ''} ${className || ''}`}
+        className={`${sizeClasses} rounded font-medium text-white transition-colors bg-accent hover:bg-accent-hover ${fullWidth ? 'w-full' : ''} ${className || ''}`}
         style={{
-          backgroundColor: sulleyBlue,
-          boxShadow: '0 2px 8px rgba(0, 188, 212, 0.3)',
+          boxShadow: '0 2px 8px var(--accent-muted-strong)',
           ...style
         }}
-        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = sulleyBlueHover}
-        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = sulleyBlue}
       >
         Request
       </button>

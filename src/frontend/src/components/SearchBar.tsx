@@ -316,18 +316,7 @@ export const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(({
           ref={buttonRef}
           type="button"
           onClick={onSubmit}
-          className={`p-2 rounded-full text-white disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center transition-colors search-bar-button ${
-            ''
-          }`}
-          style={{
-            backgroundColor: theme.button.secondary,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = theme.button.secondaryHover;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = theme.button.secondary;
-          }}
+          className="p-2 rounded-full text-white disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center transition-colors search-bar-button bg-accent enabled:hover:bg-accent-hover"
           aria-label={searchButtonLabel}
           title={searchButtonTitle}
           disabled={isLoading}

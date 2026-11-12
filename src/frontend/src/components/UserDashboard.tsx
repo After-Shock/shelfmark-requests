@@ -86,10 +86,7 @@ export const UserDashboard = ({
           </div>
           <button
             type="submit"
-            className="px-5 py-3 rounded-lg font-medium text-white transition-colors"
-            style={{ backgroundColor: theme.button.secondary }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = theme.button.secondaryHover}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = theme.button.secondary}
+            className="px-5 py-3 rounded-lg font-medium text-white transition-colors bg-accent hover:bg-accent-hover"
           >
             Search
           </button>
@@ -119,7 +116,7 @@ export const UserDashboard = ({
             type="button"
             onClick={onManualRequest}
             className="text-xs font-medium transition-colors hover:underline mt-2"
-            style={{ color: '#00BCD4' }}
+            style={{ color: 'var(--accent)' }}
           >
             Can't find it? Request manually — Click Here
           </button>

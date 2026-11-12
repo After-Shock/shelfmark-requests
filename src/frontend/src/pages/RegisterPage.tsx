@@ -381,10 +381,7 @@ export const RegisterPage = ({ onRegisterComplete, signupServices }: RegisterPag
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50"
-              style={{ backgroundColor: theme.button.secondary }}
-              onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = theme.button.secondaryHover)}
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.button.secondary)}
+              className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50 bg-accent enabled:hover:bg-accent-hover"
             >
               {isLoading ? 'Creating Account...' : 'Create Account'}
             </button>

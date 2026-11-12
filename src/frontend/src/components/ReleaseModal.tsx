@@ -1366,7 +1366,7 @@ export const ReleaseModal = ({
                           onSearchSeries(book.series_name!);
                           handleClose();
                         }}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-[#00BCD4] dark:text-[#00BCD4] bg-[#00BCD4]/10 dark:bg-[#00BCD4]/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-accent dark:text-accent bg-accent/10 dark:bg-accent/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
                       >
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
@@ -1388,7 +1388,7 @@ export const ReleaseModal = ({
                           <button
                             type="button"
                             onClick={() => setDescriptionExpanded(false)}
-                            className="text-[#00BCD4] dark:text-[#00BCD4] hover:underline font-medium inline"
+                            className="text-accent dark:text-accent hover:underline font-medium inline"
                           >
                             Show less
                           </button>
@@ -1399,7 +1399,7 @@ export const ReleaseModal = ({
                       <button
                         type="button"
                         onClick={() => setDescriptionExpanded(true)}
-                        className="absolute bottom-0 right-0 text-[#00BCD4] dark:text-[#00BCD4] hover:underline font-medium pl-8 bg-gradient-to-r from-transparent via-[var(--bg)] to-[var(--bg)] sm:via-[var(--bg-soft)] sm:to-[var(--bg-soft)]"
+                        className="absolute bottom-0 right-0 text-accent dark:text-accent hover:underline font-medium pl-8 bg-gradient-to-r from-transparent via-[var(--bg)] to-[var(--bg)] sm:via-[var(--bg-soft)] sm:to-[var(--bg-soft)]"
                       >
                         more
                       </button>
@@ -1419,7 +1419,7 @@ export const ReleaseModal = ({
                       href={book.source_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[#00BCD4] dark:text-[#00BCD4] hover:underline"
+                      className="inline-flex items-center gap-1 text-accent dark:text-accent hover:underline"
                     >
                       View on {providerDisplay}
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1444,7 +1444,7 @@ export const ReleaseModal = ({
                     <div className="relative flex gap-1">
                       {/* Sliding indicator */}
                       <div
-                        className="absolute bottom-0 h-0.5 bg-[#00BCD4] transition-all duration-300 ease-out"
+                        className="absolute bottom-0 h-0.5 bg-accent transition-all duration-300 ease-out"
                         style={{
                           left: tabIndicatorStyle.left,
                           width: tabIndicatorStyle.width,
@@ -1456,7 +1456,7 @@ export const ReleaseModal = ({
                           ref={(el) => { tabRefs.current[tab.name] = el; }}
                           onClick={() => setActiveTab(tab.name)}
                           className={`px-4 py-2.5 text-sm font-medium border-b-2 border-transparent transition-colors whitespace-nowrap ${activeTab === tab.name
-                              ? 'text-[#00BCD4] dark:text-[#00BCD4]'
+                              ? 'text-accent dark:text-accent'
                               : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                             }`}
                         >
@@ -1482,7 +1482,7 @@ export const ReleaseModal = ({
                           return next;
                         });
                       }}
-                      className={`p-2.5 rounded-full transition-colors hover-surface text-gray-500 dark:text-gray-400 ${manualQuery.trim() ? 'text-[#00BCD4] dark:text-[#00BCD4]' : ''
+                      className={`p-2.5 rounded-full transition-colors hover-surface text-gray-500 dark:text-gray-400 ${manualQuery.trim() ? 'text-accent dark:text-accent' : ''
                         }`}
                       aria-label="Manual search query"
                       title="Manual query"
@@ -1510,7 +1510,7 @@ export const ReleaseModal = ({
                               <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5" />
                             </svg>
                             {currentSort && (
-                              <span className="absolute top-1 right-1 w-2 h-2 bg-[#00BCD4] rounded-full" />
+                              <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
                             )}
                           </button>
                         )}
@@ -1525,7 +1525,7 @@ export const ReleaseModal = ({
                                 close();
                               }}
                               className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover-surface rounded ${!currentSort
-                                  ? 'text-[#00BCD4] dark:text-[#00BCD4] font-medium'
+                                  ? 'text-accent dark:text-accent font-medium'
                                   : 'text-gray-700 dark:text-gray-300'
                                 }`}
                             >
@@ -1550,7 +1550,7 @@ export const ReleaseModal = ({
                                     if (!isSelected) close();
                                   }}
                                   className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover-surface rounded ${isSelected
-                                      ? 'text-[#00BCD4] dark:text-[#00BCD4] font-medium'
+                                      ? 'text-accent dark:text-accent font-medium'
                                       : 'text-gray-700 dark:text-gray-300'
                                     }`}
                                 >
@@ -1610,7 +1610,7 @@ export const ReleaseModal = ({
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z" />
                               </svg>
                               {hasActiveFilter && (
-                                <span className="absolute top-1 right-1 w-2 h-2 bg-[#00BCD4] rounded-full" />
+                                <span className="absolute top-1 right-1 w-2 h-2 bg-accent rounded-full" />
                               )}
                             </button>
                           );
@@ -1698,7 +1698,7 @@ export const ReleaseModal = ({
                                     setLoadingBySource((prev) => ({ ...prev, [activeTab]: false }));
                                   }
                                 }}
-                                className="w-full px-3 py-2 text-sm font-medium text-white bg-[#00BCD4] hover:bg-[#00ACC1] rounded-lg transition-colors"
+                                className="w-full px-3 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition-colors"
                               >
                                 Apply
                               </button>
@@ -1773,8 +1773,8 @@ export const ReleaseModal = ({
                     type="submit"
                     disabled={currentTabLoading || !manualQuery.trim()}
                     className={`px-3 py-2 text-sm font-medium text-white rounded-lg transition-colors ${currentTabLoading || !manualQuery.trim()
-                        ? 'bg-[#00BCD4]/60 cursor-not-allowed'
-                        : 'bg-[#00BCD4] hover:bg-[#00ACC1]'
+                        ? 'bg-accent/60 cursor-not-allowed'
+                        : 'bg-accent hover:bg-accent-hover'
                       }`}
                   >
                     {currentTabLoading ? 'Searching…' : 'Search'}

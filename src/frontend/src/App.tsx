@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, useSyncExternalStore, CSSProperties } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, CSSProperties } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import {
   Book,
@@ -46,13 +46,6 @@ import { withBasePath } from './utils/basePath';
 import { SearchModeProvider } from './contexts/SearchModeContext';
 import './styles.css';
 
-// Header owns theme resolution (auto/light/dark) and writes it to <html data-theme>; follow that.
-const subscribeTheme = (cb: () => void) => {
-  const mo = new MutationObserver(cb);
-  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  return () => mo.disconnect();
-};
-const getDocTheme = () => (document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
 
 // Content type always defaults to 'ebook' for each session
 const getInitialContentType = (): ContentType => {
@@ -62,7 +55,6 @@ const getInitialContentType = (): ContentType => {
 function App() {
   const { showToast, removeToast } = useToast();
   const { theme, toggleTheme } = useTheme();
-  const docTheme = useSyncExternalStore(subscribeTheme, getDocTheme);
 
   // Realtime status with WebSocket and polling fallback
   // Socket connection is managed by SocketProvider in main.tsx
@@ -861,7 +853,7 @@ function App() {
       {showSyncBanner && needsLibrarySync && authRequired && isAuthenticated && !isAdmin && (
         <div
           className="relative flex items-center text-white text-sm font-medium"
-          style={{ background: 'linear-gradient(90deg, #00BCD4 0%, #7B3FF2 100%)' }}
+          style={{ background: 'linear-gradient(90deg, var(--accent) 0%, var(--primary-color) 100%)' }}
         >
           <button
             type="button"
@@ -1076,7 +1068,7 @@ function App() {
         isAdmin={isAdmin}
         version={config?.release_version}
       />
-      <Toaster theme={docTheme} position="bottom-right" richColors closeButton />
+      <Toaster theme={theme} position="bottom-right" richColors closeButton />
 
       <DownloadsSidebar
         isOpen={downloadsSidebarOpen}

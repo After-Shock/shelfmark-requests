@@ -109,7 +109,7 @@ export const SearchSection = ({
               type="button"
               onClick={onManualRequest}
               className="text-xs font-medium transition-colors hover:underline"
-              style={{ color: '#00BCD4' }}
+              style={{ color: 'var(--accent)' }}
             >
               Can't find it? Request manually — Click Here
             </button>

@@ -196,12 +196,7 @@ export const LoginForm = ({
           type="submit"
           name="submit"
           disabled={isLoading}
-          className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{
-            backgroundColor: theme.button.primary,
-          }}
-          onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = theme.button.primaryHover)}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = theme.button.primary)}
+          className="w-full py-2.5 px-4 rounded-lg font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-primary enabled:hover:bg-primary-hover"
           aria-label="Sign in"
         >
           {isLoading ? (

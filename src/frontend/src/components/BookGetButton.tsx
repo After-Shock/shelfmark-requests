@@ -67,8 +67,8 @@ export const BookGetButton = ({
   const getButtonClasses = () => {
     if (isCompleted) {
       return isIconVariant
-        ? 'bg-[#00BCD4] text-white'
-        : 'bg-[#00BCD4] hover:bg-[#00ACC1]';
+        ? 'bg-accent text-white'
+        : 'bg-accent hover:bg-accent-hover';
     }
     if (hasError) {
       return isIconVariant
@@ -79,7 +79,7 @@ export const BookGetButton = ({
       // Show loading state (fetching metadata)
       return isIconVariant
         ? 'text-gray-400 dark:text-gray-500'
-        : 'bg-[#00BCD4]/70';
+        : 'bg-accent/70';
     }
     if (isInProgress) {
       // Show progress state but keep it clickable
@@ -90,7 +90,7 @@ export const BookGetButton = ({
     // Default state - icon variant has no background
     return isIconVariant
       ? 'text-gray-600 dark:text-gray-200 hover-action'
-      : 'bg-[#00BCD4] hover:bg-[#00ACC1]';
+      : 'bg-accent hover:bg-accent-hover';
   };
 
   const handleClick = () => {

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { getThemePreference, setThemePreference, ThemePreference } from './useTheme';
 import { getSettings, updateSettings, executeSettingsAction } from '../services/api';
 import {
   SettingsTab,
@@ -22,14 +23,6 @@ const THEME_FIELD: SelectFieldConfig = {
     { value: 'auto', label: 'Auto (System)' },
   ],
 };
-
-// Apply theme to document
-function applyTheme(theme: string): void {
-  const effectiveTheme = theme === 'auto'
-    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    : theme;
-  document.documentElement.setAttribute('data-theme', effectiveTheme);
-}
 
 // Extract value from a field based on its type
 function getFieldValue(field: SettingsField): unknown {
@@ -101,7 +94,7 @@ export function useSettings(): UseSettingsReturn {
           if (field.type !== 'ActionButton') {
             // Special handling for theme field - get from localStorage
             if (field.key === '_THEME') {
-              initialValues[tab.name][field.key] = localStorage.getItem('preferred-theme') || 'auto';
+              initialValues[tab.name][field.key] = getThemePreference();
             } else {
               initialValues[tab.name][field.key] = getFieldValue(field);
             }
@@ -133,8 +126,7 @@ export function useSettings(): UseSettingsReturn {
   const updateValue = useCallback((tabName: string, key: string, value: unknown) => {
     // Apply theme immediately when changed (no save button needed)
     if (key === '_THEME' && typeof value === 'string') {
-      localStorage.setItem('preferred-theme', value);
-      applyTheme(value);
+      setThemePreference(value as ThemePreference);
       // Also update original value so it doesn't show as pending change
       setOriginalValues((prev) => ({
         ...prev,

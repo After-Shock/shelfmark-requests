@@ -41,7 +41,7 @@ const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: st
     text: '',
     label: 'Approved',
     customStyle: {
-      backgroundColor: 'rgba(0, 188, 212, 0.2)',
+      backgroundColor: 'var(--accent-muted)',
       color: theme.primary.turquoise
     }
   },
@@ -399,12 +399,12 @@ export const RequestsSidebar = ({
 
             {/* Alternate version preference */}
             {!!req.prefer_alternate_version && (
-              <p className="text-xs mt-1 italic" style={{ color: '#00BCD4' }}>
+              <p className="text-xs mt-1 italic" style={{ color: 'var(--accent)' }}>
                 Prefers graphic/dramatized version
               </p>
             )}
             {!!req.is_manual_request && (
-              <p className="text-xs mt-1 font-medium" style={{ color: '#00BCD4' }}>
+              <p className="text-xs mt-1 font-medium" style={{ color: 'var(--accent)' }}>
                 Manual request
               </p>
             )}
@@ -518,17 +518,7 @@ export const RequestsSidebar = ({
                     type="button"
                     onClick={() => handleRetryClick(req.id)}
                     disabled={isProcessing(req.id)}
-                    className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{
-                      backgroundColor: 'rgba(0, 188, 212, 0.2)',
-                      color: theme.primary.turquoise
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.3)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.2)';
-                    }}
+                    className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-accent-muted text-accent enabled:hover:bg-accent-muted-strong"
                   >
                     {isProcessing(req.id) ? 'Retrying...' : 'Retry'}
                   </button>

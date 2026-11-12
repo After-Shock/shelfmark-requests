@@ -84,27 +84,6 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
   const [shouldAnimateIn, setShouldAnimateIn] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const saved = localStorage.getItem('preferred-theme') || 'auto';
-    applyTheme(saved);
-
-    // Remove preload class after initial theme is applied to enable transitions
-    requestAnimationFrame(() => {
-      document.documentElement.classList.remove('preload');
-    });
-  }, []);
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => {
-      if (localStorage.getItem('preferred-theme') === 'auto') {
-        document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
-      }
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
-
   // Helper function to close dropdown with animation
   const closeDropdown = () => {
     setIsClosing(true);
@@ -138,15 +117,6 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
       document.removeEventListener('keydown', handleEscapeKey);
     };
   }, [isDropdownOpen, isClosing]);
-
-  const applyTheme = (pref: string) => {
-    if (pref === 'auto') {
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    } else {
-      document.documentElement.setAttribute('data-theme', pref);
-    }
-  };
 
   const handleLogout = () => {
     closeDropdown();

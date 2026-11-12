@@ -263,17 +263,7 @@ export const DownloadsSidebar = ({
                     e.stopPropagation();
                     onRetry(book.id);
                   }}
-                  className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors"
-                  style={{
-                    backgroundColor: 'rgba(0, 188, 212, 0.2)',
-                    color: '#00BCD4'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.3)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = 'rgba(0, 188, 212, 0.2)';
-                  }}
+                  className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors bg-accent-muted text-accent hover:bg-accent-muted-strong"
                   title="Retry download"
                   aria-label="Retry download"
                 >

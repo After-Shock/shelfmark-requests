@@ -1,7 +1,6 @@
 import { useEffect, useState, CSSProperties } from 'react';
 import { ButtonStateInfo } from '../types';
 import { CircularProgress } from './shared';
-import { theme } from '../theme';
 
 type ButtonSize = 'sm' | 'md';
 type ButtonVariant = 'primary' | 'icon';
@@ -72,7 +71,7 @@ export const BookDownloadButton = ({
 
   const primaryStateClasses =
     isCompleted
-      ? 'bg-[#00BCD4] cursor-not-allowed'
+      ? 'bg-accent cursor-not-allowed'
       : hasError
       ? 'bg-red-600 cursor-not-allowed opacity-75'
       : isInProgress
@@ -81,7 +80,7 @@ export const BookDownloadButton = ({
 
   const iconStateClasses =
     isCompleted
-      ? 'bg-[#00BCD4] text-white cursor-not-allowed'
+      ? 'bg-accent text-white cursor-not-allowed'
       : hasError
       ? 'bg-red-600 text-white cursor-not-allowed opacity-75'
       : isInProgress
@@ -184,32 +183,17 @@ export const BookDownloadButton = ({
     return null;
   };
 
-  const buttonStyle: CSSProperties = {
-    ...style,
-    ...(variant === 'primary' && buttonState.state === 'download' && !isQueuing
-      ? {
-          backgroundColor: theme.button.primary,
-        }
-      : {}),
-  };
+  const readyClasses = variant === 'primary' && buttonState.state === 'download' && !isQueuing
+    ? 'bg-primary enabled:hover:bg-primary-hover'
+    : '';
 
   return (
     <button
-      className={`${baseClasses} ${sizeClass} ${stateClasses} ${widthClasses} ${className}`.trim()}
+      className={`${baseClasses} ${sizeClass} ${stateClasses} ${readyClasses} ${widthClasses} ${className}`.trim()}
       onClick={handleDownload}
       disabled={isDisabled || isInProgress}
       data-action="download"
-      style={buttonStyle}
-      onMouseEnter={(e) => {
-        if (variant === 'primary' && buttonState.state === 'download' && !isQueuing) {
-          e.currentTarget.style.backgroundColor = theme.button.primaryHover;
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (variant === 'primary' && buttonState.state === 'download' && !isQueuing) {
-          e.currentTarget.style.backgroundColor = theme.button.primary;
-        }
-      }}
+      style={style}
       aria-label={ariaLabel ?? displayText}
     >
       {variant === 'primary' && showIcon && !isCompleted && !hasError && !showCircularProgress && !showSpinner && (

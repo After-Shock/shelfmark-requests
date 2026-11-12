@@ -44,6 +44,14 @@ input, select, textarea, button,
     --primary-dark: #5E2AC4;
     --primary-muted: rgba(123, 63, 242, 0.15);
     --primary-text: #7B3FF2;
+    --primary-hover: #6A35D6;
+    /* Accent (Sulley turquoise): action buttons, links, active toggles */
+    --accent-rgb: 0 188 212;
+    --accent: rgb(var(--accent-rgb));
+    --accent-hover: #00ACC1;
+    --accent-light: #1DE9B6;
+    --accent-muted: rgba(0, 188, 212, 0.2);
+    --accent-muted-strong: rgba(0, 188, 212, 0.3);
     --text-color: #333;
     --background-color: #f8f8f8;
     --border-color: #e5e5e5;

@@ -245,7 +245,7 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
                             onSearchSeries(book.series_name!);
                             handleClose();
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-[#00BCD4]/10 dark:bg-[#00BCD4]/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex-shrink-0"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-accent/10 dark:bg-accent/20 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex-shrink-0"
                         >
                           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
@@ -286,7 +286,7 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
                     type="checkbox"
                     checked={preferAlternateVersion}
                     onChange={(e) => setPreferAlternateVersion(e.target.checked)}
-                    className="w-4 h-4 rounded accent-[#00BCD4] cursor-pointer"
+                    className="w-4 h-4 rounded accent-accent cursor-pointer"
                   />
                   Request graphic or dramatized version if available
                 </label>
@@ -295,10 +295,8 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
               {showRequestButton && onRequest && (
                 <button
                   onClick={() => onRequest(book, preferAlternateVersion)}
-                  className="rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
-                  style={{ backgroundColor: '#00BCD4', boxShadow: '0 2px 8px rgba(0, 188, 212, 0.3)' }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#00ACC1'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#00BCD4'}
+                  className="rounded-full px-6 py-2.5 text-sm font-medium text-white transition-colors bg-accent hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-offset-2"
+                  style={{ boxShadow: '0 2px 8px var(--accent-muted-strong)' }}
                 >
                   Request
                 </button>

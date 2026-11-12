@@ -6,7 +6,6 @@ import { CompactView } from './resultsViews/CompactView';
 import { ListView } from './resultsViews/ListView';
 import { Dropdown } from './Dropdown';
 import { SORT_OPTIONS } from '../data/filterOptions';
-import { theme } from '../theme';
 
 // Grid layout classes by view mode
 const GRID_CLASSES = {
@@ -103,12 +102,9 @@ export const ResultsSection = ({
               onClick={() => setViewMode('card')}
               className={`p-2 rounded-full transition-all duration-200 ${
                 viewMode === 'card'
-                  ? 'text-white'
+                  ? 'text-white bg-accent hover:bg-accent-hover'
                   : 'hover-action text-gray-900 dark:text-gray-100'
               }`}
-              style={viewMode === 'card' ? { backgroundColor: theme.primary.turquoise } : undefined}
-              onMouseEnter={(e) => viewMode === 'card' && (e.currentTarget.style.backgroundColor = theme.primary.turquoiseDark)}
-              onMouseLeave={(e) => viewMode === 'card' && (e.currentTarget.style.backgroundColor = theme.primary.turquoise)}
               title="Card view"
               aria-label="Card view"
               aria-pressed={viewMode === 'card'}
@@ -132,12 +128,9 @@ export const ResultsSection = ({
             onClick={() => setViewMode('compact')}
             className={`p-2 rounded-full transition-all duration-200 ${
               viewMode === 'compact'
-                ? 'text-white'
+                ? 'text-white bg-accent hover:bg-accent-hover'
                 : 'hover-action text-gray-900 dark:text-gray-100'
             }`}
-            style={viewMode === 'compact' ? { backgroundColor: theme.primary.turquoise } : undefined}
-            onMouseEnter={(e) => viewMode === 'compact' && (e.currentTarget.style.backgroundColor = theme.primary.turquoiseDark)}
-            onMouseLeave={(e) => viewMode === 'compact' && (e.currentTarget.style.backgroundColor = theme.primary.turquoise)}
             title="Compact view"
             aria-label="Compact view"
             aria-pressed={viewMode === 'compact'}
@@ -159,12 +152,9 @@ export const ResultsSection = ({
             onClick={() => setViewMode('list')}
             className={`p-2 rounded-full transition-all duration-200 ${
               viewMode === 'list'
-                ? 'text-white'
+                ? 'text-white bg-accent hover:bg-accent-hover'
                 : 'hover-action text-gray-900 dark:text-gray-100'
             }`}
-            style={viewMode === 'list' ? { backgroundColor: theme.primary.turquoise } : undefined}
-            onMouseEnter={(e) => viewMode === 'list' && (e.currentTarget.style.backgroundColor = theme.primary.turquoiseDark)}
-            onMouseLeave={(e) => viewMode === 'list' && (e.currentTarget.style.backgroundColor = theme.primary.turquoise)}
             title="List view"
             aria-label="List view"
             aria-pressed={viewMode === 'list'}
@@ -246,7 +236,7 @@ export const ResultsSection = ({
             className={`px-3 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
               isLoadingMore
                 ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-wait'
-                : 'bg-[#00BCD4] hover:bg-[#00ACC1] text-white'
+                : 'bg-accent hover:bg-accent-hover text-white'
             }`}
           >
             {isLoadingMore ? (

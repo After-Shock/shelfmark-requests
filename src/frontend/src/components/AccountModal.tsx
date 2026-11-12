@@ -410,10 +410,7 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
               <button
                 type="submit"
                 disabled={isLoading}
-                className="flex-1 px-4 py-2.5 rounded-lg font-medium text-white transition-colors disabled:opacity-50"
-                style={{ backgroundColor: theme.button.secondary }}
-                onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = theme.button.secondaryHover)}
-                onMouseLeave={(e) => !isLoading && (e.currentTarget.style.backgroundColor = theme.button.secondary)}
+                className="flex-1 px-4 py-2.5 rounded-lg font-medium text-white transition-colors disabled:opacity-50 bg-accent enabled:hover:bg-accent-hover"
               >
                 {isLoading ? 'Changing...' : 'Change Password'}
               </button>

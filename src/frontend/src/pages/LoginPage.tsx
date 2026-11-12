@@ -64,12 +64,7 @@ export const LoginPage = ({ onLogin, error, isLoading, authMode, registrationEna
               Don&apos;t have an account?{' '}
               <Link
                 to="/register"
-                className="font-medium transition-colors"
-                style={{
-                  color: theme.primary.turquoise,
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.color = theme.primary.turquoiseLight}
-                onMouseLeave={(e) => e.currentTarget.style.color = theme.primary.turquoise}
+                className="font-medium transition-colors text-accent hover:text-accent-light"
               >
                 Create Account
               </Link>

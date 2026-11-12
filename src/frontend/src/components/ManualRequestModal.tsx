@@ -171,7 +171,7 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
                   type="checkbox"
                   checked={preferAlternate}
                   onChange={e => setPreferAlternate(e.target.checked)}
-                  className="w-4 h-4 rounded accent-[#00BCD4] cursor-pointer"
+                  className="w-4 h-4 rounded accent-accent cursor-pointer"
                 />
                 Request graphic or dramatized version if available
               </label>
@@ -195,10 +195,7 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
               type="button"
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="px-6 py-2 rounded-full text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ backgroundColor: theme.primary.turquoise }}
-              onMouseEnter={e => { if (canSubmit) e.currentTarget.style.backgroundColor = '#00ACC1'; }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = theme.primary.turquoise; }}
+              className="px-6 py-2 rounded-full text-sm font-medium text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed bg-accent enabled:hover:bg-accent-hover"
             >
               Submit Request
             </button>
