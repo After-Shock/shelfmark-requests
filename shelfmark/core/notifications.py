@@ -27,6 +27,15 @@ _APPRISE_LOGO_URL = (
 )
 
 
+def _apprise_logo_url() -> str:
+    """This instance's own logo when PUBLIC_URL is set (it serves /logo.png without auth);
+    otherwise upstream's, which notification services can always reach."""
+    from shelfmark.core.config import config as app_config
+
+    public_url = str(app_config.get("PUBLIC_URL", "") or "").strip().rstrip("/")
+    return f"{public_url}/logo.png" if public_url.startswith(("http://", "https://")) else _APPRISE_LOGO_URL
+
+
 class NotificationEvent(str, Enum):
     """Global notification event identifiers."""
 
@@ -285,7 +294,7 @@ def _create_apprise_client() -> Any:
         asset = apprise_asset_cls(
             app_id=_APPRISE_APP_ID,
             app_desc=_APPRISE_APP_DESC,
-            image_url_logo=_APPRISE_LOGO_URL,
+            image_url_logo=_apprise_logo_url(),
         )
     except TypeError:
         # Support older Apprise versions that do not expose image_url_logo.
