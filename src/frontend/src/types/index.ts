@@ -92,13 +92,6 @@ export interface AdvancedFilterState {
   formats: string[];
 }
 
-// Toast notification
-export interface Toast {
-  id: string;
-  message: string;
-  type: 'success' | 'error' | 'info';
-}
-
 // Sort option for dropdowns
 export interface SortOption {
   value: string;

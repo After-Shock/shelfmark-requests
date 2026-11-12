@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, CSSProperties } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useSyncExternalStore, CSSProperties } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import {
   Book,
@@ -27,7 +27,7 @@ import { ReleaseModal } from './components/ReleaseModal';
 import { DownloadsSidebar } from './components/DownloadsSidebar';
 import { RequestsSidebar } from './components/RequestsSidebar';
 import { UserDashboard } from './components/UserDashboard';
-import { ToastContainer } from './components/ToastContainer';
+import { Toaster } from 'sonner';
 import { Footer } from './components/Footer';
 import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
@@ -46,14 +46,23 @@ import { withBasePath } from './utils/basePath';
 import { SearchModeProvider } from './contexts/SearchModeContext';
 import './styles.css';
 
+// Header owns theme resolution (auto/light/dark) and writes it to <html data-theme>; follow that.
+const subscribeTheme = (cb: () => void) => {
+  const mo = new MutationObserver(cb);
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  return () => mo.disconnect();
+};
+const getDocTheme = () => (document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+
 // Content type always defaults to 'ebook' for each session
 const getInitialContentType = (): ContentType => {
   return 'ebook';
 };
 
 function App() {
-  const { toasts, showToast, removeToast } = useToast();
+  const { showToast, removeToast } = useToast();
   const { theme, toggleTheme } = useTheme();
+  const docTheme = useSyncExternalStore(subscribeTheme, getDocTheme);
 
   // Realtime status with WebSocket and polling fallback
   // Socket connection is managed by SocketProvider in main.tsx
@@ -1067,7 +1076,7 @@ function App() {
         isAdmin={isAdmin}
         version={config?.release_version}
       />
-      <ToastContainer toasts={toasts} />
+      <Toaster theme={docTheme} position="bottom-right" richColors closeButton />
 
       <DownloadsSidebar
         isOpen={downloadsSidebarOpen}

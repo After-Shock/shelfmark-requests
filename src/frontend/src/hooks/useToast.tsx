@@ -1,25 +1,20 @@
-import { useState, useCallback } from 'react';
-import { Toast } from '../types';
+import { useCallback } from 'react';
+import { toast } from 'sonner';
+
+let nextId = 0;
 
 export const useToast = () => {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-
   const showToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info', persistent: boolean = false): string => {
-    const id = Date.now().toString();
-    setToasts(prev => [...prev, { id, message, type }]);
-    
-    if (!persistent) {
-      setTimeout(() => {
-        setToasts(prev => prev.filter(t => t.id !== id));
-      }, 4000);
-    }
-    
+    const id = `t${++nextId}`;
+    // Persistent toasts are progress messages (debug logs, restart): spinner until dismissed.
+    if (persistent) toast.loading(message, { id, duration: Infinity });
+    else toast[type](message, { id });
     return id;
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    toast.dismiss(id);
   }, []);
 
-  return { toasts, showToast, removeToast };
+  return { showToast, removeToast };
 };
