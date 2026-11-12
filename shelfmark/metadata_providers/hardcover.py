@@ -1,9 +1,15 @@
 """Hardcover.app metadata provider. Requires API key."""
 
+import math
+import random
 import re
-import requests
+import threading
+import time
+from contextlib import suppress
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+import requests
 
 from shelfmark.core.cache import cacheable
 from shelfmark.core.logger import setup_logger
@@ -33,6 +39,97 @@ logger = setup_logger(__name__)
 
 HARDCOVER_API_URL = "https://api.hardcover.app/v1/graphql"
 HARDCOVER_PAGE_SIZE = 25  # Hardcover API returns max 25 results per page
+
+
+# --- Rate limiting (ported from upstream calibrain/shelfmark 4554868) ---------------------------
+# Hardcover's documented limits: a token bucket of 10 (Free) refilling at 60/min, 5,000/day, shared
+# by every app on the account (Calibre's Hardcover metadata plugin uses the same key here), so pace
+# below it. Series-ordered searches call get_book once per result and used to burst into 429s,
+# which came back as "no such book" and silently dropped books.
+class HardcoverRateLimitError(RuntimeError):
+    """Hardcover kept answering 429 after the retries, or asked for a wait too long to sit out."""
+
+
+HARDCOVER_RATE_BURST = 5
+HARDCOVER_RATE_PER_SECOND = 0.8
+HARDCOVER_RATE_LIMIT_ATTEMPTS = 3  # the first try plus two retries
+HARDCOVER_RETRY_AFTER_CAP_SECONDS = 30.0  # longer than this (spent daily quota): give up
+
+
+class _TokenBucket:
+    """Thread-safe token bucket; ``acquire`` blocks until a request may go out."""
+
+    def __init__(
+        self,
+        capacity: int,
+        per_second: float,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._capacity = float(capacity)
+        self._per_second = per_second
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._tokens = float(capacity)
+        self._updated = clock()
+
+    def _take_or_wait(self) -> float:
+        """Take a token and return 0, or return how long to wait before trying again."""
+        with self._lock:
+            now = self._clock()
+            if now > self._updated:
+                self._tokens = min(self._capacity, self._tokens + (now - self._updated) * self._per_second)
+                self._updated = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return 0.0
+            # _updated can sit in the future after penalize(): nothing refills before then.
+            return (self._updated - now) + (1.0 - self._tokens) / self._per_second
+
+    def acquire(self) -> None:
+        while (wait := self._take_or_wait()) > 0.0:
+            self._sleep(wait)
+
+    def penalize(self, seconds: float) -> None:
+        """Empty the bucket and hold every caller back for ``seconds``."""
+        with self._lock:
+            self._tokens = 0.0
+            self._updated = max(self._updated, self._clock() + seconds)
+
+
+_rate_limiter = _TokenBucket(HARDCOVER_RATE_BURST, HARDCOVER_RATE_PER_SECOND)
+
+
+def _throttle_wait_seconds(response: requests.Response, attempt: int) -> float:
+    """Seconds to wait after a 429: Retry-After when sent, else exponential backoff with jitter."""
+    raw = response.headers.get("Retry-After")
+    if raw is not None:
+        with suppress(ValueError):
+            seconds = float(raw)
+            if math.isfinite(seconds) and seconds >= 0:
+                return seconds
+    return float(2 ** attempt) + random.uniform(0.0, 1.0)
+
+
+# --- Rejected sort fallback (ported from upstream dfcd7c9) --------------------------------------
+# Hardcover forwards `sort` to Typesense and rejects the whole search if it dislikes the value. A
+# rejected search is HTTP 200 with no GraphQL errors and a null `results` body -- otherwise
+# indistinguishable from "nothing matched". An empty sort is always accepted, so fall back to it
+# and keep the fallback sticky for a while instead of paying for a doomed request every search.
+SORT_FALLBACK = ""
+SORT_FALLBACK_TTL = 900.0
+_sort_fallback_until = 0.0
+
+
+def _search_payload_rejected(result: Optional[Dict[str, Any]]) -> bool:
+    """True when Hardcover answered a search with a null results body (a real empty search has found: 0)."""
+    if not isinstance(result, dict):
+        return False
+    root = result.get("search", result)
+    if not isinstance(root, dict) or "results" not in root:
+        return False
+    return root["results"] is None
 
 
 # Mapping from abstract sort order to Hardcover sort parameter
@@ -396,7 +493,7 @@ class HardcoverProvider(MetadataProvider):
             variables["weights"] = search_weights
 
         try:
-            result = self._execute_query(graphql_query, variables)
+            result = self._execute_search_query(graphql_query, variables)
             if not result:
                 logger.debug("Hardcover search: No result from API")
                 return SearchResult(books=[], page=options.page, total_found=0, has_more=False)
@@ -629,14 +726,62 @@ class HardcoverProvider(MetadataProvider):
             logger.error(f"Hardcover ISBN search error: {e}")
             return None
 
+    def _execute_search_query(self, query: str, variables: Dict[str, Any]) -> Optional[Dict]:
+        """Run a search, retrying without ``sort`` if Hardcover rejects it; None when rejected."""
+        global _sort_fallback_until
+
+        sort = variables.get("sort")
+        if sort and time.monotonic() < _sort_fallback_until:
+            variables = {**variables, "sort": SORT_FALLBACK}
+            sort = None
+
+        result = self._execute_query(query, variables)
+        if not _search_payload_rejected(result):
+            return result
+
+        if not sort:
+            logger.error("Hardcover rejected this search (fields=%s) and returned no result body", variables.get("fields"))
+            return None
+
+        logger.warning(
+            "Hardcover rejected sort '%s'; retrying searches without a sort order for %ss",
+            sort, int(SORT_FALLBACK_TTL),
+        )
+        _sort_fallback_until = time.monotonic() + SORT_FALLBACK_TTL
+        retry = self._execute_query(query, {**variables, "sort": SORT_FALLBACK})
+        if _search_payload_rejected(retry):
+            logger.error("Hardcover rejected this search even without a sort order")
+            return None
+        return retry
+
+    def _post_with_backoff(self, payload: Dict[str, Any]) -> requests.Response:
+        """POST one GraphQL request, paced by the shared limiter, retrying a 429.
+
+        Raises HardcoverRateLimitError when retries run out or Hardcover asks for a wait longer
+        than HARDCOVER_RETRY_AFTER_CAP_SECONDS.
+        """
+        for attempt in range(1, HARDCOVER_RATE_LIMIT_ATTEMPTS + 1):
+            _rate_limiter.acquire()
+            response = self.session.post(HARDCOVER_API_URL, json=payload, timeout=15)
+            if response.status_code != 429:
+                return response
+
+            wait = _throttle_wait_seconds(response, attempt)
+            if wait > HARDCOVER_RETRY_AFTER_CAP_SECONDS:
+                raise HardcoverRateLimitError(f"Hardcover rate limit reached; it asked for a {wait:.0f}s wait")
+            if attempt == HARDCOVER_RATE_LIMIT_ATTEMPTS:
+                raise HardcoverRateLimitError(f"Hardcover rate limit still hit after {attempt} attempts")
+            logger.warning(
+                "Hardcover rate limited (429); retrying in %.0fs (attempt %d/%d)",
+                wait, attempt, HARDCOVER_RATE_LIMIT_ATTEMPTS,
+            )
+            _rate_limiter.penalize(wait)
+        raise AssertionError("unreachable")  # the loop always returns or raises
+
     def _execute_query(self, query: str, variables: Dict[str, Any]) -> Optional[Dict]:
         """Execute a GraphQL query and return data or None on error."""
         try:
-            response = self.session.post(
-                HARDCOVER_API_URL,
-                json={"query": query, "variables": variables},
-                timeout=15
-            )
+            response = self._post_with_backoff({"query": query, "variables": variables})
             response.raise_for_status()
 
             data = response.json()
@@ -647,6 +792,9 @@ class HardcoverProvider(MetadataProvider):
 
             return data.get("data")
 
+        except HardcoverRateLimitError as e:
+            logger.warning("Hardcover API: %s", e)
+            return None
         except requests.Timeout:
             logger.warning("Hardcover API request timed out")
             return None
