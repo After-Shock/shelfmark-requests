@@ -32,7 +32,7 @@ def test_is_semantic_version(value, expected):
 def test_resolve_release_version_prefers_valid_environment(tmp_path: Path):
     version_file = tmp_path / "VERSION"
     version_file.write_text("1.6.0\n", encoding="utf-8")
-    assert resolve_release_version("1.10.0", version_file) == "1.10.0"
+    assert resolve_release_version("1.11.0", version_file) == "1.11.0"
 
 
 def test_resolve_release_version_falls_back_from_invalid_environment(tmp_path: Path):
@@ -82,7 +82,7 @@ def test_package_metadata_matches_version_file():
     package = json.loads((root / "src/frontend/package.json").read_text(encoding="utf-8"))
     package_lock = json.loads((root / "src/frontend/package-lock.json").read_text(encoding="utf-8"))
 
-    assert version == "1.10.0"
+    assert version == "1.11.0"
     assert pyproject_version is not None
     assert pyproject_version.group(1) == version
     assert package["version"] == version
