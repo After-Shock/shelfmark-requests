@@ -6,6 +6,7 @@ import {
   executeSettingsAction,
   OnboardingStep,
 } from '../services/api';
+import { Dialog, ModalRoot, focusDialog } from './shared/ModalRoot';
 import {
   SettingsField,
   TextFieldConfig,
@@ -296,31 +297,6 @@ export const OnboardingModal = ({
     [currentStep, values]
   );
 
-  // Handle ESC key
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleClose();
-      }
-    };
-
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, handleClose]);
-
-  // Prevent body scroll when open
-  useEffect(() => {
-    if (isOpen) {
-      const previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = previousOverflow;
-      };
-    }
-  }, [isOpen]);
-
   if (!isOpen && !isClosing) return null;
 
   // Loading state
@@ -402,22 +378,22 @@ export const OnboardingModal = ({
   const progress = ((currentStepIndex + 1) / visibleSteps.length) * 100;
 
   return (
+    <ModalRoot onClose={handleClose}>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div
+      <Dialog.Overlay
         className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-150
                     ${isClosing ? 'opacity-0' : 'opacity-100'}`}
       />
 
-      {/* Modal */}
-      <div
+      {/* Modal — backdrop clicks don't dismiss the wizard (would lose progress) */}
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={e => e.preventDefault()}
         className={`relative w-full max-w-xl rounded-xl
                     border border-[var(--border-muted)] shadow-2xl
                     ${isClosing ? 'settings-modal-exit' : 'settings-modal-enter'}`}
         style={{ background: 'var(--bg)' }}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Setup Wizard"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-muted)]">
@@ -426,7 +402,7 @@ export const OnboardingModal = ({
               {currentStepIndex + 1}
             </div>
             <div>
-              <h2 className="text-lg font-semibold">{currentStep?.title || 'Setup'}</h2>
+              <Dialog.Title className="text-lg font-semibold">{currentStep?.title || 'Setup'}</Dialog.Title>
               <p className="text-xs opacity-60">
                 Step {currentStepIndex + 1} of {visibleSteps.length}
               </p>
@@ -562,7 +538,8 @@ export const OnboardingModal = ({
             )}
           </div>
         </div>
-      </div>
+      </Dialog.Content>
     </div>
+    </ModalRoot>
   );
 };

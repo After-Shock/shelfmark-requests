@@ -3,6 +3,7 @@ import { Book, Release, ReleaseSource, ReleasesResponse, Language, StatusData, B
 import { getReleases, getReleaseSources } from '../services/api';
 import { useSocket } from '../contexts/SocketContext';
 import { Dropdown } from './Dropdown';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from './shared/ModalRoot';
 import { DropdownList } from './DropdownList';
 import { BookDownloadButton } from './BookDownloadButton';
 import { ReleaseCell } from './ReleaseCell';
@@ -673,26 +674,6 @@ export const ReleaseModal = ({
     }, 150);
   }, [onClose]);
 
-  // Handle ESC key
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose();
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [handleClose]);
-
-  // Body scroll lock
-  useEffect(() => {
-    if (book) {
-      const previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = previousOverflow;
-      };
-    }
-  }, [book]);
-
   // Reset modal state when book changes to prevent stale data
   useEffect(() => {
     setDescriptionExpanded(false);
@@ -1252,7 +1233,6 @@ export const ReleaseModal = ({
   if (!book && !isClosing) return null;
   if (!book) return null;
 
-  const titleId = `release-modal-title-${book.id}`;
   const providerDisplay =
     book.provider_display_name ||
     (book.provider ? book.provider.charAt(0).toUpperCase() + book.provider.slice(1) : 'Unknown');
@@ -1262,17 +1242,12 @@ export const ReleaseModal = ({
   const isInitialLoading = currentTabLoading || (releasesBySource[activeTab] === undefined && !currentTabError);
 
   return (
-    <div
-      className="modal-overlay active sm:px-6 sm:py-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
-    >
-      <div
+    <ModalRoot onClose={handleClose}>
+    <Dialog.Overlay className="modal-overlay active sm:px-6 sm:py-6">
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
         className={`details-container w-full max-w-3xl h-full sm:h-auto ${isClosing ? 'settings-modal-exit' : 'settings-modal-enter'}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
       >
         <div className="flex h-full sm:h-[90vh] sm:max-h-[90vh] flex-col overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border border-[var(--border-muted)] bg-[var(--bg)] sm:bg-[var(--bg-soft)] text-[var(--text)] shadow-none sm:shadow-2xl">
           {/* Header */}
@@ -1312,9 +1287,9 @@ export const ReleaseModal = ({
               <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Find Releases
               </p>
-              <h3 id={titleId} className="text-lg font-semibold leading-snug truncate">
+              <Dialog.Title className="text-lg font-semibold leading-snug truncate">
                 {book.title || 'Untitled'}
-              </h3>
+              </Dialog.Title>
               <p className="text-sm text-gray-600 dark:text-gray-300 truncate">
                 {book.author || 'Unknown author'}
               </p>
@@ -1910,7 +1885,8 @@ export const ReleaseModal = ({
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+    </Dialog.Overlay>
+    </ModalRoot>
   );
 };

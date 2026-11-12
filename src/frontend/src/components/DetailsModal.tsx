@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Book, ButtonStateInfo, isMetadataBook } from '../types';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from './shared/ModalRoot';
 
 interface DetailsModalProps {
   book: Book | null;
@@ -37,28 +38,6 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
     }
   }, [buttonState.state, isQueuing, handleClose]);
 
-  // Handle ESC key to close modal
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleClose();
-      }
-    };
-
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [handleClose]);
-
-  useEffect(() => {
-    if (book) {
-      const previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = previousOverflow;
-      };
-    }
-  }, [book]);
-
   // Reset alternate version preference when a different book is opened
   useEffect(() => {
     setPreferAlternateVersion(false);
@@ -66,8 +45,6 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
 
   if (!book && !isClosing) return null;
   if (!book) return null;
-
-  const titleId = `book-details-title-${book.id}`;
 
   // Determine if this is a metadata book (Universal mode) vs a release (Direct Download)
   const isMetadata = isMetadataBook(book);
@@ -114,25 +91,20 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
   const infoValueClass = 'text-gray-900 dark:text-gray-100';
 
   return (
-    <div
-      className="modal-overlay active sm:px-6 sm:py-6"
-      onClick={e => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
-    >
-      <div
+    <ModalRoot onClose={handleClose}>
+    <Dialog.Overlay className="modal-overlay active sm:px-6 sm:py-6">
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
         className={`details-container w-full max-w-4xl h-full sm:h-auto ${isClosing ? 'settings-modal-exit' : 'settings-modal-enter'}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
       >
         <div className="flex h-full sm:h-[90vh] sm:max-h-[90vh] flex-col overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border border-[var(--border-muted)] bg-[var(--bg)] sm:bg-[var(--bg-soft)] text-[var(--text)] shadow-none sm:shadow-2xl">
           <header className="flex items-start gap-4 border-b border-[var(--border-muted)] bg-[var(--bg)] sm:bg-[var(--bg-soft)] px-5 py-4">
             <div className="flex-1 space-y-1">
               <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Book</p>
-              <h3 id={titleId} className="text-lg font-semibold leading-snug">
+              <Dialog.Title className="text-lg font-semibold leading-snug">
                 {book.title || 'Untitled'}
-              </h3>
+              </Dialog.Title>
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 {book.author || 'Unknown author'}
               </p>
@@ -334,7 +306,8 @@ export const DetailsModal = ({ book, onClose, onDownload: _onDownload, onFindDow
             </div>
           </footer>
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+    </Dialog.Overlay>
+    </ModalRoot>
   );
 };

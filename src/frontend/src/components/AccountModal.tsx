@@ -6,6 +6,7 @@ import {
   LibraryAccounts,
   LibraryService,
 } from '../services/api';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from './shared/ModalRoot';
 import { theme } from '../theme';
 
 interface AccountModalProps {
@@ -127,30 +128,32 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    <ModalRoot onClose={handleClose}>
+    <Dialog.Overlay
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
       style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-      onClick={handleClose}
     >
-      <div
-        className="relative rounded-lg shadow-2xl max-w-md w-full border"
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
+        className="relative rounded-lg shadow-2xl max-w-md w-full border settings-modal-enter"
         style={{
           backgroundColor: 'var(--bg)',
           borderColor: 'var(--border-muted)',
           maxHeight: '90vh',
           overflow: 'auto',
         }}
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
           className="flex items-center justify-between px-6 py-4 border-b"
           style={{ borderColor: 'var(--border-muted)' }}
         >
-          <h2 className="text-xl font-semibold">Account Settings</h2>
+          <Dialog.Title className="text-xl font-semibold">Account Settings</Dialog.Title>
           <button
             type="button"
             onClick={handleClose}
+            aria-label="Close"
             className="p-1 hover:opacity-70 transition-opacity"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -417,7 +420,8 @@ export const AccountModal = ({ isOpen, onClose, onShowToast }: AccountModalProps
             </div>
           </form>
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+    </Dialog.Overlay>
+    </ModalRoot>
   );
 };

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useSettings } from '../../hooks/useSettings';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from '../shared/ModalRoot';
 import { useSearchMode } from '../../contexts/SearchModeContext';
 import { SettingsHeader } from './SettingsHeader';
 import { SettingsSidebar } from './SettingsSidebar';
@@ -57,34 +58,13 @@ export const SettingsModal = ({ isOpen, onClose, onShowToast, onSettingsSaved }:
     }, 150);
   }, [onClose]);
 
-  // Handle ESC key
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (isMobile && showMobileDetail) {
-          setShowMobileDetail(false);
-        } else {
-          handleClose();
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, isMobile, showMobileDetail, handleClose]);
-
-  // Prevent body scroll when open
-  useEffect(() => {
-    if (isOpen) {
-      const previousOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = previousOverflow;
-      };
+  // ESC on a mobile detail pane goes back to the category list instead of closing
+  const handleEscape = (e: KeyboardEvent) => {
+    if (isMobile && showMobileDetail) {
+      e.preventDefault();
+      setShowMobileDetail(false);
     }
-  }, [isOpen]);
+  };
 
   // Reset mobile detail view when modal opens
   useEffect(() => {
@@ -280,11 +260,16 @@ export const SettingsModal = ({ isOpen, onClose, onShowToast, onSettingsSaved }:
   // Mobile layout
   if (isMobile) {
     return (
-      <div
+      <ModalRoot onClose={handleClose}>
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
+        onEscapeKeyDown={handleEscape}
         className={`fixed inset-0 z-50 flex flex-col
                     ${isClosing ? 'animate-fade-out' : 'animate-fade-in'}`}
         style={{ background: 'var(--bg)' }}
       >
+        <Dialog.Title className="sr-only">Settings</Dialog.Title>
         {!showMobileDetail ? (
           // Category list view
           <>
@@ -324,32 +309,34 @@ export const SettingsModal = ({ isOpen, onClose, onShowToast, onSettingsSaved }:
             )}
           </>
         )}
-      </div>
+      </Dialog.Content>
+      </ModalRoot>
     );
   }
 
   // Desktop layout
   return (
+    <ModalRoot onClose={handleClose}>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div
+      <Dialog.Overlay
         className={`absolute inset-0 bg-black/50 backdrop-blur-[2px] transition-opacity duration-150
                     ${isClosing ? 'opacity-0' : 'opacity-100'}`}
         style={{ willChange: 'opacity', contain: 'strict' }}
-        onClick={handleClose}
       />
 
       {/* Modal */}
-      <div
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
+        onEscapeKeyDown={handleEscape}
         className={`relative w-full max-w-4xl h-[85vh] max-h-[750px] rounded-xl
                     border border-[var(--border-muted)] shadow-2xl
                     flex flex-col overflow-hidden
                     ${isClosing ? 'settings-modal-exit' : 'settings-modal-enter'}`}
         style={{ background: 'var(--bg)' }}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
       >
+        <Dialog.Title className="sr-only">Settings</Dialog.Title>
         <SettingsHeader title="Settings" onClose={handleClose} />
 
         <div className="flex flex-1 min-h-0">
@@ -382,7 +369,8 @@ export const SettingsModal = ({ isOpen, onClose, onShowToast, onSettingsSaved }:
             </div>
           )}
         </div>
-      </div>
+      </Dialog.Content>
     </div>
+    </ModalRoot>
   );
 };

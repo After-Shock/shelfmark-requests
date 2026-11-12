@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ContentType } from '../types';
 import { theme } from '../theme';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from './shared/ModalRoot';
 
 interface ManualRequestModalProps {
   contentType: ContentType;
@@ -42,11 +43,9 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
   };
 
   return (
-    <div
-      className="modal-overlay active sm:px-6 sm:py-6"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="w-full max-w-md settings-modal-enter">
+    <ModalRoot onClose={onClose}>
+    <Dialog.Overlay className="modal-overlay active sm:px-6 sm:py-6">
+      <Dialog.Content aria-describedby={undefined} onOpenAutoFocus={focusDialog} onPointerDownOutside={ignoreToastClicks} className="w-full max-w-md settings-modal-enter">
         <div className="flex flex-col rounded-none sm:rounded-2xl border-0 sm:border border-[var(--border-muted)] bg-[var(--bg)] text-[var(--text)] shadow-none sm:shadow-2xl overflow-hidden">
 
           {/* Header */}
@@ -55,7 +54,7 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
               <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 {contentType === 'audiobook' ? 'Audiobook' : 'Book'}
               </p>
-              <h3 className="text-lg font-semibold">Request Manually</h3>
+              <Dialog.Title className="text-lg font-semibold">Request Manually</Dialog.Title>
             </div>
             <button
               type="button"
@@ -205,7 +204,8 @@ export const ManualRequestModal = ({ contentType, onSubmit, onClose }: ManualReq
             </button>
           </footer>
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+    </Dialog.Overlay>
+    </ModalRoot>
   );
 };

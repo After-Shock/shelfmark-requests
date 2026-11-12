@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { EmailRecipient } from '../types';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from './shared/ModalRoot';
 
 interface EmailRecipientModalProps {
   isOpen: boolean;
@@ -35,52 +36,23 @@ export const EmailRecipientModal = ({ isOpen, recipients, onSelect, onCancel }: 
     }, 150);
   }, [onSelect, selectedNickname, isClosing]);
 
-  // ESC to cancel
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleCancel();
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, handleCancel]);
-
-  // Prevent body scroll while open
-  useEffect(() => {
-    if (!isOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isOpen]);
-
   if (!isOpen) return null;
 
-  const titleId = 'email-recipient-modal-title';
-
   return (
-    <div
-      className="modal-overlay active sm:px-6 sm:py-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleCancel();
-      }}
-    >
-      <div
+    <ModalRoot onClose={handleCancel}>
+    <Dialog.Overlay className="modal-overlay active sm:px-6 sm:py-6">
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
         className={`details-container w-full sm:max-w-md h-full sm:h-auto pointer-events-auto ${isClosing ? 'settings-modal-exit' : 'settings-modal-enter'}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
       >
         <div className="flex h-full sm:h-auto flex-col overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border border-[var(--border-muted)] bg-[var(--bg)] text-[var(--text)] shadow-none sm:shadow-2xl">
           <header className="flex items-start gap-4 border-b border-[var(--border-muted)] bg-[var(--bg)] px-5 py-4">
             <div className="flex-1 space-y-1">
               <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Output</p>
-              <h3 id={titleId} className="text-lg font-semibold leading-snug">
+              <Dialog.Title className="text-lg font-semibold leading-snug">
                 Send via Email
-              </h3>
+              </Dialog.Title>
               <p className="text-sm text-gray-600 dark:text-gray-300">
                 Choose a recipient for this download.
               </p>
@@ -181,7 +153,8 @@ export const EmailRecipientModal = ({ isOpen, recipients, onSelect, onCancel }: 
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+    </Dialog.Overlay>
+    </ModalRoot>
   );
 };

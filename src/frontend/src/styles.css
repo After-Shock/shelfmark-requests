@@ -110,7 +110,8 @@ input, select, textarea, button,
     background: transparent;
 }
 
-* {
+/* :where() keeps specificity at 0 like `*`; sonner's own styles are :where()-wrapped, so exclude the toaster */
+:where(*:not([data-sonner-toaster] *)) {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -686,4 +687,14 @@ button:disabled {
         padding-left: 1rem;
         white-space: normal;
     }
+}
+
+/* Radix modals set pointer-events:none on body; keep toasts clickable */
+[data-sonner-toast] {
+    pointer-events: auto;
+}
+
+/* Dialog containers take focus on open (see focusDialog); no outline on the container itself */
+[role="dialog"]:focus {
+    outline: none;
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Dialog, ModalRoot, ignoreToastClicks, focusDialog } from './shared/ModalRoot';
 
 const STORAGE_KEY = 'cwa-config-banner-dismissed';
 
@@ -62,30 +63,29 @@ export const ConfigSetupBanner = ({
   const showContinueButton = !!onContinue;
 
   return (
+    <ModalRoot onClose={handleClose}>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div
+      <Dialog.Overlay
         className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-150
                     ${isClosing ? 'opacity-0' : 'opacity-100'}`}
-        onClick={handleClose}
       />
 
       {/* Modal */}
-      <div
+      <Dialog.Content
+        aria-describedby={undefined} onOpenAutoFocus={focusDialog}
+        onPointerDownOutside={ignoreToastClicks}
         className={`relative w-full max-w-lg rounded-xl
                     border border-[var(--border-muted)] shadow-2xl
                     overflow-hidden
                     ${isClosing ? 'settings-modal-exit' : 'settings-modal-enter'}`}
         style={{ background: 'var(--bg)' }}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings Setup Information"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border-muted)]">
-          <h2 className="text-lg font-semibold">
+          <Dialog.Title className="text-lg font-semibold">
             {showContinueButton ? 'Config Volume Required' : 'New Feature: Settings Page'}
-          </h2>
+          </Dialog.Title>
           <button
             onClick={handleClose}
             className="p-1.5 rounded-lg hover:bg-[var(--hover-surface)] transition-colors"
@@ -170,7 +170,8 @@ export const ConfigSetupBanner = ({
             </button>
           )}
         </div>
-      </div>
+      </Dialog.Content>
     </div>
+    </ModalRoot>
   );
 };
