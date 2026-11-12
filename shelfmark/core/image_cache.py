@@ -1,12 +1,15 @@
 """Disk-based image cache with LRU eviction."""
 
+import ipaddress
 import json
 import os
+import socket
 import threading
 import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -32,6 +35,7 @@ FETCH_HEADERS = {
 
 # Maximum image size to fetch (5 MB)
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
+MAX_REDIRECTS = 5
 
 # Negative cache TTL (for failed fetches) - 1 hour
 NEGATIVE_CACHE_TTL = 3600
@@ -465,6 +469,79 @@ class ImageCacheService:
                 'hit_rate': round(hit_rate, 1),
             }
 
+    @staticmethod
+    def _prepare_safe_url(url: str) -> Optional[str]:
+        """Return a normalised http(s) URL whose host resolves only to public addresses, else None.
+
+        /api/covers takes the URL from the client, so without this any signed-in user could make
+        the server request internal hosts (SSRF). Ported from upstream calibrain/shelfmark 7a2de1c.
+        """
+        if not isinstance(url, str) or "\\" in url or any(ord(ch) < 32 for ch in url):
+            return None
+        try:
+            prepared_url = requests.Request("GET", url).prepare().url
+            if not isinstance(prepared_url, str) or not prepared_url:
+                return None
+            parsed = urlsplit(prepared_url)
+            hostname = parsed.hostname
+        except (requests.exceptions.RequestException, ValueError):
+            return None
+
+        if "\\" in prepared_url or any(ord(ch) < 32 for ch in prepared_url):
+            return None
+        netloc = parsed.netloc.lower()
+        if "%2f" in netloc or "%5c" in netloc:
+            return None
+        if parsed.scheme not in ("http", "https") or not hostname:
+            return None
+
+        # ponytail: resolve-then-fetch leaves a DNS-rebinding window (requests resolves again);
+        # pin the connection to the checked IP if covers ever need stronger isolation.
+        try:
+            for *_, sockaddr in socket.getaddrinfo(hostname, None):
+                ip = ipaddress.ip_address(sockaddr[0])
+                if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                        or ip.is_multicast or ip.is_unspecified):
+                    return None
+        except (socket.gaierror, ValueError, UnicodeError):
+            return None
+        return prepared_url
+
+    @staticmethod
+    def _is_safe_url(url: str) -> bool:
+        return ImageCacheService._prepare_safe_url(url) is not None
+
+    def _fetch_safe_response(self, url: str) -> Optional[requests.Response]:
+        """GET a URL, validating it and every redirect hop before connecting."""
+        current_url = self._prepare_safe_url(url)
+        if not current_url:
+            logger.warning("Blocked cover request to disallowed URL: %s", url)
+            return None
+
+        for _ in range(MAX_REDIRECTS + 1):
+            response = requests.get(
+                current_url,
+                timeout=(5, 10),
+                headers=FETCH_HEADERS,
+                stream=True,
+                allow_redirects=False,
+            )
+            if not response.is_redirect:
+                return response
+
+            location = response.headers.get("location")
+            response.close()
+            if not location:
+                return None
+            redirect_url = urljoin(current_url, location)
+            next_url = self._prepare_safe_url(redirect_url)
+            if not next_url:
+                logger.warning("Blocked cover redirect to disallowed URL: %s", redirect_url)
+                return None
+            current_url = next_url
+
+        return None
+
     def fetch_and_cache(self, cache_id: str, url: str) -> Optional[Tuple[bytes, str]]:
         """Fetch an image from URL and cache it.
 
@@ -476,13 +553,10 @@ class ImageCacheService:
             Tuple of (image_data, content_type) or None on failure
         """
         try:
-
-            response = requests.get(
-                url,
-                timeout=(5, 10),
-                headers=FETCH_HEADERS,
-                stream=True,
-            )
+            response = self._fetch_safe_response(url)
+            if response is None:
+                self.put_negative(cache_id)
+                return None
             response.raise_for_status()
 
             # Validate content type

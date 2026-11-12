@@ -147,3 +147,56 @@ class TestCoverProxyValidation:
 
         assert resp.status_code == 400
         assert "invalid" in data["error"].lower()
+
+
+class TestLocalDownloadOwnership:
+    """/api/localdownload serves a queued file only to its owner or an admin (upstream c1315a2)."""
+
+    def _call(self, main_module, tmp_path, *, owner_id, session_user_id, is_admin):
+        book = tmp_path / "book.epub"
+        book.write_bytes(b"EPUB-BYTES")
+        task = Mock(user_id=owner_id, username=f"user{owner_id}")
+        task.get_filename.return_value = "Dune.epub"
+        with patch.object(main_module, "get_auth_mode", return_value="builtin"), \
+                patch.object(main_module.backend, "get_book_path", return_value=(str(book), task)):
+            with main_module.app.test_request_context("/api/localdownload?id=task-1"):
+                main_module.session["user_id"] = f"user{session_user_id}"
+                main_module.session["db_user_id"] = session_user_id
+                main_module.session["is_admin"] = is_admin
+                resp = _as_response(main_module.api_local_download())
+                resp.direct_passthrough = False
+                return resp
+
+    def test_owner_gets_streamed_file(self, main_module, tmp_path):
+        resp = self._call(main_module, tmp_path, owner_id=5, session_user_id=5, is_admin=False)
+        assert resp.status_code == 200
+        assert resp.get_data() == b"EPUB-BYTES"
+        assert "Dune.epub" in resp.headers["Content-Disposition"]
+
+    def test_other_user_gets_404(self, main_module, tmp_path):
+        resp = self._call(main_module, tmp_path, owner_id=99, session_user_id=5, is_admin=False)
+        assert resp.status_code == 404
+
+    def test_admin_can_fetch_any_task(self, main_module, tmp_path):
+        resp = self._call(main_module, tmp_path, owner_id=99, session_user_id=1, is_admin=True)
+        assert resp.status_code == 200
+
+    def test_missing_file_is_404(self, main_module):
+        with patch.object(main_module, "get_auth_mode", return_value="builtin"), \
+                patch.object(main_module.backend, "get_book_path", return_value=(None, None)):
+            with main_module.app.test_request_context("/api/localdownload?id=nope"):
+                main_module.session["user_id"] = "user5"
+                main_module.session["db_user_id"] = 5
+                main_module.session["is_admin"] = False
+                resp = _as_response(main_module.api_local_download())
+        assert resp.status_code == 404
+
+
+def test_get_book_path_clears_missing_file(tmp_path):
+    from shelfmark.download import orchestrator
+
+    task = Mock(download_path=str(tmp_path / "gone.epub"))
+    with patch.object(orchestrator, "book_queue") as queue:
+        queue.get_task.return_value = task
+        assert orchestrator.get_book_path("t1") == (None, task)
+    assert task.download_path is None

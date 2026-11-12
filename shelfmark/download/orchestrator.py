@@ -291,25 +291,21 @@ def queue_status(user_id: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
         for status_type, tasks in status.items()
     }
 
-def get_book_data(task_id: str) -> Tuple[Optional[bytes], Optional[DownloadTask]]:
-    """Get downloaded file data for a specific task."""
-    task = None
-    try:
-        task = book_queue.get_task(task_id)
-        if not task:
-            return None, None
+def get_book_path(task_id: str) -> Tuple[Optional[str], Optional[DownloadTask]]:
+    """Path of a task's downloaded file, if it is still on disk.
 
-        path = task.download_path
-        if not path:
-            return None, task
-
-        with open(path, "rb") as f:
-            return f.read(), task
-    except Exception as e:
-        logger.error_trace(f"Error getting book data: {e}")
-        if task:
+    Returns the path rather than the bytes so the caller can stream it: reading whole files
+    into memory spiked RAM on large audiobooks (upstream calibrain/shelfmark b690832).
+    """
+    task = book_queue.get_task(task_id)
+    if not task:
+        return None, None
+    path = task.download_path
+    if not path or not os.path.isfile(path):
+        if path:
             task.download_path = None
         return None, task
+    return path, task
 
 def _book_info_to_dict(book: BookInfo) -> Dict[str, Any]:
     """Convert BookInfo to dict, transforming cover URLs for caching."""

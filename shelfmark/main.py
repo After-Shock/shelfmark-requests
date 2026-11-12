@@ -1,6 +1,5 @@
 """Flask app - routes, WebSocket handlers, and middleware."""
 
-import io
 import logging
 import os
 import re
@@ -1385,22 +1384,27 @@ def api_local_download() -> Union[Response, Tuple[Response, int]]:
         return jsonify({"error": "No book ID provided"}), 400
 
     try:
-        file_data, book_info = backend.get_book_data(book_id)
-        if file_data is None:
-            # Book data not found or not available
+        file_path, task = backend.get_book_path(book_id)
+
+        # Task ids are source ids, so another user can know one: only the owner (or an admin)
+        # may fetch the file. Same 404 as a missing file. Upstream calibrain/shelfmark c1315a2.
+        is_admin, db_user_id, can_access_status = _resolve_status_scope()
+        if task is not None and not is_admin:
+            actor_username = session.get("user_id")
+            if not can_access_status or not _task_owned_by_actor(
+                task,
+                actor_user_id=db_user_id,
+                actor_username=actor_username if isinstance(actor_username, str) else None,
+            ):
+                return jsonify({"error": "File not found"}), 404
+
+        if file_path is None or task is None:
             return jsonify({"error": "File not found"}), 404
-        file_name = book_info.get_filename()
-        # Prepare the file for sending to the client
-        data = io.BytesIO(file_data)
-        return send_file(
-            data,
-            download_name=file_name,
-            as_attachment=True
-        )
+        return send_file(os.path.abspath(file_path), download_name=task.get_filename(), as_attachment=True)
 
     except Exception as e:
         logger.error_trace(f"Local download error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Local download failed"}), 500
 
 @app.route('/api/covers/<cover_id>', methods=['GET'])
 @login_required
