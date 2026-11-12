@@ -8,7 +8,7 @@ vi.mock('react', async (importOriginal) => {
   const original = await importOriginal<typeof import('react')>();
   return {
     ...original,
-    useState: (initial: unknown) => original.useState(initial === 'all' ? tab.value : initial),
+    useState: (initial: unknown) => original.useState(initial === 'pending' ? tab.value : initial),
   };
 });
 
@@ -55,6 +55,13 @@ describe('pre-release lifecycle', () => {
     expect(render('prerelease_requested', isAdmin)).toContain('Future book');
     tab.value = 'all';
     expect(render('approved', isAdmin)).toContain('Future book');
+  });
+
+  it.each([true, false])('keeps pending requests out of Active (admin=%s)', (isAdmin) => {
+    tab.value = 'all';
+    expect(render('pending', isAdmin)).not.toContain('Future book');
+    tab.value = 'pending';
+    expect(render('pending', isAdmin)).toContain('Future book');
   });
 });
 

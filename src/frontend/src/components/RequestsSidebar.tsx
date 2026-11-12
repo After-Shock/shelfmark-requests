@@ -22,6 +22,8 @@ interface RequestsSidebarProps {
 
 type FilterTab = 'all' | 'prerelease' | 'pending' | 'history';
 const HISTORY_STATUSES: RequestStatus[] = ['fulfilled', 'denied', 'failed', 'cancelled'];
+// Active = approved and in progress; pending/pre-release/history each have their own tab
+const ACTIVE_STATUSES: RequestStatus[] = ['approved', 'downloading', 'no_sources_requested'];
 
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string; customStyle?: React.CSSProperties }> = {
   pending: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
@@ -136,7 +138,7 @@ export const RequestsSidebar = ({
   onMarkCompleted,
   onRefresh,
 }: RequestsSidebarProps) => {
-  const [filter, setFilter] = useState<FilterTab>('all');
+  const [filter, setFilter] = useState<FilterTab>('pending');
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
   const [denyNote, setDenyNote] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
@@ -165,7 +167,7 @@ export const RequestsSidebar = ({
     if (filter === 'prerelease') return req.status === 'prerelease_requested';
     if (filter === 'pending') return req.status === 'pending';
     if (filter === 'history') return HISTORY_STATUSES.includes(req.status);
-    return req.status !== 'prerelease_requested' && !HISTORY_STATUSES.includes(req.status);
+    return ACTIVE_STATUSES.includes(req.status);
   }).sort((a, b) => {
     if (filter !== 'history') return 0;
     const aTime = new Date(normalizeTimestamp(a.completed_at || a.updated_at)).getTime();
@@ -710,7 +712,7 @@ export const RequestsSidebar = ({
 
         {/* Filter Tabs */}
         <div className="flex gap-1 px-4 pt-3 pb-1">
-          {(['all', 'prerelease', 'pending', 'history'] as FilterTab[]).map((tab) => (
+          {(['pending', 'all', 'prerelease', 'history'] as FilterTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
