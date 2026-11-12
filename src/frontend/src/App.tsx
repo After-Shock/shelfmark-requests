@@ -38,6 +38,7 @@ import { AccountModal } from './components/AccountModal';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
 import { OnboardingModal } from './components/OnboardingModal';
 import { ManualRequestModal } from './components/ManualRequestModal';
+import { CommandPalette } from './components/CommandPalette';
 import { DEFAULT_LANGUAGES, DEFAULT_SUPPORTED_FORMATS } from './data/languages';
 import { buildSearchQuery } from './utils/buildSearchQuery';
 import { getRequestOutcomeMessage } from './utils/requestOutcome';
@@ -270,6 +271,7 @@ function App() {
   const [requestsSidebarOpen, setRequestsSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // Invite users to link their library accounts; runs until 2026-11-25 (30 days from launch).
   const [showSyncBanner, setShowSyncBanner] = useState(() => {
     try { if (localStorage.getItem('syncBannerDismissed')) return false; } catch { /* private mode */ }
@@ -921,6 +923,7 @@ function App() {
         contentType={contentType}
         onContentTypeChange={setContentType}
         onRequestsClick={requestsEnabled ? handleOpenRequestsSidebar : undefined}
+        onCommandPaletteClick={() => setPaletteOpen(true)}
         requestCounts={requestsEnabled ? requestCounts : undefined}
       />
 
@@ -1067,6 +1070,33 @@ function App() {
         debug={config?.debug}
         isAdmin={isAdmin}
         version={config?.release_version}
+      />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        requests={requestsEnabled ? bookRequests : []}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onSearch={(text) => {
+          setSearchInput(text);
+          const query = buildSearchQuery({
+            searchInput: text,
+            showAdvanced,
+            advancedFilters,
+            bookLanguages,
+            defaultLanguage: defaultLanguageCodes,
+            searchMode,
+          });
+          handleSearch(query, config, searchFieldValues);
+        }}
+        onOpenRequests={requestsEnabled ? handleOpenRequestsSidebar : undefined}
+        onManualRequest={requestsEnabled ? () => setShowManualRequestModal(true) : undefined}
+        onOpenDownloads={isAdmin ? () => setDownloadsSidebarOpen(true) : undefined}
+        onOpenSettings={isAdmin ? () => (config?.settings_enabled ? setSettingsOpen(true) : setConfigBannerOpen(true)) : undefined}
+        onOpenAccount={authRequired && isAuthenticated && !isAdmin ? () => setAccountOpen(true) : undefined}
+        onLogout={authRequired && isAuthenticated ? handleLogoutWithCleanup : undefined}
+        libraryUrl={config?.calibre_web_url || ''}
+        audiobookLibraryUrl={config?.audiobook_library_url || ''}
       />
       <Toaster theme={theme} position="bottom-right" richColors closeButton />
 

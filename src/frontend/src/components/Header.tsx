@@ -3,6 +3,8 @@ import { SearchBar, SearchBarHandle } from './SearchBar';
 import { ContentType, RequestCounts } from '../types';
 import { withBasePath } from '../utils/basePath';
 
+const shortcutLabel = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
+
 export interface HeaderHandle {
   submitSearch: () => void;
 }
@@ -37,6 +39,7 @@ interface HeaderProps {
   contentType?: ContentType;
   onContentTypeChange?: (type: ContentType) => void;
   onRequestsClick?: () => void;
+  onCommandPaletteClick?: () => void;
   requestCounts?: RequestCounts;
   onAccountClick?: () => void;
   theme?: 'light' | 'dark';
@@ -67,6 +70,7 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
   contentType = 'ebook',
   onContentTypeChange,
   onRequestsClick,
+  onCommandPaletteClick,
   requestCounts,
   onAccountClick,
   theme = 'dark',
@@ -180,6 +184,23 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
           </svg>
           {!showIconsOnly && <span className="text-sm font-medium">Go To Library</span>}
         </a>
+      )}
+
+      {/* Command palette: icon on mobile, icon + shortcut hint on desktop */}
+      {onCommandPaletteClick && (
+        <button
+          onClick={onCommandPaletteClick}
+          className="flex items-center gap-2 px-3 py-2 rounded-full hover-action transition-all duration-200 text-gray-900 dark:text-gray-100"
+          aria-label="Quick actions"
+          title={`Quick actions (${shortcutLabel})`}
+        >
+          <svg className="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          </svg>
+          <kbd className="hidden sm:inline rounded border border-[var(--border-muted)] px-1.5 py-0.5 font-sans text-xs opacity-70">
+            {shortcutLabel}
+          </kbd>
+        </button>
       )}
 
       {/* Requests Button */}

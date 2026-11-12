@@ -25,7 +25,7 @@ const HISTORY_STATUSES: RequestStatus[] = ['fulfilled', 'denied', 'failed', 'can
 // Active = approved and in progress; pending/pre-release/history each have their own tab
 const ACTIVE_STATUSES: RequestStatus[] = ['approved', 'downloading', 'no_sources_requested'];
 
-const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string; customStyle?: React.CSSProperties }> = {
+export const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string; customStyle?: React.CSSProperties }> = {
   pending: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
   prerelease_requested: {
     bg: '',
