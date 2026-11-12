@@ -35,6 +35,7 @@ _STATUS_CALLBACK_ERRORS = (AttributeError, KeyError, OSError, RuntimeError, Type
 _BYPASSER_ERRORS = (
     AttributeError,
     BypassCancelledError,
+    network.RateLimitedError,
     KeyError,
     OSError,
     RuntimeError,
@@ -289,6 +290,11 @@ def html_get_page(
     selector = selector or network.AAMirrorSelector()
     original_url = url
     current_url = selector.rewrite(original_url)
+    try:
+        network.ensure_public_destination(current_url)
+    except network.UnsafeDestinationError as e:
+        logger.warning("Blocked page fetch: %s", e)
+        return _result("", current_url)
     use_bypasser_now = use_bypasser
 
     for attempt in range(1, retry_limit + 1):
@@ -326,6 +332,7 @@ def html_get_page(
                     headers=headers,
                     allow_redirects=allow_redirects,
                     verify=get_ssl_verify(current_url),
+                    hooks=network.REDIRECT_GUARD_HOOKS,
                 )
 
                 if is_aa_url and response.is_redirect:
@@ -413,6 +420,9 @@ def html_get_page(
                     time.sleep(success_delay)
                 return _result(response.text, response.url)
 
+        except network.UnsafeDestinationError as e:
+            logger.warning("Blocked page redirect: %s", e)
+            return _result("", current_url)
         except Exception as e:
             status = _get_status_code(e)
 
@@ -452,6 +462,9 @@ def html_get_page(
                 logger.warning("404 error: %s", current_url)
                 return _result("", current_url)
 
+            if status == _HTTP_STATUS_RATE_LIMITED:
+                network.note_rate_limited(current_url)
+
             # Try mirror/DNS rotation on retryable errors
             if _is_retryable_error(e):
                 new_url = _try_rotation(original_url, current_url, selector)
@@ -488,6 +501,11 @@ def download_url(
     """Download content from URL with automatic retry and resume support."""
     selector = _selector or network.AAMirrorSelector()
     current_url = selector.rewrite(link)
+    try:
+        network.ensure_public_destination(current_url)
+    except network.UnsafeDestinationError as e:
+        logger.warning("Blocked download: %s", e)
+        return None
 
     # Build headers with optional referer
     headers = DOWNLOAD_HEADERS.copy()
@@ -528,6 +546,7 @@ def download_url(
                 cookies=cookies,
                 headers=headers,
                 verify=get_ssl_verify(current_url),
+                hooks=network.REDIRECT_GUARD_HOOKS,
             )
             response.raise_for_status()
 
@@ -560,6 +579,9 @@ def download_url(
 
             logger.debug("Download completed: %s bytes", bytes_downloaded)
 
+        except network.UnsafeDestinationError as e:
+            logger.warning("Blocked download redirect: %s", e)
+            return None
         except requests.exceptions.RequestException as e:
             status = _get_status_code(e)
             retryable = _is_retryable_error(e)
@@ -590,6 +612,7 @@ def download_url(
             # Rate limited - skip to next source immediately
             # (waiting doesn't help with concurrent downloads hitting the same server)
             if status == _HTTP_STATUS_RATE_LIMITED:
+                network.note_rate_limited(current_url)
                 logger.info("Rate limited (429) - trying next source")
                 if status_callback:
                     status_callback("resolving", "Server busy, trying next")
@@ -687,6 +710,7 @@ def _try_resume(
                 headers=resume_headers,
                 cookies=cookies,
                 verify=get_ssl_verify(url),
+                hooks=network.REDIRECT_GUARD_HOOKS,
             )
 
             # Check resume support
@@ -720,6 +744,9 @@ def _try_resume(
 
             logger.info("Resume completed: %s bytes", start_byte)
 
+        except network.UnsafeDestinationError as e:
+            logger.warning("Blocked resume redirect: %s", e)
+            return None
         except requests.exceptions.RequestException as e:
             logger.debug("Resume attempt %s failed: %s", attempt + 1, e)
         else:

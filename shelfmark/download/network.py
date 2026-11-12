@@ -3,7 +3,8 @@
 import fnmatch
 import requests
 import urllib.request
-from typing import Sequence, Tuple, Any, Union, cast, List, Optional, Callable
+from typing import Sequence, Tuple, Any, Union, cast, List, Optional, Callable, NamedTuple
+import time
 import socket
 import dns.resolver
 from socket import AddressFamily, SocketKind
@@ -148,6 +149,78 @@ _dns_switch_lock = _RLock()
 # Callbacks receive (provider_name: str, servers: List[str], doh_url: str)
 _dns_rotation_callbacks: List[Callable[[str, List[str], str], None]] = []
 _dns_callback_lock = _RLock()
+
+
+# --- Per-host 429 cooldown (ported from upstream calibrain/shelfmark ddc26f0) ---------------------
+# A 429 is the origin throttling *this IP*, not a challenge: a DDoS-Guard solve still renders, so the
+# bypass "succeeds" yet the cleared request is rejected again and the throttle is only renewed, and
+# AA mirrors share the IP so rotating doesn't help. So a 429 sidelines the host for a growing window
+# (2 -> 5 -> 10 -> 15 -> 30 min, escalating only when it throttles again after a full wait; reset
+# after a long clear gap). Mirror rotation skips cooling hosts and the bypasser refuses to solve one.
+# In-memory only: a restart starts clean.
+_RATE_LIMIT_COOLDOWN_LADDER_SECONDS = (120.0, 300.0, 600.0, 900.0, 1800.0)
+_RATE_LIMIT_RESET_AFTER_SECONDS = 1800.0
+
+
+class _Cooldown(NamedTuple):
+    deadline: float  # time.monotonic() at which the wait expires
+    level: int  # index into _RATE_LIMIT_COOLDOWN_LADDER_SECONDS
+
+
+_host_cooldowns: dict = {}
+_host_cooldowns_lock = _RLock()
+
+
+class RateLimitedError(Exception):
+    """A request was abandoned because its host is in a 429 cooldown (only time clears it)."""
+
+
+def _cooldown_key(url: str) -> str:
+    return (urllib.parse.urlparse(url).hostname or "").lower()
+
+
+def note_rate_limited(url: str) -> float:
+    """Escalate a host's 429 backoff and (re)arm its cooldown; return the wait applied."""
+    host = _cooldown_key(url)
+    if not host:
+        return 0.0
+    now = time.monotonic()
+    ladder = _RATE_LIMIT_COOLDOWN_LADDER_SECONDS
+    with _host_cooldowns_lock:
+        prev = _host_cooldowns.get(host)
+        if prev is not None and now < prev.deadline:
+            return prev.deadline - now  # same throttling episode: neither escalate nor shorten
+        if prev is None or now - prev.deadline > _RATE_LIMIT_RESET_AFTER_SECONDS:
+            level = 0
+        else:
+            level = min(prev.level + 1, len(ladder) - 1)
+        wait = ladder[level]
+        _host_cooldowns[host] = _Cooldown(deadline=now + wait, level=level)
+    logger.info("Rate limited (429): backing off %s for %.0fs (step %d/%d)", host, wait, level + 1, len(ladder))
+    return wait
+
+
+def host_cooldown_remaining(url: str) -> float:
+    """Seconds left on a host's 429 cooldown; 0.0 when clear or expired."""
+    host = _cooldown_key(url)
+    if not host:
+        return 0.0
+    now = time.monotonic()
+    with _host_cooldowns_lock:
+        rec = _host_cooldowns.get(host)
+        if rec is None or rec.deadline <= now:
+            return 0.0
+        return rec.deadline - now
+
+
+def is_host_cooling_down(url: str) -> bool:
+    return host_cooldown_remaining(url) > 0.0
+
+
+def clear_host_cooldowns() -> None:
+    """Forget all rate-limit cooldowns (manual reset / tests)."""
+    with _host_cooldowns_lock:
+        _host_cooldowns.clear()
 
 
 def register_dns_rotation_callback(callback: Callable[[str, List[str], str], None]) -> None:
@@ -360,6 +433,83 @@ def _is_aa_hostname(host_str: str) -> bool:
 
 # Store the original getaddrinfo function
 original_getaddrinfo = socket.getaddrinfo
+
+
+# --- Destination guard (ported from upstream calibrain/shelfmark f837506) ------------------------
+# Direct-download pages and file links come from remote sites (AA/Libgen/ABB pages), so a hostile
+# link could aim the server at loopback, the LAN or a sibling container and save the response as
+# a "book". Applied to html_get_page / download_url / _try_resume and every redirect hop. Those are
+# only used for public sources here; Prowlarr/qBittorrent/ABS on the LAN use their own clients.
+class UnsafeDestinationError(requests.exceptions.InvalidURL):
+    """A request target resolves to a loopback, private or otherwise non-public address."""
+
+
+def _address_is_public(address: str) -> bool:
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global
+
+
+def _system_getaddrinfo(hostname: str, port: None) -> List[Any]:
+    return original_getaddrinfo(hostname, port)
+
+
+def hostname_resolves_publicly(hostname: str, *, allow_unresolved: bool = False) -> bool:
+    """True when every address ``hostname`` resolves to is globally routable.
+
+    Uses the system resolver (not the patched DoH one: a failed lookup through that rotates the
+    DNS provider, which a pre-flight check must not do). A name that does not resolve counts as
+    public only with ``allow_unresolved``, so the real request fails on it the way it always did.
+    """
+    try:
+        return _address_is_public(hostname)
+    except ValueError:
+        pass  # not an IP literal, resolve it
+    try:
+        resolved = _system_getaddrinfo(hostname, None)
+        return all(_address_is_public(str(sockaddr[0])) for *_, sockaddr in resolved)
+    except socket.gaierror:
+        return allow_unresolved
+    except ValueError:
+        return False
+
+
+def _configured_mirror_hosts() -> set:
+    """Hostnames of every mirror the operator configured, trusted as given."""
+    from shelfmark.core import mirrors
+
+    urls = [
+        *mirrors.get_aa_mirrors(),
+        *mirrors.get_libgen_mirrors(),
+        *mirrors.get_zlib_mirrors(),
+        *mirrors.get_welib_mirrors(),
+    ]
+    return {(urllib.parse.urlparse(url).hostname or "").lower() for url in urls}
+
+
+def ensure_public_destination(url: str) -> None:
+    """Refuse a URL whose host resolves to a non-public address (configured mirrors excepted)."""
+    parsed = urllib.parse.urlparse(url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in ("http", "https") or not hostname:
+        raise UnsafeDestinationError(f"Refusing to request {url!r}: not an http(s) URL with a host")
+    if hostname in _configured_mirror_hosts():
+        return
+    if not hostname_resolves_publicly(hostname, allow_unresolved=True):
+        raise UnsafeDestinationError(f"Refusing to request {hostname!r}: it resolves to a non-public address")
+
+
+def _guard_redirect_hop(response: requests.Response, *_args: Any, **_kwargs: Any) -> None:
+    """Response hook: check where a redirect points before requests follows it."""
+    if response.is_redirect:
+        location = response.headers.get("Location", "")
+        if location:
+            ensure_public_destination(urllib.parse.urljoin(response.url, location))
+
+
+# Pass as ``hooks=`` so every redirect hop of a request is checked, not just its first URL.
+REDIRECT_GUARD_HOOKS: dict = {"response": [_guard_redirect_hop]}
 
 class DoHResolver:
     """DNS over HTTPS resolver implementation with caching."""
@@ -1122,10 +1272,32 @@ class AAMirrorSelector:
             return self.aa_urls.index(base)
         return 0
 
+    def _step_past_cooling_mirror(self) -> None:
+        """Move off a current mirror that is in a 429 cooldown (auto mode only).
+
+        Upstream filters cooling hosts out of the mirror list; here indexes into the full list
+        must stay valid (set_aa_url_index), so pick the next breathing mirror instead. Without
+        this a 429 that arrived outside rotation (e.g. on a cached-cookie retry) left every new
+        search on the throttled mirror, where the bypasser fails fast: AA search went dark for
+        the whole cooldown although other mirrors were fine.
+        """
+        if not self.aa_urls or not is_aa_auto_mode() or not is_host_cooling_down(self.current_base):
+            return
+        n = len(self.aa_urls)
+        for step in range(1, n):
+            i = (self._index + step) % n
+            if not is_host_cooling_down(self.aa_urls[i]):
+                logger.info("AA mirror %s is rate-limited; switching to %s", self.current_base, self.aa_urls[i])
+                set_aa_url_index(i)
+                self._ensure_fresh_state(reset_attempts=False)
+                return
+        # Every mirror is cooling: stay put; the bypasser's fail-fast reports the rate limit.
+
     def rewrite(self, url: str) -> str:
-        """Replace any known AA base in url with current_base."""
+        """Replace any known AA base in url with current_base (skipping a rate-limited mirror)."""
         for base in self.aa_urls:
             if url.startswith(base):
+                self._step_past_cooling_mirror()
                 return url.replace(base, self.current_base, 1)
         return url
 
@@ -1146,7 +1318,14 @@ class AAMirrorSelector:
             # Mirror is explicitly configured; do not fail over to other mirrors.
             return None, "exhausted"
 
-        next_index = (self._index + 1) % len(self.aa_urls)
+        n = len(self.aa_urls)
+        candidates = [(self._index + step) % n for step in range(1, n)]
+        # Prefer a mirror that isn't in a 429 cooldown; if every one is cooling, rotate as before
+        # and let the bypasser's fail-fast report the rate limit.
+        next_index = next(
+            (i for i in candidates if not is_host_cooling_down(self.aa_urls[i])),
+            (self._index + 1) % n,
+        )
         set_aa_url_index(next_index)
         self._ensure_fresh_state(reset_attempts=False)
         return self.current_base, "mirror"

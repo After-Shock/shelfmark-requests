@@ -84,3 +84,27 @@ def mock_config(monkeypatch):
         _values = config_values
 
     return MockConfig
+
+
+@pytest.fixture(autouse=True)
+def _public_destination_dns(monkeypatch):
+    """Resolve every host to a public address for the download destination guard.
+
+    The guard looks hosts up before a request; tests use made-up and real hostnames and must not
+    depend on the DNS of the machine running them. Tests of the guard itself replace this again.
+    """
+    from shelfmark.download import network
+
+    monkeypatch.setattr(
+        network, "_system_getaddrinfo", lambda *_a, **_k: [(2, 1, 6, "", ("93.184.216.34", 0))]
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clear_rate_limit_cooldowns():
+    """The 429 cooldown table is process-global; keep tests independent."""
+    from shelfmark.download import network
+
+    network.clear_host_cooldowns()
+    yield
+    network.clear_host_cooldowns()

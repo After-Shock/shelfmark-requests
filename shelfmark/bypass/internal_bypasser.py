@@ -1250,6 +1250,10 @@ def _try_with_cached_cookies(url: str, hostname: str) -> str | None:
         if response.status_code == HTTPStatus.OK:
             logger.debug("Cached cookies worked, skipped Chrome bypass")
             return response.text
+        if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+            # Throttled, not challenged: arm the per-host backoff so callers stop rotating into
+            # this host and re-solving.
+            network.note_rate_limited(url)
     except _REQUEST_OPERATION_ERRORS as exc:
         logger.debug("Cached cookie retry failed for %s: %s", url, exc)
 
@@ -1263,6 +1267,14 @@ def get_bypassed_page(
     sel = selector or network.AAMirrorSelector()
     attempt_url = sel.rewrite(url)
     hostname = urlparse(attempt_url).hostname or ""
+
+    # Never spend a minutes-long Chrome solve on a host that is throttling this IP: the solve
+    # "succeeds" but the cleared request is rejected again. Fail fast; the caller moves on.
+    remaining = network.host_cooldown_remaining(attempt_url)
+    if remaining > 0:
+        raise network.RateLimitedError(
+            f"{hostname} is rate-limited (429); skipping bypass for ~{remaining:.0f}s until the cooldown clears."
+        )
 
     cached_result = _try_with_cached_cookies(attempt_url, hostname)
     if cached_result:
