@@ -141,6 +141,8 @@ def provision_cwa_user(username: str, password: str, email: Optional[str] = None
             conn.commit()
         finally:
             conn.close()
+    except sqlite3.IntegrityError:
+        return {"status": "error", "message": "A Calibre-Web account already uses this username or email. Ask an administrator to link your existing library account."}
     except sqlite3.Error as e:
         logger.error("Calibre-Web user creation for '%s' failed: %s", username, e)
         return {"status": "error", "message": f"Could not write to Calibre-Web database: {e}"}
@@ -275,13 +277,13 @@ def find_cwa_user(username: str) -> Optional[dict[str, Any]]:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         row = conn.execute(
-            "SELECT name, password, email FROM user WHERE lower(name) = lower(?)", (username,)
+            "SELECT name, password, email, id FROM user WHERE lower(name) = lower(?)", (username,)
         ).fetchone()
     finally:
         conn.close()
     if not row:
         return None
-    return {"name": row[0], "password": row[1], "email": _normalize_email(row[2])}
+    return {"name": row[0], "password": row[1], "email": _normalize_email(row[2]), "id": str(row[3])}
 
 
 def find_cwa_names_by_email(email: str) -> list[str]:

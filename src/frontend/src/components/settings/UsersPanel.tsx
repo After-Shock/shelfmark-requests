@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { AdminLibraryAccounts } from './AdminLibraryAccounts';
 import {
   AdminUser,
   DownloadDefaults,
@@ -40,8 +41,6 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
   const [resetExpiryHours, setResetExpiryHours] = useState(24);
 
   // Edit view state
-  const [editPassword, setEditPassword] = useState('');
-  const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null);
 
   const fetchUsers = useCallback(async () => {
@@ -71,8 +70,6 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
 
   const startEditing = useCallback(async (user: AdminUser) => {
     setEditingUser({ ...user });
-    setEditPassword('');
-    setEditPasswordConfirm('');
 
     try {
       setDownloadDefaults(await getDownloadDefaults());
@@ -95,33 +92,24 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
   const handleSaveEdit = async () => {
     if (!editingUser) return;
 
-    // Validate password if provided
-    if (editPassword) {
-      if (editPassword.length < 4) {
-        onShowToast?.('Password must be at least 4 characters', 'error');
-        return;
-      }
-      if (editPassword !== editPasswordConfirm) {
-        onShowToast?.('Passwords do not match', 'error');
-        return;
-      }
-    }
-
     // Skip sending role when it's managed by OIDC group auth
     const roleManaged = !!editingUser.oidc_subject && downloadDefaults?.OIDC_USE_ADMIN_GROUP === true;
 
     try {
-      await updateAdminUser(editingUser.id, {
+      const result = await updateAdminUser(editingUser.id, {
         email: editingUser.email,
         display_name: editingUser.display_name,
         ...(!roleManaged ? { role: editingUser.role } : {}),
-        ...(editPassword ? { password: editPassword } : {}),
       });
       setEditingUser(null);
-      onShowToast?.('User updated', 'success');
+      if (result.warnings?.length) {
+        onShowToast?.(`User updated. ${result.warnings.join('; ')}`, 'error');
+      } else {
+        onShowToast?.('User updated', 'success');
+      }
       fetchUsers();
-    } catch {
-      onShowToast?.('Failed to update user', 'error');
+    } catch (err) {
+      onShowToast?.(err instanceof Error ? err.message : 'Failed to update user', 'error');
     }
   };
 
@@ -287,36 +275,8 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
             </div>
           )}
 
-          {/* Password section */}
-          {!editingUser.oidc_subject && (
-            <>
-              <div className="border-t border-[var(--border-muted)] pt-4">
-                <p className="text-xs font-medium opacity-60 mb-3">Change Password</p>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">New Password</label>
-                <input
-                  type="password"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  className={inputClasses}
-                  placeholder="Leave empty to keep current"
-                />
-              </div>
-              {editPassword && (
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Confirm Password</label>
-                  <input
-                    type="password"
-                    value={editPasswordConfirm}
-                    onChange={(e) => setEditPasswordConfirm(e.target.value)}
-                    className={inputClasses}
-                    placeholder="Confirm new password"
-                  />
-                </div>
-              )}
-            </>
-          )}
+          <p className="text-xs opacity-60">Library account actions below save immediately. Save Changes applies to the profile fields above.</p>
+          <AdminLibraryAccounts key={editingUser.id} user={editingUser} />
 
           <div className="flex gap-2 pt-2">
             <button

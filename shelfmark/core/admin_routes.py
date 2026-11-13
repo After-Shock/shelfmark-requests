@@ -167,6 +167,47 @@ def _sync_all_cwa_users(user_db: UserDB) -> dict[str, int]:
 def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | None = None) -> None:
     """Register admin user management routes on the Flask app."""
 
+    @app.route("/api/admin/users/<int:user_id>/library-accounts", methods=["GET"])
+    @app.route("/api/admin/users/<int:user_id>/library-accounts/<service>", methods=["PUT", "DELETE", "POST"])
+    def admin_library_accounts(user_id, service=None):
+        from shelfmark.core import library_accounts as la
+        from shelfmark.core.signup_provisioning import set_password
+        actor_id = session.get("db_user_id")
+        actor = user_db.get_user(user_id=actor_id) if actor_id else None
+        if not actor or actor.get("role") != "admin":
+            return jsonify({"error": "Admin authentication required"}), 403
+        user = user_db.get_user(user_id=user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        try:
+            if service is None and request.method == "GET":
+                return jsonify({"services": la.admin_status(user_db, user)})
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                raise la.AccountError("Request must be a JSON object")
+            if service == "password" and request.method == "POST":
+                password = data.get("password")
+                if not isinstance(password, str) or len(password) < 4:
+                    raise la.AccountError("Password must be at least 4 characters")
+                if password != data.get("confirmation"):
+                    raise la.AccountError("Password confirmation does not match")
+                if normalize_auth_source(user.get("auth_source"), user.get("oidc_subject")) != AUTH_SOURCE_BUILTIN:
+                    raise la.AccountError("Password authentication is only available for local users")
+                results = set_password(user_db, user, password)
+                results["requests"] = {"status": "updated"}
+                logger.info("Admin %s set shared password for user %s", actor_id, user_id)
+                return jsonify({"results": results})
+            if request.method == "PUT":
+                la.link_account(user_db, user, service, data.get("account_id"))
+            elif request.method == "DELETE":
+                la.unlink_account(user_db, user, service)
+            else:
+                raise la.AccountError("Invalid library action")
+            logger.info("Admin %s %s library association %s for user %s", actor_id, request.method, service, user_id)
+            return jsonify({"success": True})
+        except la.AccountError as exc:
+            return jsonify({"error": str(exc)}), exc.status
+
     @app.route("/api/admin/invites", methods=["GET"])
     @_require_admin
     def admin_list_invites():
@@ -379,6 +420,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         # Handle optional password update
         password = data.get("password", "")
         password_warnings: list[str] = []
+        password_results = None
         if password:
             if not capabilities["canSetPassword"]:
                 return jsonify({
@@ -454,7 +496,9 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         # leaves a partial update behind.
         if password:
             from shelfmark.core.signup_provisioning import get_warnings, set_password
-            password_warnings = get_warnings(set_password(user_db, user, password))
+            password_results = set_password(user_db, user, password)
+            password_results["requests"] = {"status": "updated"}
+            password_warnings = get_warnings(password_results)
 
         # Avoid unnecessary writes for no-op field updates.
         for field in ("role", "email", "display_name"):
@@ -480,6 +524,8 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
             security_config=security_config,
         )
         result["settings"] = user_db.get_user_settings(user_id)
+        if password_results is not None:
+            result["password_results"] = password_results
         if password_warnings:
             result["warnings"] = password_warnings
         logger.info(f"Admin updated user {user_id}")

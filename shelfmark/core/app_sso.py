@@ -78,7 +78,19 @@ def current_user(user_db: Any) -> Optional[dict[str, Any]]:
 def is_linked(user: Optional[dict[str, Any]], service: str) -> bool:
     from shelfmark.core.signup_provisioning import parse_provisioned_services
 
-    return bool(user) and service in parse_provisioned_services(user.get("provisioned_services"))
+    if not user:
+        return False
+    if service in user.get("library_accounts", {}) or (service == "audiobookshelf" and user.get("retired_library_accounts")):
+        from shelfmark.core.library_accounts import resolve_account, list_accounts, ensure_abs_subject_safe
+        try:
+            accounts = list_accounts(service)
+            account = resolve_account(user, service, accounts)
+            if account and service == "audiobookshelf":
+                ensure_abs_subject_safe(user, account["id"], accounts)
+            return account is not None
+        except Exception:
+            return False
+    return service in parse_provisioned_services(user.get("provisioned_services"))
 
 
 def _pass_serializer(secret_key: Any) -> URLSafeTimedSerializer:
@@ -99,12 +111,13 @@ def _cw_login_identifier(req: Any) -> str:
     return sha512(f"{address}|{user_agent}".encode("utf8")).hexdigest()
 
 
-def make_calibre_web_session_cookie(db_path: str, username: str, req: Any) -> Optional[str]:
+def make_calibre_web_session_cookie(db_path: str, username: str, req: Any, account_id: str | None = None) -> Optional[str]:
     """Create a Calibre-Web login for `username`; return the signed session cookie value."""
     conn = sqlite3.connect(db_path, timeout=10)
     try:
         key_row = conn.execute("SELECT flask_session_key FROM flask_settings").fetchone()
-        users = conn.execute("SELECT id FROM user WHERE lower(name) = lower(?)", (username,)).fetchall()
+        users = (conn.execute("SELECT id FROM user WHERE id = ?", (account_id,)).fetchall() if account_id is not None
+                 else conn.execute("SELECT id FROM user WHERE lower(name) = lower(?)", (username,)).fetchall())
         if not key_row or not key_row[0] or len(users) != 1:
             logger.warning("app-sso: no unique Calibre-Web user '%s' or no session key", username)
             return None
@@ -186,7 +199,9 @@ def register_app_sso_routes(app: Flask, user_db: Any) -> None:
         if not sso_enabled("calibre_web") or not is_linked(user, "calibre_web") or not db_path:
             return redirect(login_page)
         try:
-            cookie = make_calibre_web_session_cookie(db_path, user["username"], request)
+            mapping = user.get("library_accounts", {}).get("calibre_web")
+            cookie = (make_calibre_web_session_cookie(db_path, user["username"], request, account_id=mapping["account_id"])
+                      if mapping else make_calibre_web_session_cookie(db_path, user["username"], request))
         except sqlite3.Error as e:
             logger.warning("app-sso: Calibre-Web session for '%s' failed (schema changed?): %s", user["username"], e)
             cookie = None

@@ -9,7 +9,10 @@ from shelfmark.core.user_db import UserDB
 
 
 @pytest.fixture
-def user_db(tmp_path):
+def user_db(tmp_path, monkeypatch):
+    from shelfmark.core import library_accounts as la
+    monkeypatch.setattr(la, 'list_accounts', lambda service: [{
+        'id':'abs-dave', 'username':'dave', 'email':None, '_oidc_known':True, '_oidc_sub':None}])
     db = UserDB(str(tmp_path / "users.db"))
     db.initialize()
     db.create_user(username="dave", email="Dave@Example.com", password_hash=generate_password_hash("old"), role="user")

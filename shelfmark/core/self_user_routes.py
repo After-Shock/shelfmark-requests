@@ -272,6 +272,8 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
         status = library_account_status(user).get(service, {})
         if not status.get("offered"):
             return jsonify({"error": "That library isn't available"}), 400
+        if service in user.get("library_accounts", {}):
+            return jsonify({"error": "That account already has an explicit link. Ask an administrator to change or remove it."}), 409
         if status.get("linked"):
             return jsonify({"error": "That account is already linked"}), 409
         if not user.get("password_hash") or not check_password_hash(user["password_hash"], password):
@@ -284,7 +286,10 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
         if status.get("has_account"):
             if not verify_library_login(service, user["username"], data.get("app_password") or ""):
                 return jsonify({"error": "That app's password is incorrect"}), 403
-            link_services(user_db, user_id, {service})
+            try:
+                link_services(user_db, user_id, {service})
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 409
             # Push the requests-site password everywhere it is linked.
             results = set_password(user_db, user_db.get_user(user_id=user_id), password)
             if results.get(service, {}).get("status") == "error":
@@ -295,7 +300,10 @@ def register_self_user_routes(app: Flask, user_db: UserDB) -> None:
         result = provision_signup_accounts(
             user["username"], password, email=user.get("email"), role="user", services={service: True}
         ).get(service, {"status": "error", "message": "Not created"})
-        record_provisioned_services(user_db, user_id, {service: result})
+        try:
+            record_provisioned_services(user_db, user_id, {service: result})
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), getattr(exc, "status", 409)
         if result["status"] == "created":
             return jsonify({"success": True, "message": "Account created. Log in there with your Shelfmark username and password.",
                             "app_url": _app_link(service), "username": user["username"]})

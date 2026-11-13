@@ -123,3 +123,14 @@ Configure templates in Settings -> Downloads. Template syntax details are docume
 - Custom Scripts: `docs/custom-scripts.md`
 - Installation: `docs/installation.md`
 - Troubleshooting: `docs/troubleshooting.md`
+
+
+## Admin library account controls
+
+Open **Settings → Users**, edit a user, and find **Library accounts**. Each library shows the linked account's actual username and email. Select an existing account and use **Review link**, then confirm the requests and library usernames. Usernames may differ. Accounts already linked to another requests user cannot be selected.
+
+Linking preserves the external account, history and password. **Unlink** removes the requests-site association without deleting the library user. These actions save immediately, separately from profile changes.
+
+To unify passwords after linking, use **Set shared password**, enter and confirm a known current password or a new one, review the affected accounts, and confirm. This updates the requests password first, then each linked library independently. Check each result: a failed library update does not undo successful updates elsewhere. Re-enter the chosen password to retry. A user can also complete a requests-site password reset to update linked accounts. Existing passwords cannot be retrieved.
+
+Audiobookshelf may retain an OpenID association after a requests-site unlink. If a different account is blocked by a previous OpenID association, unlink OpenID for the previous account in Audiobookshelf before selecting the new account. The controls do not reassign an account already bound to another OpenID identity. Library services that cannot expose enough association information may refuse a new link until that information is available.

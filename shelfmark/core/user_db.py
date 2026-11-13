@@ -195,6 +195,14 @@ class UserDB:
                 self._migrate_invite_tables(conn)
                 self._migrate_password_reset_tables(conn)
                 self._migrate_provisioned_services_column(conn)
+                conn.execute("""CREATE TABLE IF NOT EXISTS library_accounts (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    service TEXT NOT NULL, account_id TEXT NOT NULL, username TEXT NOT NULL,
+                    PRIMARY KEY(user_id, service), UNIQUE(service, account_id))""")
+                conn.execute("""CREATE TABLE IF NOT EXISTS retired_library_accounts (
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    service TEXT NOT NULL, account_id TEXT NOT NULL, username TEXT NOT NULL,
+                    PRIMARY KEY(user_id, service, account_id, username))""")
                 conn.commit()
                 # WAL mode must be changed outside an open transaction.
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -513,9 +521,7 @@ class UserDB:
                     (row["reset_id"],),
                 )
                 conn.commit()
-                payload = dict(row)
-                payload.pop("reset_id", None)
-                return payload
+                return self._get_user_by_id(conn, row["id"])
             finally:
                 conn.close()
 
@@ -615,13 +621,20 @@ class UserDB:
                 ).fetchone()
             else:
                 return None
-            return dict(row) if row else None
+            return self._get_user_by_id(conn, row["id"]) if row else None
         finally:
             conn.close()
 
     def _get_user_by_id(self, conn: sqlite3.Connection, user_id: int) -> Optional[Dict[str, Any]]:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        user = dict(row)
+        user["library_accounts"] = {r["service"]: dict(r) for r in conn.execute(
+            "SELECT * FROM library_accounts WHERE user_id = ?", (user_id,))}
+        user["retired_library_accounts"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM retired_library_accounts WHERE user_id = ?", (user_id,))]
+        return user
 
     _ALLOWED_UPDATE_COLUMNS = {
         "email",
@@ -671,7 +684,7 @@ class UserDB:
         conn = self._connect()
         try:
             rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
-            return [dict(r) for r in rows]
+            return [self._get_user_by_id(conn, r["id"]) for r in rows]
         finally:
             conn.close()
 

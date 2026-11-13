@@ -457,6 +457,8 @@ export interface AdminUser {
   display_name: string | null;
   role: string;
   oidc_subject: string | null;
+  auth_source?: string;
+  warnings?: string[];
   created_at: string;
   settings?: Record<string, unknown>;
 }
@@ -740,3 +742,42 @@ export const updateRequestStatus = async (
     body: JSON.stringify({ status, admin_note: adminNote }),
   });
 };
+
+
+export interface AdminLibraryAccount {
+  id: string;
+  username: string;
+  email: string | null;
+  owner_user_id?: number | null;
+  owner_username?: string | null;
+}
+export interface AdminLibraryService {
+  offered: boolean;
+  linked: boolean;
+  account: AdminLibraryAccount | null;
+  candidates: AdminLibraryAccount[];
+  state?: string;
+  error?: string;
+}
+export type AdminLibraryStatus = { services: Record<LibraryService, AdminLibraryService> };
+export interface LibraryPasswordResult {
+  status: 'updated' | 'skipped' | 'error';
+  message?: string;
+}
+export type LibraryPasswordResults = { results: Partial<Record<LibraryService | 'requests', LibraryPasswordResult>> };
+
+export const getAdminLibraryAccounts = (userId: number): Promise<AdminLibraryStatus> =>
+  fetchJSON(`${API_BASE}/admin/users/${userId}/library-accounts`);
+
+export const linkAdminLibraryAccount = (userId: number, service: LibraryService, accountId: string): Promise<{ success: boolean }> =>
+  fetchJSON(`${API_BASE}/admin/users/${userId}/library-accounts/${service}`, {
+    method: 'PUT', body: JSON.stringify({ account_id: accountId }),
+  });
+
+export const unlinkAdminLibraryAccount = (userId: number, service: LibraryService): Promise<{ success: boolean }> =>
+  fetchJSON(`${API_BASE}/admin/users/${userId}/library-accounts/${service}`, { method: 'DELETE' });
+
+export const setAdminLibraryPassword = (userId: number, password: string, confirmation: string): Promise<LibraryPasswordResults> =>
+  fetchJSON(`${API_BASE}/admin/users/${userId}/library-accounts/password`, {
+    method: 'POST', body: JSON.stringify({ password, confirmation }),
+  }, 60000);

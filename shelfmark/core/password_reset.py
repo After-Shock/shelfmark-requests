@@ -125,6 +125,17 @@ def _app_rows(user: Dict[str, Any]) -> List[Dict[str, str]]:
     rows = []
     for service in ("calibre_web", "audiobookshelf"):
         s = status[service]
+        if service in user.get("library_accounts", {}):
+            # Status resolves the explicit ID. Never inspect a same-named
+            # alternative, including when that ID vanished or is unreachable.
+            if s.get("unavailable") or not s["offered"]:
+                state, ok = "Linked account unavailable — its password may not update", False
+            elif s["linked"]:
+                state, ok = "Linked — will be updated", True
+            else:
+                state, ok = "Linked account missing — its password won't change", False
+            rows.append({"label": _APP_LABELS[service], "host": _app_host(service), "state": state, "ok": "1" if ok else ""})
+            continue
         if not s["offered"]:
             continue
         if s["linked"]:

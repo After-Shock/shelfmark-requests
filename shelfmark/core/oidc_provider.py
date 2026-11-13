@@ -82,9 +82,18 @@ def _public_jwk() -> dict[str, Any]:
 
 
 def _claims(user: dict[str, Any]) -> dict[str, Any]:
+    username = user["username"]
+    if SERVICE in user.get("library_accounts", {}) or user.get("retired_library_accounts"):
+        from shelfmark.core.library_accounts import resolve_account, list_accounts, ensure_abs_subject_safe
+        accounts = list_accounts(SERVICE)
+        account = resolve_account(user, SERVICE, accounts)
+        if account: ensure_abs_subject_safe(user, account["id"], accounts)
+        if not account:
+            raise ValueError("Linked Audiobookshelf account is missing")
+        username = account["username"]
     claims = {
         "sub": f"shelfmark-{user['id']}",
-        "preferred_username": user["username"],
+        "preferred_username": username,
         "name": user.get("display_name") or user["username"],
     }
     if user.get("email"):

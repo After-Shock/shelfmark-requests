@@ -134,12 +134,12 @@ def _find_library_account(service: str, username: str) -> Optional[Dict[str, Any
         from shelfmark.core.cwa_user_sync import find_cwa_user
 
         user = find_cwa_user(username)
-        return {"name": user["name"], "email": user["email"]} if user else None
+        return {"name": user["name"], "email": user["email"], "id": user.get("id")} if user else None
     from shelfmark.core.abs_user_sync import _find_abs_user, _get_credentials
 
     base_url, token = _get_credentials()
     user = _find_abs_user(base_url, token, username)
-    return {"name": user.get("username"), "email": user.get("email")} if user else None
+    return {"name": user.get("username"), "email": user.get("email"), "id": user.get("id")} if user else None
 
 
 def verify_library_login(service: str, username: str, password: str) -> bool:
@@ -164,6 +164,19 @@ def library_account_status(user: Dict[str, Any]) -> Dict[str, Dict[str, bool]]:
 
     An app that couldn't be reached is reported as {"offered": False, "unavailable": True}.
     """
+    if user.get("library_accounts"):
+        from shelfmark.core.library_accounts import resolve_account, linked_services
+        status = {key: {"offered": False, "has_account": False, "linked": False} for key in _SERVICE_KEYS}
+        for service in offered_services():
+            try:
+                mapping = user.get("library_accounts", {}).get(service)
+                account = resolve_account(user, service) if service in linked_services(user) else _find_library_account(service, user["username"])
+                status[service] = {"offered": True, "has_account": bool(account) or bool(mapping),
+                    "linked": bool(account) and service in linked_services(user)}
+                if mapping and not account: status[service]["missing"] = True
+            except Exception:
+                status[service]["unavailable"] = True
+        return status
     linked = parse_provisioned_services(user.get("provisioned_services"))
     offered = offered_services()
     status = {key: {"offered": False, "has_account": False, "linked": False} for key in _SERVICE_KEYS}
@@ -225,14 +238,22 @@ def link_accounts_with_password(user_db: Any, user: Dict[str, Any], password: st
     """
     linked = parse_provisioned_services(user.get("provisioned_services"))
     found = set()
-    for service in offered_services() - linked:
+    for service in offered_services() - linked - set(user.get("library_accounts", {})):
         try:
             if verify_library_login(service, user["username"], password):
                 found.add(service)
         except Exception as e:
             logger.warning("Auto-link check for '%s' (%s) failed: %s", user["username"], service, e)
     if found:
-        link_services(user_db, int(user["id"]), found)
+        from shelfmark.core.library_accounts import AccountError
+        try:
+            link_services(user_db, int(user["id"]), found)
+        except AccountError:
+            logger.warning("Library association ownership conflict for user %s", user["id"])
+            return set()
+        except Exception:
+            logger.warning("Could not safely establish library associations for user %s", user["id"])
+            return set()
         logger.info("Linked %s for '%s' (same password)", ", ".join(sorted(found)), user["username"])
     return found
 
@@ -244,7 +265,7 @@ def link_accounts_by_email(user_db: Any, user: Dict[str, Any], email: str) -> se
     found = set()
     if not wanted:
         return found
-    for service in offered_services() - linked:
+    for service in offered_services() - linked - set(user.get("library_accounts", {})):
         try:
             account = _find_library_account(service, user["username"])
         except Exception as e:
@@ -253,7 +274,15 @@ def link_accounts_by_email(user_db: Any, user: Dict[str, Any], email: str) -> se
         if account and str(account.get("email") or "").strip().lower() == wanted:
             found.add(service)
     if found:
-        link_services(user_db, int(user["id"]), found)
+        from shelfmark.core.library_accounts import AccountError
+        try:
+            link_services(user_db, int(user["id"]), found)
+        except AccountError:
+            logger.warning("Library association ownership conflict for user %s", user["id"])
+            return set()
+        except Exception:
+            logger.warning("Could not safely establish library associations for user %s", user["id"])
+            return set()
         logger.info("Linked %s for '%s' (matching email)", ", ".join(sorted(found)), user["username"])
     return found
 
@@ -328,6 +357,10 @@ def link_services(user_db: Any, user_id: int, services: set) -> None:
     if not services:
         return
     user = user_db.get_user(user_id=user_id) or {}
+    if hasattr(user_db, "_connect"):
+        from shelfmark.core.library_accounts import claim_legacy_services
+        claim_legacy_services(user_db, user, services)
+        return
     merged = parse_provisioned_services(user.get("provisioned_services")) | set(services)
     user_db.update_user(int(user_id), provisioned_services=",".join(sorted(merged)))
 
@@ -361,6 +394,25 @@ def set_password(user_db: Any, user: Dict[str, Any], password: str) -> Dict[str,
 
     from shelfmark.core.abs_user_sync import update_abs_password
     from shelfmark.core.cwa_user_sync import update_cwa_password
+
+    from shelfmark.core.auth_modes import normalize_auth_source, AUTH_SOURCE_BUILTIN
+    if normalize_auth_source(user.get("auth_source"), user.get("oidc_subject")) != AUTH_SOURCE_BUILTIN:
+        raise ValueError("Password authentication is only available for local users")
+    if user.get("library_accounts"):
+        from shelfmark.core.library_accounts import linked_services, resolve_account, update_password, offered_services
+        user_db.update_user(int(user["id"]), password_hash=generate_password_hash(password))
+        results = {}
+        for service in linked_services(user):
+            try:
+                if service not in offered_services():
+                    results[service] = {"status": "skipped", "message": "Library service is disabled or unavailable"}
+                    continue
+                account = resolve_account(user, service)
+                results[service] = update_password(service, account["id"], password) if account else {
+                    "status": "error", "message": "Linked library account is missing"}
+            except Exception:
+                results[service] = {"status": "error", "message": "Could not update library password"}
+        return results
 
     user_db.update_user(int(user["id"]), password_hash=generate_password_hash(password))
 

@@ -12,6 +12,9 @@ from shelfmark.core.user_db import UserDB
 @pytest.fixture
 def account_page(tmp_path, monkeypatch):
     """Logged-in user 'dave' (password pw1234); ABS offered, Calibre-Web not. Returns (post, user_db, status)."""
+    from shelfmark.core import library_accounts as la
+    monkeypatch.setattr(la, 'list_accounts', lambda service: [{
+        'id':'abs-id', 'username':'dave', 'email':None, '_oidc_known':True, '_oidc_sub':None}])
     user_db = UserDB(str(tmp_path / "users.db"))
     user_db.initialize()
     user = user_db.create_user(username="dave", password_hash=generate_password_hash("pw1234"), role="user")
@@ -64,3 +67,14 @@ def test_link_existing_account_needs_its_password_then_syncs(account_page, monke
     assert post({"service": "audiobookshelf", "password": "pw1234", "app_password": "old-abs-pw"}).status_code == 200
     assert user_db.get_user(username="dave")["provisioned_services"] == "audiobookshelf"
     assert pushed == [("dave", "pw1234")]  # ABS now uses the requests-site password
+
+def test_self_service_rejects_new_abs_claim_bound_to_another_identity(account_page,monkeypatch):
+    from shelfmark.core import library_accounts as la
+    post,user_db,status=account_page
+    status['audiobookshelf']['has_account']=True
+    monkeypatch.setattr(signup_provisioning,'verify_library_login',lambda *args:True)
+    monkeypatch.setattr(la,'list_accounts',lambda service:[{'id':'abs-id','username':'dave','email':None,'_oidc_known':False,'_oidc_bound':True}])
+    response=post({'service':'audiobookshelf','password':'pw1234','app_password':'valid'})
+    assert response.status_code==409
+    assert 'OIDC' in response.json['error'] or 'OpenID' in response.json['error']
+    assert not user_db.get_user(username='dave')['provisioned_services']
