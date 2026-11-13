@@ -17,7 +17,7 @@ Files: add shelfmark/core/library_accounts.py and tests/core/test_admin_library_
 - [x] Add additive mapping storage with unique ownership, legacy compatibility and safe transactional link/unlink. ID is canonical string (decimal Calibre ID, opaque ABS UUID). Preserve mappings across outages; missing mappings fail closed. Link/unlink changes only associations, not external identities/passwords. Clear legacy flag on unlink; explicit self-link conflicts do not override mappings. Reject non-builtin shared-password actions before any writes.
 - [x] Implement the API contract below and integrate resolver in status, reset, password sync and SSO. Preserve OIDC subject and reject conflicting external OIDC links. Remote passwords target resolved IDs. Do not disclose tokens/hashes. Log admin changes without secrets.
 - [x] Run relevant existing and new tests; fix regressions.
-- [ ] Spec review then quality review.
+- [x] Spec review then quality review.
 
 ### API contract
 
@@ -40,10 +40,22 @@ Files: add src/frontend/src/components/settings/AdminLibraryAccounts.tsx and tes
 - [x] Add typed API functions matching contract. Focused component loads services independently from user editor metadata, surfaces unavailable state, reviews link/unlink choices with exact identities, disables busy controls, refreshes after changes, and offers separate Set shared password action for builtin users. Clear password after submission; show partial results. Candidate list never auto-selects.
 - [x] Mount component in user edit screen. Fix existing admin Save Changes to surface password warnings rather than show unconditional success.
 - [x] Run `npm test`, `npm run typecheck`, `npm run build`.
-- [ ] Spec review then quality review.
+- [x] Spec review then quality review.
 
 ## Chunk 3: Verification and delivery
 
-- [ ] Run relevant backend suite and frontend checks. Verify additive migration with a disposable copy of production DB; no external mutations during smoke check.
-- [ ] Review entire feature, resolve important findings, commit changes and merge into local app-sso branch, preserving unrelated files.
-- [ ] Deploy to existing production stack after verified build, with SQLite backup; verify health and readonly user-link inspection. Never change real passwords for tests.
+- [x] Run relevant backend suite and frontend checks. Verify additive migration with a disposable copy of production DB; no external mutations during smoke check.
+- [x] Review entire feature, resolve important findings, commit changes and merge into local app-sso branch, preserving unrelated files.
+- [x] Deploy to existing production stack after verified build, with SQLite backup; verify health and readonly user-link inspection. Never change real passwords for tests.
+
+
+## Verification and deployment record
+
+- Reviewed implementation code: `99a1e30` (feature commit `0ff73bb`, OIDC error-boundary fix `99a1e30`). Spec compliance and independent code quality reviews passed after resolving findings.
+- Backend: 196-test relevant combined suite passed; four additional OIDC race regressions passed within the final 53-test OIDC/account-control run. The merged branch passed 33 focused backend tests.
+- Frontend: all 36 tests passed, TypeScript and Vite production build passed. Desktop and 390px mobile layouts inspected.
+- Additive migration on an isolated production SQLite copy preserved fingerprints of every existing table, with foreign-key and integrity checks passing. Image smoke verified unauthenticated denial and authenticated inspection of Katie's two existing links and 69 requests.
+- Production database backup: `/opt/shelfmark-requests/config/backups/users-before-admin-library-controls-20261113T183459Z.db`.
+- Rollback image retained as `shelfmark-dev:before-admin-library-controls`. Deployed image `sha256:1423a747d3a096669dde1c31c5157dd8e58149e9dfbda6f8bad063c56a15c0a4` was built from the full feature image plus the reviewed OIDC fix overlay, preserving the already-built frontend and runtime dependencies.
+- Production health returned ok, live authenticated admin inspection returned HTTP 200, unauthenticated access was denied, both Katie links remained present, SQLite integrity passed, and public HTML served `index-hD2Nui1r.js` containing the new controls.
+- No real user passwords were changed by verification or rollout.
