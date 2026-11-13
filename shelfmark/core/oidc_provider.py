@@ -217,8 +217,14 @@ def register_oidc_provider_routes(app: Flask, user_db: Any) -> None:
 
         from authlib.jose import jwt
 
+        try:
+            claims = _claims(user)
+        except Exception:
+            # Identity resolution can change after the link check. Fail closed
+            # without disclosing external service or account details.
+            return jsonify({"error": "invalid_grant"}), 400
         now = int(time.time())
-        id_claims = {**_claims(user), "iss": _issuer(), "aud": client["client_id"], "iat": now,
+        id_claims = {**claims, "iss": _issuer(), "aud": client["client_id"], "iat": now,
                      "exp": now + _ID_TOKEN_SECONDS}
         if entry["nonce"]:
             id_claims["nonce"] = entry["nonce"]
@@ -242,4 +248,8 @@ def register_oidc_provider_routes(app: Flask, user_db: Any) -> None:
         user = user_db.get_user(user_id=entry["user_id"]) if entry and entry["exp"] >= time.time() else None
         if not user:
             return jsonify({"error": "invalid_token"}), 401, {"WWW-Authenticate": "Bearer error=\"invalid_token\""}
-        return jsonify(_claims(user))
+        try:
+            claims = _claims(user)
+        except Exception:
+            return jsonify({"error": "invalid_token"}), 401, {"WWW-Authenticate": "Bearer error=\"invalid_token\""}
+        return jsonify(claims)

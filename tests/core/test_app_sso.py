@@ -206,3 +206,32 @@ def test_discovery_document(site):
     client, _, _, _ = site
     doc = client.get("/.well-known/openid-configuration").json
     assert doc["issuer"] == SITE and doc["token_endpoint"] == f"{SITE}/api/oidc/token"
+
+@pytest.mark.parametrize('failure', [ValueError('missing account secret'), ConnectionError('remote token secret')])
+def test_oidc_token_fails_closed_when_claim_resolution_races(site, monkeypatch, failure):
+    import shelfmark.core.oidc_provider as provider
+    client, _, dave, _ = site
+    sign_in(client, dave)
+    code = parse_qs(urlsplit(authorize(client).location).query)['code'][0]
+    def unavailable(user):
+        raise failure
+    monkeypatch.setattr(provider, '_claims', unavailable)
+    response = exchange(client, code)
+    assert response.status_code == 400 and response.json == {'error': 'invalid_grant'}
+    assert 'secret' not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize('failure', [ValueError('missing account secret'), ConnectionError('remote token secret')])
+def test_oidc_userinfo_fails_closed_when_claim_resolution_races(site, monkeypatch, failure):
+    import shelfmark.core.oidc_provider as provider
+    client, _, dave, _ = site
+    sign_in(client, dave)
+    code = parse_qs(urlsplit(authorize(client).location).query)['code'][0]
+    token = exchange(client, code).json['access_token']
+    def unavailable(user):
+        raise failure
+    monkeypatch.setattr(provider, '_claims', unavailable)
+    response = client.get('/api/oidc/userinfo', headers={'Authorization':f'Bearer {token}'})
+    assert response.status_code == 401 and response.json == {'error':'invalid_token'}
+    assert response.headers['WWW-Authenticate'] == 'Bearer error="invalid_token"'
+    assert 'secret' not in response.get_data(as_text=True)
