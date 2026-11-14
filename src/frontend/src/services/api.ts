@@ -460,7 +460,6 @@ export interface AdminUser {
   auth_source?: string;
   warnings?: string[];
   created_at: string;
-  settings?: Record<string, unknown>;
 }
 
 export const getAdminUsers = async (): Promise<AdminUser[]> => {
@@ -484,7 +483,6 @@ export const updateAdminUser = async (
   userId: number,
   data: Partial<Pick<AdminUser, 'role' | 'email' | 'display_name'>> & {
     password?: string;
-    settings?: Record<string, unknown>;
   }
 ): Promise<AdminUser> => {
   return fetchJSON<AdminUser>(`${API_BASE}/admin/users/${userId}`, {
@@ -500,11 +498,6 @@ export const deleteAdminUser = async (userId: number): Promise<{ success: boolea
 };
 
 export interface DownloadDefaults {
-  BOOKS_OUTPUT_MODE: string;
-  DESTINATION: string;
-  BOOKLORE_LIBRARY_ID: string;
-  BOOKLORE_PATH_ID: string;
-  EMAIL_RECIPIENTS: Array<{ nickname: string; email: string }>;
   OIDC_ADMIN_GROUP: string;
   OIDC_USE_ADMIN_GROUP: boolean;
   OIDC_AUTO_PROVISION: boolean;
@@ -512,21 +505,6 @@ export interface DownloadDefaults {
 
 export const getDownloadDefaults = async (): Promise<DownloadDefaults> => {
   return fetchJSON<DownloadDefaults>(`${API_BASE}/admin/download-defaults`);
-};
-
-export interface BookloreOption {
-  value: string;
-  label: string;
-  childOf?: string;
-}
-
-export interface BookloreOptions {
-  libraries: BookloreOption[];
-  paths: BookloreOption[];
-}
-
-export const getBookloreOptions = async (): Promise<BookloreOptions> => {
-  return fetchJSON<BookloreOptions>(`${API_BASE}/admin/booklore-options`);
 };
 
 // Auth setup and registration

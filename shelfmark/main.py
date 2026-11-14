@@ -38,19 +38,11 @@ from shelfmark.core.auth_modes import (
 )
 from shelfmark.core.cwa_user_sync import upsert_cwa_user
 from shelfmark.core.external_user_linking import upsert_external_user
-from shelfmark.core.request_policy import (
-    PolicyMode,
+from shelfmark.core.content_types import (
     get_source_content_type_capabilities,
-    merge_request_policy_settings,
     normalize_content_type,
     normalize_source,
-    resolve_policy_mode,
 )
-from shelfmark.core.requests_service import (
-    reopen_failed_request,
-    sync_delivery_states_from_queue_status,
-)
-from shelfmark.core.activity_service import ActivityService, build_download_item_key
 from shelfmark.core.notifications import NotificationContext, NotificationEvent, notify_admin, notify_user
 from shelfmark.core.utils import is_safe_remote_http_url, normalize_base_path
 from shelfmark.api.websocket import ws_manager
@@ -120,12 +112,10 @@ import os as _os
 from shelfmark.core.user_db import UserDB
 _user_db_path = _os.path.join(_os.environ.get("CONFIG_DIR", "/config"), "users.db")
 user_db: UserDB | None = None
-activity_service: ActivityService | None = None
 request_db = None  # Custom request layer (our fork addition)
 try:
     user_db = UserDB(_user_db_path)
     user_db.initialize()
-    activity_service = ActivityService(_user_db_path)
     import shelfmark.config.users_settings as _  # noqa: F401 - registers users tab
     from shelfmark.core.oidc_routes import register_oidc_routes
     from shelfmark.core.admin_routes import register_admin_routes
@@ -260,27 +250,6 @@ def get_auth_mode() -> str:
         return "none"
 
 
-def _load_users_request_policy_settings() -> dict[str, Any]:
-    """Load global request policy settings from users config."""
-    from shelfmark.core.settings_registry import load_config_file
-
-    return load_config_file("users")
-
-
-def _as_bool(value: Any, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off", ""}:
-            return False
-    return bool(value)
-
-
 _AUDIOBOOK_CATEGORY_RANGE = (3030, 3049)
 _AUDIOBOOK_FORMAT_HINTS = frozenset(
     {
@@ -310,7 +279,7 @@ def _contains_audiobook_format_hint(value: Any) -> bool:
 
 
 def _resolve_release_content_type(data: dict[str, Any], source: Any) -> tuple[str, bool]:
-    """Resolve release content type for policy checks and queue payload normalization."""
+    """Resolve release content type for queue payload normalization."""
     extra = data.get("extra")
     if not isinstance(extra, dict):
         extra = {}
@@ -353,93 +322,6 @@ def _resolve_release_content_type(data: dict[str, Any], source: Any) -> tuple[st
         return normalize_content_type(next(iter(supported))), True
 
     return "ebook", False
-
-
-def _resolve_policy_mode_for_current_user(*, source: Any, content_type: Any) -> PolicyMode | None:
-    """Resolve policy mode for current session, or None when policy guard is bypassed."""
-    auth_mode = get_auth_mode()
-    if auth_mode == "none":
-        return None
-    if session.get("is_admin", True):
-        return None
-    if user_db is None:
-        return None
-
-    global_settings = _load_users_request_policy_settings()
-    db_user_id = session.get("db_user_id")
-    user_settings: dict[str, Any] | None = None
-    if db_user_id is not None:
-        try:
-            user_settings = user_db.get_user_settings(int(db_user_id))
-        except (TypeError, ValueError):
-            user_settings = None
-
-    effective = merge_request_policy_settings(global_settings, user_settings)
-    if not _as_bool(effective.get("REQUESTS_ENABLED"), False):
-        return None
-
-    resolved_mode = resolve_policy_mode(
-        source=source,
-        content_type=content_type,
-        global_settings=global_settings,
-        user_settings=user_settings,
-    )
-    logger.debug(
-        "download policy resolve user=%s db_user_id=%s is_admin=%s source=%s content_type=%s mode=%s",
-        session.get("user_id"),
-        db_user_id,
-        bool(session.get("is_admin", False)),
-        source,
-        content_type,
-        resolved_mode.value,
-    )
-    return resolved_mode
-
-
-def _policy_block_response(mode: PolicyMode):
-    logger.debug(
-        "download policy guard user=%s db_user_id=%s mode=%s",
-        session.get("user_id"),
-        session.get("db_user_id"),
-        mode.value,
-    )
-    if mode == PolicyMode.BLOCKED:
-        return (
-            jsonify({
-                "error": "Download not allowed by policy",
-                "code": "policy_blocked",
-                "required_mode": PolicyMode.BLOCKED.value,
-            }),
-            403,
-        )
-    return (
-        jsonify({
-            "error": "Download not allowed by policy",
-            "code": "policy_requires_request",
-            "required_mode": mode.value,
-        }),
-        403,
-    )
-
-
-if user_db is not None:
-    try:
-        from shelfmark.core.activity_routes import register_activity_routes
-
-        if activity_service is not None:
-            register_activity_routes(
-                app,
-                user_db,
-                activity_service=activity_service,
-                resolve_auth_mode=lambda: get_auth_mode(),
-                resolve_status_scope=lambda: _resolve_status_scope(),
-                queue_status=lambda user_id=None: backend.queue_status(user_id=user_id),
-                sync_request_delivery_states=sync_delivery_states_from_queue_status,
-                emit_request_updates=lambda rows: _emit_request_update_events(rows),
-                ws_manager=ws_manager,
-            )
-    except Exception as e:
-        logger.warning(f"Failed to register activity routes: {e}")
 
 
 # Enable CORS in development mode for local frontend development
@@ -850,13 +732,6 @@ def api_download() -> Union[Response, Tuple[Response, int]]:
         return jsonify({"error": "No book ID provided"}), 400
 
     try:
-        policy_mode = _resolve_policy_mode_for_current_user(
-            source="direct_download",
-            content_type="ebook",
-        )
-        if policy_mode is not None and policy_mode != PolicyMode.DOWNLOAD:
-            return _policy_block_response(policy_mode)
-
         priority = int(request.args.get('priority', 0))
         # Per-user download overrides
         db_user_id = session.get('db_user_id')
@@ -903,12 +778,6 @@ def api_download_release() -> Union[Response, Tuple[Response, int]]:
 
         source = data.get('source', 'direct_download')
         resolved_content_type, inferred_content_type = _resolve_release_content_type(data, source)
-        policy_mode = _resolve_policy_mode_for_current_user(
-            source=source,
-            content_type=resolved_content_type,
-        )
-        if policy_mode is not None and policy_mode != PolicyMode.DOWNLOAD:
-            return _policy_block_response(policy_mode)
 
         release_payload = data
         if inferred_content_type and data.get("content_type") is None:
@@ -1025,26 +894,6 @@ def _resolve_status_scope(*, require_authenticated: bool = True) -> tuple[bool, 
     return False, db_user_id, True
 
 
-def _extract_release_source_id(release_data: Any) -> str | None:
-    if not isinstance(release_data, dict):
-        return None
-    source_id = release_data.get("source_id")
-    if not isinstance(source_id, str):
-        return None
-    normalized = source_id.strip()
-    return normalized or None
-
-
-def _queue_status_to_final_activity_status(status: QueueStatus) -> str | None:
-    if status == QueueStatus.COMPLETE:
-        return "complete"
-    if status == QueueStatus.ERROR:
-        return "error"
-    if status == QueueStatus.CANCELLED:
-        return "cancelled"
-    return None
-
-
 def _normalize_optional_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -1109,99 +958,13 @@ def _notify_admin_for_terminal_download_status(*, task_id: str, status: QueueSta
         )
 
 
-def _record_download_terminal_snapshot(task_id: str, status: QueueStatus, task: Any) -> None:
+def _on_download_terminal(task_id: str, status: QueueStatus, task: Any) -> None:
     if _sync_request_db_on_terminal(task_id, status):
         # Superseded attempt: the next release is already queued, so don't show
         # or notify a "cancelled"/"failed" item for this one.
         backend.book_queue.forget(task_id)
         return
     _notify_admin_for_terminal_download_status(task_id=task_id, status=status, task=task)
-
-    final_status = _queue_status_to_final_activity_status(status)
-    if final_status is None:
-        return
-
-    raw_owner_user_id = getattr(task, "user_id", None)
-    try:
-        owner_user_id = int(raw_owner_user_id) if raw_owner_user_id is not None else None
-    except (TypeError, ValueError):
-        owner_user_id = None
-
-    linked_request: dict[str, Any] | None = None
-    request_id: int | None = None
-    origin = "direct"
-    if user_db is not None and owner_user_id is not None:
-        fulfilled_rows = user_db.list_requests(user_id=owner_user_id, status="fulfilled")
-        for row in fulfilled_rows:
-            source_id = _extract_release_source_id(row.get("release_data"))
-            if source_id == task_id:
-                linked_request = row
-                origin = "requested"
-                try:
-                    request_id = int(row.get("id"))
-                except (TypeError, ValueError):
-                    request_id = None
-                break
-
-    try:
-        download_payload = backend._task_to_dict(task)
-    except Exception as exc:
-        logger.warning("Failed to serialize task payload for terminal snapshot: %s", exc)
-        download_payload = {
-            "id": task_id,
-            "title": getattr(task, "title", "Unknown title"),
-            "author": getattr(task, "author", "Unknown author"),
-            "source": getattr(task, "source", "direct_download"),
-            "added_time": getattr(task, "added_time", 0),
-            "status_message": getattr(task, "status_message", None),
-            "download_path": getattr(task, "download_path", None),
-            "user_id": getattr(task, "user_id", None),
-            "username": getattr(task, "username", None),
-        }
-
-    snapshot: dict[str, Any] = {"kind": "download", "download": download_payload}
-    if linked_request is not None:
-        snapshot["request"] = linked_request
-
-    if activity_service is not None:
-        try:
-            activity_service.record_terminal_snapshot(
-                user_id=owner_user_id,
-                item_type="download",
-                item_key=build_download_item_key(task_id),
-                origin=origin,
-                final_status=final_status,
-                snapshot=snapshot,
-                request_id=request_id,
-                source_id=task_id,
-            )
-        except Exception as exc:
-            logger.warning("Failed to record terminal download snapshot for task %s: %s", task_id, exc)
-
-    if user_db is None or linked_request is None or request_id is None or status != QueueStatus.ERROR:
-        return
-
-    raw_error_message = getattr(task, "status_message", None)
-    fallback_reason = (
-        raw_error_message.strip()
-        if isinstance(raw_error_message, str) and raw_error_message.strip()
-        else "Download failed"
-    )
-    try:
-        reopened_request = reopen_failed_request(
-            user_db,
-            request_id=request_id,
-            failure_reason=fallback_reason,
-        )
-        if reopened_request is not None:
-            _emit_request_update_events([reopened_request])
-    except Exception as exc:
-        logger.warning(
-            "Failed to reopen request %s after terminal download error %s: %s",
-            request_id,
-            task_id,
-            exc,
-        )
 
 
 def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
@@ -1300,43 +1063,7 @@ def _visible_task_ids_for_actor(*, is_admin: bool, db_user_id: int | None) -> se
     return visible_ids
 
 
-def _is_graduated_request_download(task_id: str, *, user_id: int) -> bool:
-    if user_db is None:
-        return False
-
-    fulfilled_rows = user_db.list_requests(user_id=user_id, status="fulfilled")
-    for row in fulfilled_rows:
-        source_id = _extract_release_source_id(row.get("release_data"))
-        if source_id == task_id:
-            return True
-    return False
-
-
-backend.book_queue.set_terminal_status_hook(_record_download_terminal_snapshot)
-
-
-def _emit_request_update_events(updated_requests: list[dict[str, Any]]) -> None:
-    """Broadcast request_update events for rows changed by delivery-state sync."""
-    if not updated_requests or ws_manager is None:
-        return
-
-    try:
-        socketio_ref = getattr(ws_manager, "socketio", None)
-        is_enabled = getattr(ws_manager, "is_enabled", None)
-        if socketio_ref is None or not callable(is_enabled) or not is_enabled():
-            return
-
-        for updated in updated_requests:
-            payload = {
-                "request_id": updated["id"],
-                "status": updated["status"],
-                "delivery_state": updated.get("delivery_state"),
-                "title": (updated.get("book_data") or {}).get("title") or "Unknown title",
-            }
-            socketio_ref.emit("request_update", payload, to=f"user_{updated['user_id']}")
-            socketio_ref.emit("request_update", payload, to="admins")
-    except Exception as exc:
-        logger.warning(f"Failed to emit delivery request_update events: {exc}")
+backend.book_queue.set_terminal_status_hook(_on_download_terminal)
 
 
 @app.route('/api/status', methods=['GET'])
@@ -1355,13 +1082,6 @@ def api_status() -> Union[Response, Tuple[Response, int]]:
 
         user_id = None if is_admin else db_user_id
         status = backend.queue_status(user_id=user_id)
-        if user_db is not None:
-            updated_requests = sync_delivery_states_from_queue_status(
-                user_db,
-                queue_status=status,
-                user_id=user_id,
-            )
-            _emit_request_update_events(updated_requests)
         return jsonify(status)
     except Exception as e:
         logger.error_trace(f"Status error: {e}")
@@ -1512,9 +1232,6 @@ def api_cancel_download(book_id: str) -> Union[Response, Tuple[Response, int]]:
                 actor_username=normalized_actor_username,
             ):
                 return jsonify({"error": "Forbidden", "code": "download_not_owned"}), 403
-
-            if _is_graduated_request_download(book_id, user_id=db_user_id):
-                return jsonify({"error": "Forbidden", "code": "requested_download_cancel_forbidden"}), 403
 
         success = backend.cancel_download(book_id)
         if success:

@@ -290,18 +290,12 @@ class TestAdminUserGetEndpoint:
         assert resp.json["username"] == "alice"
         assert resp.json["email"] == "alice@example.com"
 
-    def test_get_user_includes_settings(self, admin_client, user_db):
+    def test_get_user_omits_per_user_settings(self, admin_client, user_db):
         user = user_db.create_user(username="alice")
         user_db.set_user_settings(user["id"], {"booklore_library_id": 5})
 
         resp = admin_client.get(f"/api/admin/users/{user['id']}")
-        assert resp.json["settings"]["booklore_library_id"] == 5
-
-    def test_get_user_empty_settings(self, admin_client, user_db):
-        user = user_db.create_user(username="alice")
-
-        resp = admin_client.get(f"/api/admin/users/{user['id']}")
-        assert resp.json["settings"] == {}
+        assert "settings" not in resp.json
 
     def test_get_user_excludes_password_hash(self, admin_client, user_db):
         user = user_db.create_user(username="alice", password_hash="secret_hash")
@@ -370,29 +364,17 @@ class TestAdminUserUpdateEndpoint:
         assert resp.json["email"] == "alice@admin.com"
         assert resp.json["display_name"] == "Admin Alice"
 
-    def test_update_rejects_unknown_settings(self, admin_client, user_db):
+    def test_update_ignores_settings_payload(self, admin_client, user_db):
         user = user_db.create_user(username="alice")
 
         resp = admin_client.put(
             f"/api/admin/users/{user['id']}",
-            json={"role": "admin", "settings": {"destination": None}},
-        )
-        assert resp.status_code == 400
-        assert "Unknown setting: destination" in resp.json["details"]
-        assert user_db.get_user(user_id=user["id"])["role"] == "user"
-        assert user_db.get_user_settings(user["id"]) == {}
-
-    def test_update_response_includes_settings(self, admin_client, user_db):
-        user = user_db.create_user(username="alice")
-        user_db.set_user_settings(user["id"], {"theme": "dark"})
-
-        resp = admin_client.put(
-            f"/api/admin/users/{user['id']}",
-            json={"role": "admin"},
+            json={"role": "admin", "settings": {"USER_NOTIFICATION_ROUTES": []}},
         )
         assert resp.status_code == 200
-        assert "settings" in resp.json
-        assert resp.json["settings"]["theme"] == "dark"
+        assert "settings" not in resp.json
+        assert user_db.get_user(user_id=user["id"])["role"] == "admin"
+        assert user_db.get_user_settings(user["id"]) == {}
 
     def test_update_response_excludes_password_hash(self, admin_client, user_db):
         user = user_db.create_user(username="alice", password_hash="secret")
@@ -535,46 +517,6 @@ class TestAdminDownloadDefaults:
 
     def test_requires_admin(self, regular_client):
         resp = regular_client.get("/api/admin/download-defaults")
-        assert resp.status_code == 403
-
-
-class TestAdminBookloreOptions:
-    """Tests for GET /api/admin/booklore-options."""
-
-    def test_returns_library_and_path_options(self, admin_client, monkeypatch):
-        mock_libraries = [{"value": "1", "label": "My Library"}]
-        mock_paths = [{"value": "10", "label": "My Library: /books", "childOf": "1"}]
-        monkeypatch.setattr(
-            "shelfmark.core.admin_routes.get_booklore_library_options",
-            lambda: mock_libraries,
-        )
-        monkeypatch.setattr(
-            "shelfmark.core.admin_routes.get_booklore_path_options",
-            lambda: mock_paths,
-        )
-        resp = admin_client.get("/api/admin/booklore-options")
-        assert resp.status_code == 200
-        data = resp.json
-        assert data["libraries"] == mock_libraries
-        assert data["paths"] == mock_paths
-
-    def test_returns_empty_when_not_configured(self, admin_client, monkeypatch):
-        monkeypatch.setattr(
-            "shelfmark.core.admin_routes.get_booklore_library_options",
-            lambda: [],
-        )
-        monkeypatch.setattr(
-            "shelfmark.core.admin_routes.get_booklore_path_options",
-            lambda: [],
-        )
-        resp = admin_client.get("/api/admin/booklore-options")
-        assert resp.status_code == 200
-        data = resp.json
-        assert data["libraries"] == []
-        assert data["paths"] == []
-
-    def test_requires_admin(self, regular_client):
-        resp = regular_client.get("/api/admin/booklore-options")
         assert resp.status_code == 403
 
 

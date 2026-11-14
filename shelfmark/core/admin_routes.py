@@ -14,15 +14,7 @@ from typing import Any
 from flask import Flask, jsonify, request, session
 from werkzeug.security import generate_password_hash
 
-from shelfmark.config.booklore_settings import (
-    get_booklore_library_options,
-    get_booklore_path_options,
-)
 from shelfmark.config.env import CWA_DB_PATH
-from shelfmark.core.admin_settings_routes import (
-    register_admin_settings_routes,
-    validate_user_settings,
-)
 from shelfmark.core.auth_modes import (
     AUTH_SOURCE_BUILTIN,
     AUTH_SOURCE_CWA,
@@ -388,7 +380,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
     @app.route("/api/admin/users/<int:user_id>", methods=["GET"])
     @_require_admin
     def admin_get_user(user_id):
-        """Get a user by ID with their settings."""
+        """Get a user by ID."""
         user = user_db.get_user(user_id=user_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
@@ -398,13 +390,12 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
             _get_auth_mode(),
             security_config=load_config_file("security"),
         )
-        result["settings"] = user_db.get_user_settings(user_id)
         return jsonify(result)
 
     @app.route("/api/admin/users/<int:user_id>", methods=["PUT"])
     @_require_admin
     def admin_update_user(user_id):
-        """Update user fields and/or settings."""
+        """Update user fields."""
         user = user_db.get_user(user_id=user_id)
         if not user:
             return jsonify({"error": "User not found"}), 404
@@ -480,18 +471,6 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         # Auth mode resolution automatically falls back to "none" when no
         # local password admin remains.
 
-        validated_settings = None
-        if "settings" in data:
-            if not isinstance(data["settings"], dict):
-                return jsonify({"error": "Settings must be an object"}), 400
-
-            validated_settings, validation_errors = validate_user_settings(data["settings"])
-            if validation_errors:
-                return jsonify({
-                    "error": "Invalid settings payload",
-                    "details": validation_errors,
-                }), 400
-
         # Everything is validated; write nothing before this point so a 400 never
         # leaves a partial update behind.
         if password:
@@ -508,22 +487,12 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         if user_fields:
             user_db.update_user(user_id, **user_fields)
 
-        if validated_settings is not None:
-            user_db.set_user_settings(user_id, validated_settings)
-            # Ensure runtime reads see updated per-user overrides immediately.
-            try:
-                from shelfmark.core.config import config as app_config
-                app_config.refresh()
-            except Exception:
-                pass
-
         updated = user_db.get_user(user_id=user_id)
         result = _serialize_user(
             updated,
             _get_auth_mode(),
             security_config=security_config,
         )
-        result["settings"] = user_db.get_user_settings(user_id)
         if password_results is not None:
             result["password_results"] = password_results
         if password_warnings:
@@ -566,7 +535,16 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
             **summary,
         })
 
-    register_admin_settings_routes(app, user_db, _require_admin)
+    @app.route("/api/admin/download-defaults", methods=["GET"])
+    @_require_admin
+    def admin_download_defaults():
+        """OIDC role settings the user editor needs (name kept for the frontend)."""
+        security_config = load_config_file("security")
+        return jsonify({
+            "OIDC_ADMIN_GROUP": security_config.get("OIDC_ADMIN_GROUP", ""),
+            "OIDC_USE_ADMIN_GROUP": security_config.get("OIDC_USE_ADMIN_GROUP", True),
+            "OIDC_AUTO_PROVISION": security_config.get("OIDC_AUTO_PROVISION", True),
+        })
 
     @app.route("/api/admin/users/<int:user_id>", methods=["DELETE"])
     @_require_admin

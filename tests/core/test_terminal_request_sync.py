@@ -66,10 +66,8 @@ def test_superseded_attempt_is_dropped_not_recorded(main_module):
     task = Mock(user_id=5, status_message="Download stalled (no activity for 300s)")
     with patch.object(main_module, "_sync_request_db_on_terminal", return_value=True), \
             patch.object(main_module.backend.book_queue, "forget") as forget, \
-            patch.object(main_module, "_notify_admin_for_terminal_download_status") as notify, \
-            patch.object(main_module, "activity_service") as activity:
-        main_module._record_download_terminal_snapshot("T1", QueueStatus.CANCELLED, task)
+            patch.object(main_module, "_notify_admin_for_terminal_download_status") as notify:
+        main_module._on_download_terminal("T1", QueueStatus.CANCELLED, task)
 
     forget.assert_called_once_with("T1")
     notify.assert_not_called()
-    activity.record_terminal_snapshot.assert_not_called()
