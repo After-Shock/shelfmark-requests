@@ -246,17 +246,13 @@ Log level is configurable via Settings or `LOG_LEVEL` environment variable.
 ## Development
 
 ```bash
-# Frontend development
-make install     # Install dependencies
-make dev         # Start Vite dev server (localhost:5173)
-make build       # Production build
-make typecheck   # TypeScript checks
+# Frontend (run in src/frontend)
+npm install
+npx vite             # Dev server (localhost:5173)
+npx tsc --noEmit     # TypeScript checks
 
 # Backend (Docker)
-make up          # Start backend via docker-compose.dev.yml
-make down        # Stop services
-make refresh     # Rebuild and restart
-make restart     # Restart container
+docker compose up -d --build
 ```
 
 The frontend dev server proxies to the backend on port 8084.
