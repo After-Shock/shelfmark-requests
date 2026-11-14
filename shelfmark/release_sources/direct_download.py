@@ -393,7 +393,7 @@ def _parse_book_info_page(soup: BeautifulSoup, book_id: str, fetch_download_coun
     )
 
     # Extract additional metadata
-    info = _extract_book_metadata(original_divs[-6])
+    info = _extract_book_metadata(original_divs[-6] if len(original_divs) >= 6 else None)
 
     if fetch_download_count:
         try:
@@ -484,11 +484,14 @@ def _extract_book_metadata(metadata_divs) -> Dict[str, List[str]]:
     """Extract metadata from book info divs."""
     info: Dict[str, set[str]] = {}
 
-    sub_datas = metadata_divs.find_all("div")[0]
-    for sub_data in sub_datas.children:
-        if sub_data.text.strip() == "":
+    if not isinstance(metadata_divs, Tag) or not metadata_divs.find("div"):
+        return {}
+    sub_datas = metadata_divs.find("div")
+    # AA markup interleaves bare text nodes; only element children hold key/value pairs.
+    for sub_data in sub_datas.find_all(recursive=False):
+        children = sub_data.find_all(recursive=False)
+        if len(children) < 2:
             continue
-        children = list(sub_data.children)
         key = children[0].text.strip()
         value = children[1].text.strip()
         if key not in info:
