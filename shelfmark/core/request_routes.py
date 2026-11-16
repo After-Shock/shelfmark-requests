@@ -748,6 +748,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             admin_note=admin_note, approved_by=admin_user_id
         )
         logger.info(f"Request #{request_id} denied by admin {admin_user_id} (was {req['status']})")
+        if req["status"] in ("approved", "downloading"):
+            _cancel_request_download(updated)
         _broadcast_request_update(updated)
 
         _send_group_status_notifications(request_db, user_db, request_id, "denied")
@@ -791,6 +793,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             admin_note=admin_note, approved_by=admin_user_id
         )
         logger.info(f"Request #{request_id} status changed to '{new_status}' by admin {admin_user_id} (was {req['status']})")
+        if new_status == "denied" and req["status"] in ("approved", "downloading"):
+            _cancel_request_download(updated)
         _broadcast_request_update(updated)
 
         if new_status in ["approved", "denied", "fulfilled", "failed"]:
@@ -987,6 +991,11 @@ def _queue_next_release(request_db: RequestDB, request_id: int) -> bool:
     """
     from shelfmark.download import orchestrator as backend
 
+    if (request_db.get_request(request_id) or {}).get("status") == "denied":
+        # Denied while its search was running: don't start a download for it.
+        forget_release_retries(request_id)
+        return False
+
     with _retry_lock:
         state = _release_retries.get(request_id)
         if not state or not state["candidates"]:
@@ -1118,6 +1127,26 @@ def forget_release_retries(request_id: int) -> None:
     """Drop leftover retry candidates once a request reaches a terminal state."""
     with _retry_lock:
         _release_retries.pop(request_id, None)
+
+
+def _cancel_request_download(req: dict | None) -> None:
+    """Stop the download of a request the admin just denied (best-effort).
+
+    A search still running is stopped by _queue_next_release seeing the denial.
+    Cancelling leaves a torrent in the client (it is only no longer imported).
+    """
+    if not req:
+        return
+    forget_release_retries(req.get("canonical_request_id") or req["id"])
+    task_id = req.get("download_task_id")
+    if not task_id:
+        return
+    try:
+        from shelfmark.download import orchestrator as backend
+        if backend.cancel_download(task_id):
+            logger.info("Request #%s denied: cancelled download %s", req["id"], task_id)
+    except Exception as exc:
+        logger.warning("Request #%s denied but cancelling download %s failed: %s", req["id"], task_id, exc)
 
 
 _BOOK_NUMBER = re.compile(r"(?:\bbook|#|\bvol(?:ume)?\.?)\s*0*(\d+)\b", re.IGNORECASE)

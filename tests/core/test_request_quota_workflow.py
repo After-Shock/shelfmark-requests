@@ -288,3 +288,34 @@ def test_background_status_changes_do_not_overwrite_a_denial(dbs):
     assert requests.get_request(req["id"])["admin_note"] == "No thanks"
     pushover.assert_not_called()
     emails.assert_not_called()
+
+
+def test_deny_cancels_a_running_download_and_stops_a_running_search(dbs):
+    requests, users = dbs
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="test")
+    with patch.object(request_routes, "_get_auth_mode", return_value="builtin"):
+        request_routes.register_request_routes(app, requests, users)
+    downloading, _ = requests.create_or_join_request(user_id=1, title="In Flight", content_type="ebook")
+    requests.update_request_status(downloading["id"], "downloading", download_task_id="task-1")
+    done, _ = requests.create_or_join_request(user_id=1, title="Already Done", content_type="ebook")
+    requests.update_request_status(done["id"], "fulfilled", download_task_id="task-2")
+
+    client = app.test_client()
+    _login(client, 9, is_admin=True)
+    with patch.object(request_routes, "_get_auth_mode", return_value="builtin"), \
+            patch("shelfmark.download.orchestrator.cancel_download", return_value=True) as cancel, \
+            patch.object(request_routes, "_send_group_status_notifications"):
+        assert client.post(f"/api/requests/{downloading['id']}/deny", json={}).status_code == 200
+        assert client.post(f"/api/requests/{done['id']}/deny", json={}).status_code == 200
+    cancel.assert_called_once_with("task-1")  # a finished download is left alone
+
+    # A search that finishes after the denial must not queue anything.
+    searching, _ = requests.create_or_join_request(user_id=1, title="Still Searching", content_type="ebook")
+    requests.update_request_status(searching["id"], "denied")
+    with request_routes._retry_lock:
+        request_routes._release_retries[searching["id"]] = {"candidates": [{"source_id": "x"}]}
+    with patch("shelfmark.download.orchestrator.queue_release") as queue:
+        assert request_routes._queue_next_release(requests, searching["id"]) is False
+    queue.assert_not_called()
+    assert searching["id"] not in request_routes._release_retries
