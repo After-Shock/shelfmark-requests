@@ -187,6 +187,7 @@ class UserDB:
                 self._migrate_invite_tables(conn)
                 self._migrate_password_reset_tables(conn)
                 self._migrate_provisioned_services_column(conn)
+                self._migrate_request_limit_columns(conn)
                 conn.execute("""CREATE TABLE IF NOT EXISTS library_accounts (
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                     service TEXT NOT NULL, account_id TEXT NOT NULL, username TEXT NOT NULL,
@@ -232,6 +233,14 @@ class UserDB:
         column_names = {str(col["name"]) for col in columns}
         if "provisioned_services" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN provisioned_services TEXT")
+
+    def _migrate_request_limit_columns(self, conn: sqlite3.Connection) -> None:
+        """Weekly request limit: own limit (NULL = default) and last admin reset."""
+        column_names = {str(col["name"]) for col in conn.execute("PRAGMA table_info(users)")}
+        if "weekly_request_limit" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN weekly_request_limit INTEGER")
+        if "request_limit_reset_at" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN request_limit_reset_at TIMESTAMP")
 
     def _migrate_requests_last_viewed_column(self, conn: sqlite3.Connection) -> None:
         """Ensure legacy user databases support request-count tracking."""
@@ -636,6 +645,7 @@ class UserDB:
         "auth_source",
         "role",
         "provisioned_services",
+        "weekly_request_limit",
     }
 
     def update_user(self, user_id: int, **kwargs) -> None:
@@ -692,6 +702,22 @@ class UserDB:
             return {}
         finally:
             conn.close()
+
+    def reset_request_limits(self, user_id: Optional[int] = None) -> None:
+        """Start the weekly request count over now, for one user or everyone."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                if user_id is None:
+                    conn.execute("UPDATE users SET request_limit_reset_at = CURRENT_TIMESTAMP")
+                else:
+                    conn.execute(
+                        "UPDATE users SET request_limit_reset_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (user_id,),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
 
     def update_requests_last_viewed(self, user_id: int) -> None:
         """Record that a user viewed their request updates."""

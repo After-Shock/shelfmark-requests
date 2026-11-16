@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -19,9 +19,17 @@ def _make_app(request_db, user_db):
     return app
 
 
+@pytest.fixture(autouse=True)
+def _no_auto_approve():
+    """These tests cover request creation; auto-approval has its own tests."""
+    with patch("shelfmark.core.request_routes._auto_approve_request", side_effect=lambda db, users, req: req):
+        yield
+
+
 @pytest.fixture
 def app():
     request_db = MagicMock()
+    request_db.count_quota_usage.return_value = 0
     request_db.create_or_join_request.return_value = ({
         "id": 1,
         "title": "Future Book",
@@ -82,7 +90,7 @@ class TestCreatePrereleaseRequests:
         with app.test_client() as client:
             _set_user_session(client)
             with patch("shelfmark.core.request_routes.abs_client.find_match", return_value=None), \
-                 patch("shelfmark.core.request_routes._send_pushover_new_request"), \
+                 patch("shelfmark.core.request_routes._send_pushover"), \
                  patch("shelfmark.core.request_routes._send_discord_new_request"), \
                  patch("shelfmark.core.request_routes._broadcast_request_update"):
                 resp = client.post("/api/requests", json={
@@ -98,6 +106,8 @@ class TestCreatePrereleaseRequests:
         assert data["status"] == "prerelease_requested"
         request_db.create_or_join_request.assert_called_once_with(
             user_id=1,
+            quota_limit=6,
+            quota_since=ANY,
             title="Future Book",
             content_type="ebook",
             author="Future Author",
@@ -143,7 +153,7 @@ class TestCreatePrereleaseRequests:
         with app.test_client() as client:
             _set_user_session(client)
             with patch("shelfmark.core.request_routes.abs_client.find_match", return_value=None), \
-                 patch("shelfmark.core.request_routes._send_pushover_new_request"), \
+                 patch("shelfmark.core.request_routes._send_pushover"), \
                  patch("shelfmark.core.request_routes._send_discord_new_request"), \
                  patch("shelfmark.core.request_routes._broadcast_request_update"):
                 resp = client.post("/api/requests", json={

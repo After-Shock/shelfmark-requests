@@ -239,7 +239,7 @@ def _run_auto_download(book, results, req_extra=None, owned=None, **kwargs):
     ), patch.object(request_routes, "_queue_next_release", side_effect=lambda db, rid: captured.update(
         request_routes._release_retries[rid]) or True
     ), patch.object(request_routes, "_set_request_status", side_effect=lambda db, udb, rid, status, **k: statuses.append((status, k))
-    ), patch.object(request_routes, "_notify_admin", side_effect=lambda req, udb, event, heading, note: alerts.append((event, note))
+    ), patch.object(request_routes, "_notify_admin", side_effect=lambda req, udb, event, heading, note, **_: alerts.append((event, note))
     ), patch.object(request_routes.abs_client, "refresh"), patch.object(
         request_routes.abs_client, "find_match", return_value=owned
     ):

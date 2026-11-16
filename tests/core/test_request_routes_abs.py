@@ -16,9 +16,17 @@ def _make_app(request_db, user_db):
     return app
 
 
+@pytest.fixture(autouse=True)
+def _no_auto_approve():
+    """These tests cover request creation; auto-approval has its own tests."""
+    with patch("shelfmark.core.request_routes._auto_approve_request", side_effect=lambda db, users, req: req):
+        yield
+
+
 @pytest.fixture
 def app():
     request_db = MagicMock()
+    request_db.count_quota_usage.return_value = 0
     request_db.create_or_join_request.return_value = ({
         "id": 1, "title": "The Hobbit", "status": "pending",
         "content_type": "audiobook", "author": "Tolkien",

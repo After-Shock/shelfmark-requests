@@ -71,3 +71,34 @@ def test_superseded_attempt_is_dropped_not_recorded(main_module):
 
     forget.assert_called_once_with("T1")
     notify.assert_not_called()
+
+
+def test_final_download_failure_pushes_needs_action(main_module):
+    from shelfmark.core import request_routes
+
+    db = _group_db()
+    with patch.object(main_module, "request_db", db), \
+            patch.object(main_module, "user_db", Mock()), \
+            patch.object(request_routes, "retry_next_release", return_value=False), \
+            patch.object(request_routes, "_notify_needs_action") as notify:
+        main_module._sync_request_db_on_terminal("T1", QueueStatus.ERROR)
+
+    db.update_request_status.assert_called_once_with(1, status="failed")
+    notify.assert_called_once()
+    assert notify.call_args.args[2] == 1
+
+
+@pytest.mark.parametrize("status", [QueueStatus.COMPLETE, QueueStatus.ERROR, QueueStatus.CANCELLED])
+def test_terminal_event_leaves_a_denied_request_alone(main_module, status):
+    from shelfmark.core import request_routes
+
+    db = Mock()
+    db.get_requests_by_download_task.return_value = [{"id": 1, "canonical_request_id": None, "status": "denied"}]
+    with patch.object(main_module, "request_db", db), \
+            patch.object(request_routes, "retry_next_release") as retry, \
+            patch.object(request_routes, "_notify_needs_action") as notify:
+        main_module._sync_request_db_on_terminal("T1", status)
+
+    db.update_request_status.assert_not_called()
+    retry.assert_not_called()
+    notify.assert_not_called()

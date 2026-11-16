@@ -16,7 +16,8 @@ from flask import Flask, jsonify, request, session
 from shelfmark.core import calibre_library
 from shelfmark.core.audiobookshelf import abs_client
 from shelfmark.core.logger import setup_logger
-from shelfmark.core.request_db import _ACTIVE_GROUP_STATUSES, RequestDB
+from shelfmark.core import request_quota
+from shelfmark.core.request_db import _ACTIVE_GROUP_STATUSES, RequestDB, RequestLimitReached
 from shelfmark.core.request_notifications import send_request_notification
 from shelfmark.core.user_db import UserDB
 
@@ -259,8 +260,12 @@ def _broadcast_request_update(request_data: dict | None = None) -> None:
         logger.warning(f"Failed to broadcast request update: {e}")
 
 
-def _send_pushover_new_request(req: dict, user_db: UserDB, heading: str = "New Request") -> None:
-    """Send Pushover notification to admin about a request, new by default (best-effort)."""
+def _send_pushover(req: dict, user_db: UserDB, heading: str, note: str | None = None) -> None:
+    """Pushover alert to the admin about a request (best-effort).
+
+    Pushover is kept for things that need the admin: a request needing manual
+    action, a series pack to accept, and a user reaching their weekly limit.
+    """
     try:
         from shelfmark.core.pushover_notifications import send_new_request_pushover
         user_id = req.get("user_id")
@@ -275,13 +280,23 @@ def _send_pushover_new_request(req: dict, user_db: UserDB, heading: str = "New R
             requester=requester,
             content_type=req.get("content_type", "ebook"),
             heading=heading,
+            note=note,
         )
     except Exception as e:
         logger.warning(f"Failed to send Pushover notification for request #{req.get('id')}: {e}")
 
 
-def _notify_admin(req: dict, user_db: UserDB, event: str, heading: str, note: str) -> None:
-    """Pushover + Discord alert for an admin event on an existing request (best-effort)."""
+def _notify_needs_action(request_db: RequestDB, user_db: UserDB, request_id: int) -> None:
+    """Pushover the admin that a request failed and is waiting in Needs action."""
+    req = request_db.get_request(request_id)
+    if req and req.get("status") == "failed":
+        _send_pushover(req, user_db, "Request Needs Manual Action", req.get("admin_note") or None)
+
+
+def _notify_admin(
+    req: dict, user_db: UserDB, event: str, heading: str, note: str, pushover: bool = True,
+) -> None:
+    """Discord (and, when the admin must act, Pushover) alert for an existing request (best-effort)."""
     try:
         from shelfmark.core.pushover_notifications import send_new_request_pushover
         from shelfmark.core.discord_notifications import send_discord_new_request
@@ -290,7 +305,8 @@ def _notify_admin(req: dict, user_db: UserDB, event: str, heading: str, note: st
         requester = (user or {}).get("username")
         common = dict(title=req.get("title", "Unknown"), author=req.get("author"), requester=requester,
                       content_type=req.get("content_type", "ebook"), note=note)
-        send_new_request_pushover(heading=heading, **common)
+        if pushover:
+            send_new_request_pushover(heading=heading, **common)
         send_discord_new_request(cover_url=req.get("cover_url"), event=event, **common)
     except Exception as e:
         logger.warning(f"Admin '{event}' notification failed for request #{req.get('id')}: {e}")
@@ -390,6 +406,69 @@ def _resolve_canonical_request(request_db: RequestDB, req: dict) -> dict:
     return request_db.get_request(canonical_id) or req
 
 
+def _quota_user(user_db: UserDB, user_id: int) -> dict:
+    """The user's row for weekly-limit checks; an unknown user counts as a regular user."""
+    user = user_db.get_user(user_id=user_id)
+    return {**user, "id": user_id} if isinstance(user, dict) else {"id": user_id, "role": "user"}
+
+
+def _start_approved_request(
+    request_db: RequestDB,
+    user_db: UserDB,
+    request_id: int,
+    updated: dict,
+    admin_user_id: int | None,
+    admin_username: str | None,
+) -> dict:
+    """Fill in metadata for a just-approved request and start its download.
+
+    A book that turns out not to be released yet goes to the pre-release hold
+    instead. Returns the request as it now stands.
+    """
+    updated = _backfill_missing_metadata(request_db, request_id, updated)
+
+    prerelease = _move_to_prerelease_if_future_release(
+        request_db, request_id, updated, admin_user_id
+    )
+    if prerelease:
+        _broadcast_request_update(prerelease)
+        return prerelease
+
+    _broadcast_request_update(updated)
+    _send_group_status_notifications(request_db, user_db, request_id, "approved")
+
+    # Resolve linked route IDs to the live canonical before reserving work.
+    download_request = _resolve_canonical_request(request_db, updated)
+    canonical_request_id = download_request["id"]
+    if _acquire_download_slot(canonical_request_id):
+        threading.Thread(
+            target=_auto_download_request,
+            args=(request_db, user_db, canonical_request_id, download_request, admin_user_id, admin_username),
+            daemon=True,
+        ).start()
+    else:
+        logger.info(f"Request #{canonical_request_id} already being auto-downloaded, skipping")
+    return updated
+
+
+def _auto_approve_request(request_db: RequestDB, user_db: UserDB, req: dict) -> dict:
+    """Approve a new request on the user's behalf and start it in the background."""
+    request_id = req["id"]
+    updated = request_db.update_request_status(request_id, "approved") or req
+    logger.info(f"Request #{request_id} approved automatically")
+    _broadcast_request_update(updated)
+
+    def start() -> None:
+        try:
+            _start_approved_request(request_db, user_db, request_id, dict(updated), None, None)
+        except Exception as exc:
+            logger.exception("Could not start auto-approved request #%s", request_id)
+            _set_request_status(request_db, user_db, request_id, "failed", admin_note=f"Error: {exc}")
+
+    threading.Thread(target=start, daemon=True, name=f"auto-approve-{request_id}").start()
+    return updated
+
+
 def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) -> None:
     """Register request management routes on the Flask app."""
 
@@ -456,9 +535,13 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                     "library_match": library_match,
                 }), 409
 
+        requester = _quota_user(user_db, db_user_id)
+        quota_limit = request_quota.limit_for(requester)
         try:
             req, outcome = request_db.create_or_join_request(
                 user_id=db_user_id,
+                quota_limit=quota_limit,
+                quota_since=request_quota.counting_since(requester) if quota_limit is not None else None,
                 title=title,
                 content_type=content_type,
                 author=author or None,
@@ -477,16 +560,29 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
                 expected_release_date=expected_release_date,
                 status="prerelease_requested" if start_as_prerelease else "pending",
             )
+        except RequestLimitReached as e:
+            quota = request_quota.quota_for(request_db, requester)
+            return jsonify({"error": f"{e}. Your requests reset on Monday.", "quota": quota}), 429
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
+        quota = request_quota.quota_for(request_db, requester)
         if outcome == "created":
             logger.info(f"Request created: #{req['id']} '{title}' by user {db_user_id}")
-            _broadcast_request_update(req)
-            _send_pushover_new_request(req, user_db)
             _send_discord_new_request(req, user_db)
+            if req["status"] == "pending":
+                # Requests are approved automatically; failures land in Needs action.
+                req = _auto_approve_request(request_db, user_db, req)
+            else:
+                _broadcast_request_update(req)
+            if quota and quota["remaining"] == 0:
+                _send_pushover(
+                    req, user_db, "Weekly Request Limit Reached",
+                    f"{requester.get('username')} has used all {quota['limit']} requests this week.",
+                )
 
         response_data = dict(req)
+        response_data["quota"] = quota
         response_data["joined_existing"] = outcome == "joined"
         response_data["already_joined"] = outcome == "already_joined"
         if abs_warning:
@@ -546,10 +642,11 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             count_kwargs["include_shared_prereleases"] = True
         counts = request_db.get_request_counts(**count_kwargs)
 
-        # Get unviewed count for non-admins
+        # Get unviewed count and weekly limit for non-admins
         if not _is_admin():
             unviewed = request_db.get_unviewed_count(user_id)
             counts["unviewed"] = unviewed
+            counts["quota"] = request_quota.quota_for(request_db, _quota_user(user_db, user_id))
 
         return jsonify(counts)
 
@@ -603,9 +700,8 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             # Owner permanently deleting their own request.
             promoted = request_db.delete_user_request(request_id, req["user_id"])
             logger.info(f"Request #{request_id} permanently deleted by owner")
-            # The admin got a push for this request, so tell them it's gone.
+            # Discord announced this request, so tell it the request is gone.
             if not is_admin and req["status"] in _ACTIVE_GROUP_STATUSES:
-                _send_pushover_new_request(req, user_db, heading="Request Deleted by User")
                 _send_discord_new_request(req, user_db, deleted=True)
             _broadcast_request_update({"id": request_id, "deleted": True})
             if promoted:
@@ -629,37 +725,10 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
         updated = request_db.update_request_status(
             request_id, "approved", approved_by=admin_user_id
         )
-        updated = _backfill_missing_metadata(request_db, request_id, updated)
-
-        prerelease = _move_to_prerelease_if_future_release(
-            request_db, request_id, updated, admin_user_id
-        )
-        if prerelease:
-            _broadcast_request_update(prerelease)
-            return jsonify(prerelease)
-
         logger.info(f"Request #{request_id} approved by admin {admin_user_id}")
-        _broadcast_request_update(updated)
-
-        _send_group_status_notifications(request_db, user_db, request_id, "approved")
-
-        # Start auto-download in background thread.
-        # Resolve linked route IDs to the live canonical before reserving work.
-        admin_username = session.get("user_id")
-        download_request = _resolve_canonical_request(request_db, updated)
-        canonical_request_id = download_request["id"]
-
-        if _acquire_download_slot(canonical_request_id):
-            thread = threading.Thread(
-                target=_auto_download_request,
-                args=(request_db, user_db, canonical_request_id, download_request, admin_user_id, admin_username),
-                daemon=True,
-            )
-            thread.start()
-        else:
-            logger.info(f"Request #{canonical_request_id} already being auto-downloaded, skipping")
-
-        return jsonify(updated)
+        return jsonify(_start_approved_request(
+            request_db, user_db, request_id, updated, admin_user_id, session.get("user_id")
+        ))
 
     @app.route("/api/requests/<int:request_id>/deny", methods=["POST"])
     @_require_admin
@@ -892,14 +961,23 @@ def _set_request_status(
     status: str,
     **kwargs,
 ) -> None:
-    """Update status only if the request still exists."""
-    if request_db.get_request(request_id) is not None:
+    """Status change from background work: only if the request still exists and
+    the admin hasn't denied it meanwhile (requests start downloading straight away,
+    so a denial usually lands while work is still running)."""
+    current = request_db.get_request(request_id)
+    if current is not None and current.get("status") == "denied":
+        logger.info("Request #%s was denied; not changing it to '%s'", request_id, status)
+        return
+    if current is not None:
         updated = request_db.update_request_status(request_id, status, **kwargs)
         _broadcast_request_update(updated)
         if status in {"fulfilled", "failed"}:
             _send_group_status_notifications(request_db, user_db, request_id, status)
         if status == "fulfilled" and updated:
             _send_discord_book_available(updated)
+        # A series pack offer sends its own "Series Pack Available" alert.
+        if status == "failed" and not kwargs.get("series_pack_offer"):
+            _notify_needs_action(request_db, user_db, request_id)
 
 
 def _queue_next_release(request_db: RequestDB, request_id: int) -> bool:
@@ -1243,7 +1321,7 @@ def _auto_download_request(
                 note = f"Already in Audiobookshelf as '{owned['title']}'"
                 logger.info("Request #%s: %s; not downloading", request_id, note)
                 _safe_update_status("fulfilled", admin_note=note)
-                _notify_admin(req, user_db, "already_exists", "Audiobook Already Exists", note)
+                _notify_admin(req, user_db, "already_exists", "Audiobook Already Exists", note, pushover=False)
                 return
 
         # Search for releases

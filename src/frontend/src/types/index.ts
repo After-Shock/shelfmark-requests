@@ -364,8 +364,17 @@ export interface BookRequest {
 }
 
 /** Response from POST /api/requests — extends BookRequest with optional creation-time warning. */
+export interface RequestQuota {
+  limit: number;
+  used: number;
+  remaining: number;
+  is_default: boolean;
+  resets_at: string;
+}
+
 export interface CreateBookRequestResponse extends BookRequest {
   warning?: string;
+  quota?: RequestQuota | null;
   joined_existing?: boolean;
   already_joined?: boolean;
 }
@@ -389,4 +398,5 @@ export interface RequestCounts {
   cancelled?: number;
   total: number;
   unviewed?: number;
+  quota?: RequestQuota | null;
 }

@@ -16,6 +16,9 @@ import {
   getPasswordResetCodes,
   createPasswordResetCode,
   deletePasswordResetCode,
+  getRequestLimits,
+  updateDefaultRequestLimit,
+  resetRequestLimits,
 } from '../../services/api';
 
 interface UsersPanelProps {
@@ -39,6 +42,10 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
   const [inviteExpiryHours, setInviteExpiryHours] = useState<number | null>(168);
   const [passwordResets, setPasswordResets] = useState<PasswordResetCode[]>([]);
   const [resetExpiryHours, setResetExpiryHours] = useState(24);
+  const [defaultLimit, setDefaultLimit] = useState<number | null>(null);
+  const [defaultLimitInput, setDefaultLimitInput] = useState('');
+  const [savingDefaultLimit, setSavingDefaultLimit] = useState(false);
+  const [confirmResetAll, setConfirmResetAll] = useState(false);
 
   // Edit view state
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null);
@@ -47,12 +54,17 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
     try {
       setLoading(true);
       setLoadError(null);
-      const [data, inviteData, resetData] = await Promise.all([
+      const [data, inviteData, resetData, limits] = await Promise.all([
         getAdminUsers(),
         getInviteCodes().catch(() => [] as InviteCode[]),
         getPasswordResetCodes().catch(() => [] as PasswordResetCode[]),
+        getRequestLimits().catch(() => null),
       ]);
       setUsers(data);
+      if (limits) {
+        setDefaultLimit(limits.default);
+        setDefaultLimitInput(String(limits.default));
+      }
       setInvites(inviteData);
       setPasswordResets(resetData);
     } catch (err) {
@@ -99,6 +111,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
       const result = await updateAdminUser(editingUser.id, {
         email: editingUser.email,
         display_name: editingUser.display_name,
+        weekly_request_limit: editingUser.weekly_request_limit ?? null,
         ...(!roleManaged ? { role: editingUser.role } : {}),
       });
       setEditingUser(null);
@@ -110,6 +123,37 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
       fetchUsers();
     } catch (err) {
       onShowToast?.(err instanceof Error ? err.message : 'Failed to update user', 'error');
+    }
+  };
+
+  const handleSaveDefaultLimit = async () => {
+    const value = Number(defaultLimitInput);
+    if (defaultLimitInput.trim() === '' || !Number.isInteger(value) || value < 0 || value > 100) {
+      onShowToast?.('Default limit must be a whole number from 0 to 100', 'error');
+      return;
+    }
+    setSavingDefaultLimit(true);
+    try {
+      const result = await updateDefaultRequestLimit(value);
+      setDefaultLimit(result.default);
+      setDefaultLimitInput(String(result.default));
+      onShowToast?.(`Default weekly limit set to ${result.default}`, 'success');
+      fetchUsers();
+    } catch (err) {
+      onShowToast?.(err instanceof Error ? err.message : 'Failed to save default limit', 'error');
+    } finally {
+      setSavingDefaultLimit(false);
+    }
+  };
+
+  const handleResetLimit = async (user?: AdminUser) => {
+    try {
+      await resetRequestLimits(user?.id);
+      setConfirmResetAll(false);
+      onShowToast?.(user ? `Weekly requests reset for ${user.display_name || user.username}` : 'Weekly requests reset for everyone', 'success');
+      fetchUsers();
+    } catch (err) {
+      onShowToast?.(err instanceof Error ? err.message : 'Failed to reset request limit', 'error');
     }
   };
 
@@ -275,6 +319,30 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
             </div>
           )}
 
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Weekly request limit</label>
+            {editingUser.role === 'admin' ? (
+              <p className="text-xs opacity-60">Admins have no weekly limit.</p>
+            ) : (
+              <>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={editingUser.weekly_request_limit ?? ''}
+                  onChange={(e) => setEditingUser({
+                    ...editingUser,
+                    weekly_request_limit: e.target.value === '' ? null : Number(e.target.value),
+                  })}
+                  className={inputClasses}
+                  placeholder={defaultLimit === null ? 'Default' : `Default (${defaultLimit})`}
+                />
+                <p className="text-xs opacity-60">Leave blank to use the default.</p>
+              </>
+            )}
+          </div>
+
           <p className="text-xs opacity-60">Library account actions below save immediately. Save Changes applies to the profile fields above.</p>
           <AdminLibraryAccounts key={editingUser.id} user={editingUser} />
 
@@ -311,6 +379,57 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
         >
           {showCreateForm ? 'Cancel' : 'Create User'}
         </button>
+      </div>
+
+      <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
+        <div>
+          <h4 className="text-sm font-medium">Weekly Request Limit</h4>
+          <p className="text-xs opacity-60">
+            Requests are approved automatically. Each user can make this many new requests a week; the count resets Monday at midnight Eastern. Admins are unlimited, and a denied request gives its slot back.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={defaultLimitInput}
+            onChange={(e) => setDefaultLimitInput(e.target.value)}
+            className="w-24 px-3 py-1.5 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-sm"
+            aria-label="Default weekly request limit"
+          />
+          <button
+            onClick={handleSaveDefaultLimit}
+            disabled={savingDefaultLimit || defaultLimitInput === String(defaultLimit ?? '')}
+            className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors disabled:opacity-50"
+          >
+            {savingDefaultLimit ? 'Saving...' : 'Save Default'}
+          </button>
+          {confirmResetAll ? (
+            <>
+              <button
+                onClick={() => handleResetLimit()}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                Confirm Reset
+              </button>
+              <button
+                onClick={() => setConfirmResetAll(false)}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setConfirmResetAll(true)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors"
+            >
+              Reset Everyone
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
@@ -529,8 +648,28 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
                       {user.oidc_subject ? 'OIDC' : 'Password'}
                     </span>
                   </div>
-                  <div className="text-xs opacity-50 truncate">
-                    {user.email || 'No email'}
+                  <div className="text-xs truncate">
+                    <span className="opacity-50">{user.email || 'No email'}</span>
+                    {user.request_quota && (
+                      <>
+                        <span className="opacity-50"> &middot; </span>
+                        <span
+                          className={user.request_quota.remaining === 0 ? 'text-red-500 font-medium' : 'opacity-50'}
+                          title={user.request_quota.is_default ? 'Default weekly limit' : 'Custom weekly limit'}
+                        >
+                          {user.request_quota.used}/{user.request_quota.limit} requests this week
+                        </span>
+                        {user.request_quota.used > 0 && (
+                          <button
+                            onClick={() => handleResetLimit(user)}
+                            className="ml-2 text-[var(--primary-color)] hover:underline"
+                            title="Start this user's weekly count over"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -542,6 +681,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
                 >
                   {user.role}
                 </span>
+
 
                 <button
                   onClick={() => startEditing(user)}

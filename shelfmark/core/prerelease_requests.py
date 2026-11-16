@@ -8,7 +8,6 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from shelfmark.core.logger import setup_logger
-from shelfmark.core.pushover_notifications import send_new_request_pushover
 from shelfmark.core.request_notifications import send_request_notification
 
 logger = setup_logger(__name__)
@@ -102,20 +101,7 @@ def promote_due_prerelease_requests(
             _notify_group_approved(request_db, user_db, updated["id"])
         except Exception as exc:
             logger.warning("Pre-release approval emails failed for #%s: %s", updated["id"], exc)
-        requester = None
-        try:
-            if updated.get("user_id"):
-                requester = (user_db.get_user(user_id=updated["user_id"]) or {}).get("username")
-        except Exception as exc:
-            logger.warning("Pre-release requester lookup failed for #%s: %s", updated["id"], exc)
-        send_new_request_pushover(
-            title=updated.get("title", "Unknown"),
-            author=updated.get("author"),
-            requester=requester,
-            content_type=updated.get("content_type", "ebook"),
-            heading="Pre-release Auto-approved",
-            note="Status changed from Pre-release to Approved on release day.",
-        )
+        # No Pushover: it is kept for requests that need the admin.
         # Approval notifications must precede any status changes from the worker.
         if on_request_approved is not None:
             try:

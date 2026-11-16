@@ -11,6 +11,13 @@ from shelfmark.core.request_db import RequestDB
 from shelfmark.core.request_routes import register_request_routes
 
 
+@pytest.fixture(autouse=True)
+def _no_auto_approve():
+    """These tests cover request creation; auto-approval has its own tests."""
+    with patch("shelfmark.core.request_routes._auto_approve_request", side_effect=lambda db, users, req: req):
+        yield
+
+
 @pytest.fixture
 def request_db(tmp_path):
     db_path = tmp_path / "requests.db"
@@ -74,7 +81,7 @@ def create_request(client, user_id, *, title="Dune", author="Frank Herbert"):
 
 def test_second_user_joins_existing_request_and_only_creation_notifies(app):
     with patch("shelfmark.core.request_routes._send_discord_new_request") as discord, \
-         patch("shelfmark.core.request_routes._send_pushover_new_request") as pushover:
+         patch("shelfmark.core.request_routes._send_pushover") as pushover:
         with app.test_client() as client:
             first = create_request(client, 1)
             second = create_request(client, 2, title="dune", author="frank herbert")
@@ -85,7 +92,7 @@ def test_second_user_joins_existing_request_and_only_creation_notifies(app):
     assert second.get_json()["joined_existing"] is True
     assert second.get_json()["canonical_request_id"] == first.get_json()["id"]
     assert discord.call_count == 1
-    assert pushover.call_count == 1
+    pushover.assert_not_called()  # Pushover is only for requests needing the admin
 
     with app.test_client() as client:
         login(client, 1, is_admin=True)
@@ -103,7 +110,7 @@ def test_second_user_joins_existing_request_and_only_creation_notifies(app):
 def test_provider_audiobook_joins_existing_manual_request(app):
     with patch("shelfmark.core.request_routes.abs_client.find_match", return_value=None), \
          patch("shelfmark.core.request_routes._send_discord_new_request"), \
-         patch("shelfmark.core.request_routes._send_pushover_new_request"):
+         patch("shelfmark.core.request_routes._send_pushover"):
         with app.test_client() as client:
             login(client, 1)
             manual = client.post(
@@ -470,7 +477,7 @@ def test_owner_cannot_delete_open_request_but_can_remove_history(app, request_db
     login(client, 1)
 
     with patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"), \
-         patch("shelfmark.core.request_routes._send_pushover_new_request") as pushover, \
+         patch("shelfmark.core.request_routes._send_pushover") as pushover, \
          patch("shelfmark.core.request_routes._send_discord_new_request") as discord:
         assert client.delete(f"/api/requests/{open_req['id']}").status_code == 400
         assert client.delete(f"/api/requests/{done_req['id']}").status_code == 200

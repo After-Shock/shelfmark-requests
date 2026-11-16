@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { RequestsSidebar } from './RequestsSidebar';
 import { BookRequest, RequestStatus } from '../types';
 
-const tab = vi.hoisted(() => ({ value: 'all' }));
+const tab = vi.hoisted(() => ({ value: 'all' as string }));
 vi.mock('react', async (importOriginal) => {
   const original = await importOriginal<typeof import('react')>();
   return {
     ...original,
-    useState: (initial: unknown) => original.useState(initial === 'pending' ? tab.value : initial),
+    useState: (initial: unknown) => original.useState(initial === 'default' ? tab.value : initial),
   };
 });
 
@@ -41,7 +41,7 @@ describe('request removal', () => {
 
   it.each([true, false])('allows removal in History (admin=%s)', (isAdmin) => {
     tab.value = 'history';
-    for (const status of ['fulfilled', 'denied', 'failed', 'cancelled'] as const) {
+    for (const status of ['fulfilled', 'denied', 'cancelled'] as const) {
       expect(render(status, isAdmin)).toContain('aria-label="Remove from history"');
     }
   });
@@ -84,5 +84,42 @@ describe('pre-release permissions', () => {
     expect(html).toContain('Status for Future book');
     expect(html).toContain('Release date for Future book');
     expect(html).toContain('Apply');
+  });
+});
+
+describe('needs action', () => {
+  it('lists failed requests in the admin Needs action tab, where they can be dismissed', () => {
+    tab.value = 'needs_action';
+    const html = render('failed', true);
+    expect(html).toContain('Future book');
+    expect(html).toContain('Needs action (1)');
+    expect(html).toContain('aria-label="Dismiss from Needs action"');
+    expect(html).toContain('>Failed<');
+    tab.value = 'history';
+    expect(render('failed', true)).not.toContain('Future book');
+  });
+
+  it('opens on Needs action for admins and Active for users', () => {
+    tab.value = 'default';
+    expect(render('failed', true)).toContain('Future book');
+    expect(render('approved', true)).not.toContain('Future book');
+    expect(render('approved', false)).toContain('Future book');
+  });
+
+  it('shows users a failed request as Needs review in Active, without a Needs action tab', () => {
+    tab.value = 'all';
+    const html = render('failed', false);
+    expect(html).toContain('Future book');
+    expect(html).toContain('Needs review');
+    expect(html).toContain('The admin has been notified');
+    expect(html).not.toContain('Needs action');
+    expect(html).not.toContain('aria-label="Remove from history"');
+  });
+
+  it('only shows the Pending tab while pending requests exist', () => {
+    tab.value = 'all';
+    const pendingTab = /rounded-full[^"]*"[^>]*>Pending</;
+    expect(render('approved', true)).not.toMatch(pendingTab);
+    expect(render('pending', true)).toMatch(pendingTab);
   });
 });

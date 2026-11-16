@@ -170,6 +170,18 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 """
 
+_CREATE_QUOTA_USAGE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS request_quota_usage (
+    request_id  INTEGER PRIMARY KEY,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
+
+class RequestLimitReached(Exception):
+    """The user has no weekly requests left and the request would be a new one."""
+
 
 class RequestDB:
     """Thread-safe SQLite request database (shares users.db)."""
@@ -434,6 +446,18 @@ class RequestDB:
                 conn.execute("ALTER TABLE requests ADD COLUMN series_pack_offer TEXT DEFAULT NULL")
             conn.execute("UPDATE schema_version SET version = 10")
 
+        if current_version < 11:
+            # Weekly request limit ledger. Kept apart from requests so deleting a
+            # request doesn't give its slot back; backfilled so this week counts.
+            conn.execute(_CREATE_QUOTA_USAGE_TABLE_SQL)
+            conn.execute(
+                "INSERT OR IGNORE INTO request_quota_usage (request_id, user_id, created_at) "
+                "SELECT id, user_id, created_at FROM requests "
+                "WHERE canonical_request_id IS NULL AND status != 'denied' "
+                "AND user_id IN (SELECT id FROM users)"
+            )
+            conn.execute("UPDATE schema_version SET version = 11")
+
     def _insert_request(
         self,
         conn: sqlite3.Connection,
@@ -541,9 +565,16 @@ class RequestDB:
         title: str,
         content_type: str = "ebook",
         author: Optional[str] = None,
+        quota_limit: Optional[int] = None,
+        quota_since: Optional[str] = None,
         **metadata: Any,
     ) -> tuple[Dict[str, Any], CreateRequestOutcome]:
-        """Atomically create an active request or join its canonical group."""
+        """Atomically create an active request or join its canonical group.
+
+        With quota_limit, a brand-new request uses one weekly slot (counted from
+        quota_since) and raises RequestLimitReached when none are left. Joining an
+        existing request or getting an earlier one back is free.
+        """
         if content_type not in _VALID_CONTENT_TYPES:
             raise ValueError(f"Invalid content_type: {content_type}")
 
@@ -591,9 +622,19 @@ class RequestDB:
                     result = self._get_request(conn, closed["id"])
                     outcome: CreateRequestOutcome = "already_joined"
                 elif canonical is None:
+                    if quota_limit is not None:
+                        used = self._count_quota_usage(conn, user_id, quota_since or "")
+                        if used >= quota_limit:
+                            raise RequestLimitReached(
+                                f"You've used all {quota_limit} of your requests this week"
+                            )
                     result = self._insert_request(
                         conn, user_id=user_id, title=title, content_type=content_type,
                         author=author, **create_metadata,
+                    )
+                    conn.execute(
+                        "INSERT OR IGNORE INTO request_quota_usage (request_id, user_id) VALUES (?, ?)",
+                        (result["id"], user_id),
                     )
                     outcome = "created"
                 else:
@@ -630,6 +671,22 @@ class RequestDB:
                 raise
             finally:
                 conn.close()
+
+    @staticmethod
+    def _count_quota_usage(conn: sqlite3.Connection, user_id: int, since: str) -> int:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM request_quota_usage WHERE user_id = ? AND created_at >= ?",
+            (user_id, since),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+    def count_quota_usage(self, user_id: int, since: str) -> int:
+        """Weekly-limit slots this user has used since the given UTC timestamp."""
+        conn = self._connect()
+        try:
+            return self._count_quota_usage(conn, user_id, since)
+        finally:
+            conn.close()
 
     def get_request(self, request_id: int) -> Optional[Dict[str, Any]]:
         """Get a single request by ID with requester info."""
@@ -886,6 +943,13 @@ class RequestDB:
                     "WHERE (id = ? OR canonical_request_id = ?) AND status != 'cancelled'",
                     params,
                 )
+                if status == "denied":
+                    # A denied request gives its weekly slot back.
+                    conn.execute(
+                        "DELETE FROM request_quota_usage WHERE request_id IN "
+                        "(SELECT id FROM requests WHERE id = ? OR canonical_request_id = ?)",
+                        (canonical_id, canonical_id),
+                    )
                 conn.commit()
                 return self._get_request(conn, canonical_id)
             except Exception:

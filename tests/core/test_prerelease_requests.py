@@ -30,7 +30,7 @@ def user_db():
 @pytest.fixture(autouse=True)
 def notifications():
     with patch("shelfmark.core.prerelease_requests.send_request_notification") as email, \
-         patch("shelfmark.core.prerelease_requests.send_new_request_pushover") as push:
+         patch("shelfmark.core.pushover_notifications.send_new_request_pushover") as push:
         yield email, push
 
 
@@ -56,9 +56,7 @@ def test_auto_approval_waits_until_nine_eastern(db, user_db, notifications, rele
     assert db.get_request(request_id)["status"] == "approved"
     assert db.get_request(request_id)["is_released"] == 1
     assert db.get_request(request_id)["expected_release_date"] is None
-    notifications[1].assert_called_once()
-    assert notifications[1].call_args.kwargs["heading"] == "Pre-release Auto-approved"
-    assert "approved" in notifications[1].call_args.kwargs["note"].lower()
+    notifications[1].assert_not_called()  # Pushover is only for requests needing the admin
     assert notifications[0].call_args.kwargs["new_status"] == "approved"
 
 
@@ -77,7 +75,7 @@ def test_due_group_downloads_and_notifies_once_across_repeated_scans(db, user_db
     assert db.get_request(linked["id"])["status"] == "approved"
     assert db.get_request(linked["id"])["expected_release_date"] is None
     assert {call.kwargs["user_email"] for call in notifications[0].call_args_list} == {"reader-1@example.com", "reader-2@example.com"}
-    notifications[1].assert_called_once()
+    notifications[1].assert_not_called()
 
 
 @pytest.mark.parametrize("release_date", ["2099-01-01", "not-a-date", ""])
@@ -154,7 +152,7 @@ def test_concurrent_scanners_claim_group_only_once(db, user_db, notifications):
     assert sorted(map(len, results)) == [0, 1]
     assert db.get_request(request_id)['status'] == 'approved'
     download.assert_called_once()
-    notifications[1].assert_called_once()
+    notifications[1].assert_not_called()
 
 
 def test_automatic_download_releases_slot_if_thread_cannot_start():
@@ -188,4 +186,4 @@ def test_approval_notifications_precede_download_status_changes(db, user_db, not
     notifications[0].side_effect = lambda **kwargs: events.append('email')
     notifications[1].side_effect = lambda **kwargs: events.append('push')
     promote_due_prerelease_requests(db, user_db, on_request_approved=lambda req: events.append('download'))
-    assert events == ['email', 'push', 'download']
+    assert events == ['email', 'download']

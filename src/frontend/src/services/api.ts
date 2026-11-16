@@ -1,4 +1,4 @@
-import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, CreateBookRequestResponse, RequestsListResponse, RequestCounts } from '../types';
+import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, CreateBookRequestResponse, RequestsListResponse, RequestCounts, RequestQuota } from '../types';
 import { SettingsResponse, ActionResult, UpdateResult } from '../types/settings';
 import { MetadataBookData, transformMetadataToBook } from '../utils/bookTransformers';
 import { getApiBase } from '../utils/basePath';
@@ -460,6 +460,8 @@ export interface AdminUser {
   auth_source?: string;
   warnings?: string[];
   created_at: string;
+  weekly_request_limit?: number | null;
+  request_quota?: RequestQuota | null;
 }
 
 export const getAdminUsers = async (): Promise<AdminUser[]> => {
@@ -481,13 +483,32 @@ export const createAdminUser = async (
 
 export const updateAdminUser = async (
   userId: number,
-  data: Partial<Pick<AdminUser, 'role' | 'email' | 'display_name'>> & {
+  data: Partial<Pick<AdminUser, 'role' | 'email' | 'display_name' | 'weekly_request_limit'>> & {
     password?: string;
   }
 ): Promise<AdminUser> => {
   return fetchJSON<AdminUser>(`${API_BASE}/admin/users/${userId}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+  });
+};
+
+export const getRequestLimits = async (): Promise<{ default: number }> => {
+  return fetchJSON<{ default: number }>(`${API_BASE}/admin/request-limits`);
+};
+
+export const updateDefaultRequestLimit = async (value: number): Promise<{ default: number }> => {
+  return fetchJSON<{ default: number }>(`${API_BASE}/admin/request-limits`, {
+    method: 'PUT',
+    body: JSON.stringify({ default: value }),
+  });
+};
+
+/** Start the weekly request count over for one user, or for everyone when userId is omitted. */
+export const resetRequestLimits = async (userId?: number): Promise<{ success: boolean }> => {
+  return fetchJSON<{ success: boolean }>(`${API_BASE}/admin/request-limits/reset`, {
+    method: 'POST',
+    body: JSON.stringify(userId === undefined ? {} : { user_id: userId }),
   });
 };
 

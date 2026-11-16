@@ -43,4 +43,11 @@ describe('getRequestOutcomeMessage', () => {
       message: 'You are already tracking this request: Dune', type: 'info',
     });
   });
+
+  it('adds the weekly requests left for limited users', () => {
+    const quota = { limit: 6, used: 2, remaining: 4, is_default: true, resets_at: '2026-11-23T00:00:00-05:00' };
+    expect(getRequestOutcomeMessage({ ...response, quota }, 'Dune')).toEqual({
+      message: 'Requested: Dune · 4 of 6 requests left this week', type: 'success',
+    });
+  });
 });

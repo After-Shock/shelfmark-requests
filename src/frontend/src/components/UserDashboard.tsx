@@ -52,7 +52,10 @@ export const UserDashboard = ({
   onManualRequest,
 }: UserDashboardProps) => {
   const pendingCount = counts.pending || 0;
-  const inProgressCount = (counts.approved || 0) + (counts.downloading || 0) + (counts.no_sources_requested || 0);
+  const quota = counts.quota;
+  // Requests are approved automatically, so pending and needs-review ones are still "in progress".
+  const inProgressCount = (counts.approved || 0) + (counts.downloading || 0) + (counts.no_sources_requested || 0)
+    + (quota ? pendingCount + (counts.failed || 0) : 0);
   const fulfilledCount = counts.fulfilled || 0;
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -129,8 +132,19 @@ export const UserDashboard = ({
           className="rounded-lg p-4 text-center border"
           style={{ background: 'var(--bg-soft)', borderColor: 'var(--border-muted)' }}
         >
-          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{pendingCount}</div>
-          <div className="text-xs opacity-70 mt-1">Pending</div>
+          {quota ? (
+            <>
+              <div className={`text-2xl font-bold ${quota.remaining === 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                {quota.remaining}<span className="text-sm font-medium opacity-60">/{quota.limit}</span>
+              </div>
+              <div className="text-xs opacity-70 mt-1">Left this week</div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{pendingCount}</div>
+              <div className="text-xs opacity-70 mt-1">Pending</div>
+            </>
+          )}
         </div>
         <div
           className="rounded-lg p-4 text-center border"

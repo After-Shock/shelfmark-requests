@@ -26,7 +26,8 @@ from shelfmark.core.auth_modes import (
 )
 from shelfmark.core.cwa_user_sync import sync_cwa_users_from_rows
 from shelfmark.core.logger import setup_logger
-from shelfmark.core.settings_registry import load_config_file
+from shelfmark.core import request_quota
+from shelfmark.core.settings_registry import load_config_file, update_settings
 from shelfmark.core.request_db import RequestDB
 from shelfmark.core.user_db import UserDB
 
@@ -156,8 +157,53 @@ def _sync_all_cwa_users(user_db: UserDB) -> dict[str, int]:
     return sync_cwa_users_from_rows(user_db, rows)
 
 
+def _parse_request_limit(value: Any) -> int:
+    """A weekly request limit from the admin UI: a whole number 0-100."""
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError
+    number = int(value)
+    if not 0 <= number <= 100:
+        raise ValueError
+    return number
+
+
 def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | None = None) -> None:
     """Register admin user management routes on the Flask app."""
+
+    def serialize(user: dict[str, Any], auth_mode: str, security_config: dict[str, Any]) -> dict[str, Any]:
+        payload = _serialize_user(user, auth_mode, security_config=security_config)
+        payload["request_quota"] = request_quota.quota_for(request_db, user) if request_db else None
+        return payload
+
+    @app.route("/api/admin/request-limits", methods=["GET"])
+    @_require_admin
+    def admin_get_request_limits():
+        return jsonify({"default": request_quota.default_limit()})
+
+    @app.route("/api/admin/request-limits", methods=["PUT"])
+    @_require_admin
+    def admin_update_request_limits():
+        try:
+            default = _parse_request_limit((request.get_json(silent=True) or {}).get("default"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Default limit must be a whole number from 0 to 100"}), 400
+        result = update_settings("users", {"WEEKLY_REQUEST_LIMIT": default})
+        if not result.get("success"):
+            return jsonify({"error": result.get("message", "Could not save the default limit")}), 400
+        logger.info("Admin set the default weekly request limit to %s", default)
+        return jsonify({"default": request_quota.default_limit()})
+
+    @app.route("/api/admin/request-limits/reset", methods=["POST"])
+    @_require_admin
+    def admin_reset_request_limits():
+        """Start the weekly count over for one user ({"user_id": n}) or everyone ({})."""
+        user_id = (request.get_json(silent=True) or {}).get("user_id")
+        if user_id is not None:
+            if isinstance(user_id, bool) or not isinstance(user_id, int) or not user_db.get_user(user_id=user_id):
+                return jsonify({"error": "User not found"}), 404
+        user_db.reset_request_limits(user_id)
+        logger.info("Admin reset weekly request limits for %s", f"user {user_id}" if user_id else "all users")
+        return jsonify({"success": True})
 
     @app.route("/api/admin/users/<int:user_id>/library-accounts", methods=["GET"])
     @app.route("/api/admin/users/<int:user_id>/library-accounts/<service>", methods=["PUT", "DELETE", "POST"])
@@ -294,10 +340,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         users = user_db.list_users()
         auth_mode = _get_auth_mode()
         security_config = load_config_file("security")
-        return jsonify([
-            _serialize_user(u, auth_mode, security_config=security_config)
-            for u in users
-        ])
+        return jsonify([serialize(u, auth_mode, security_config) for u in users])
 
     @app.route("/api/admin/users", methods=["POST"])
     @_require_admin
@@ -385,12 +428,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
         if not user:
             return jsonify({"error": "User not found"}), 404
 
-        result = _serialize_user(
-            user,
-            _get_auth_mode(),
-            security_config=load_config_file("security"),
-        )
-        return jsonify(result)
+        return jsonify(serialize(user, _get_auth_mode(), load_config_file("security")))
 
     @app.route("/api/admin/users/<int:user_id>", methods=["PUT"])
     @_require_admin
@@ -429,6 +467,17 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
 
         if "role" in user_fields and user_fields["role"] not in ("admin", "user"):
             return jsonify({"error": "Role must be 'admin' or 'user'"}), 400
+
+        # Own weekly request limit; null or "" goes back to the default.
+        if "weekly_request_limit" in data:
+            raw_limit = data["weekly_request_limit"]
+            if raw_limit is None or raw_limit == "":
+                user_fields["weekly_request_limit"] = None
+            else:
+                try:
+                    user_fields["weekly_request_limit"] = _parse_request_limit(raw_limit)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Weekly request limit must be a whole number from 0 to 100"}), 400
 
         role_changed = "role" in user_fields and user_fields["role"] != user.get("role")
         email_changed = "email" in user_fields and user_fields["email"] != user.get("email")
@@ -480,7 +529,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
             password_warnings = get_warnings(password_results)
 
         # Avoid unnecessary writes for no-op field updates.
-        for field in ("role", "email", "display_name"):
+        for field in ("role", "email", "display_name", "weekly_request_limit"):
             if field in user_fields and user_fields[field] == user.get(field):
                 user_fields.pop(field)
 
@@ -488,11 +537,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
             user_db.update_user(user_id, **user_fields)
 
         updated = user_db.get_user(user_id=user_id)
-        result = _serialize_user(
-            updated,
-            _get_auth_mode(),
-            security_config=security_config,
-        )
+        result = serialize(updated, _get_auth_mode(), security_config)
         if password_results is not None:
             result["password_results"] = password_results
         if password_warnings:

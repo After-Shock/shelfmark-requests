@@ -988,6 +988,11 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
             if req.get("canonical_request_id") is not None:
                 continue
             req_id = req["id"]
+            if req.get("status") == "denied":
+                # Denied while downloading: the denial stands, whatever the download did.
+                request_routes.forget_release_retries(req_id)
+                logger.info("Request #%s was denied; ignoring download %s ending", req_id, task_id)
+                continue
             if status == QueueStatus.COMPLETE:
                 request_db.update_request_status(req_id, status="fulfilled", admin_note="")  # drop stale failure notes
                 request_routes.forget_release_retries(req_id)
@@ -1013,6 +1018,8 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
                     continue
                 request_db.update_request_status(req_id, status="failed")
                 logger.info("Request #%s marked failed after download %s errored", req_id, task_id)
+                if user_db is not None:
+                    request_routes._notify_needs_action(request_db, user_db, req_id)
             elif status == QueueStatus.CANCELLED:
                 # Without this the request stays "downloading" forever.
                 task = backend.book_queue.get_task(task_id)
@@ -1027,6 +1034,8 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
                 )
                 request_db.update_request_status(req_id, status="failed", admin_note=note)
                 logger.info("Request #%s marked failed after download %s was cancelled", req_id, task_id)
+                if user_db is not None:
+                    request_routes._notify_needs_action(request_db, user_db, req_id)
     except Exception as exc:
         logger.warning("Failed to sync request_db for task %s: %s", task_id, exc)
     return retried

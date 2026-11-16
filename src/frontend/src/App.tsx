@@ -1082,6 +1082,7 @@ function App() {
           onDelete={handleRequestDelete}
           onMarkCompleted={handleMarkCompletedWithToast}
           onRefresh={refreshRequests}
+          quota={requestCounts.quota}
         />
       )}
 

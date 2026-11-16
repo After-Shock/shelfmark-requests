@@ -8,6 +8,7 @@ that talks to /api/admin/users endpoints.
 from shelfmark.core.settings_registry import (
     CustomComponentField,
     HeadingField,
+    NumberField,
     register_settings,
 )
 
@@ -48,5 +49,15 @@ def users_settings():
         CustomComponentField(
             key="users_management",
             component="users_management",
+        ),
+        # Edited from the Users panel (it replaces this tab's normal renderer).
+        NumberField(
+            key="WEEKLY_REQUEST_LIMIT",
+            label="Weekly request limit",
+            description="New requests each non-admin user can make per week (Monday to Sunday, US Eastern).",
+            default=6,
+            min_value=0,
+            max_value=100,
+            env_supported=False,
         ),
     ]

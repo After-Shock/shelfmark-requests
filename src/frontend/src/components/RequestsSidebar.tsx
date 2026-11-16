@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { BookRequest, RequestStatus } from '../types';
+import { BookRequest, RequestQuota, RequestStatus } from '../types';
 import { deleteBookRequest } from '../services/api';
 import { theme } from '../theme';
+import { formatQuotaLeft } from '../utils/requestOutcome';
 
 interface RequestsSidebarProps {
   isOpen: boolean;
@@ -18,12 +19,26 @@ interface RequestsSidebarProps {
   onDelete: (requestId: number) => Promise<void>;
   onMarkCompleted: (requestId: number) => Promise<void>;
   onRefresh: () => Promise<void>;
+  /** Weekly request limit for non-admins; null/undefined = unlimited. */
+  quota?: RequestQuota | null;
 }
 
-type FilterTab = 'all' | 'prerelease' | 'pending' | 'history';
-const HISTORY_STATUSES: RequestStatus[] = ['fulfilled', 'denied', 'failed', 'cancelled'];
+type FilterTab = 'needs_action' | 'all' | 'prerelease' | 'pending' | 'history';
+// Failed requests wait for the admin: the admin's Needs action tab, the user's Active tab.
+const HISTORY_STATUSES: RequestStatus[] = ['fulfilled', 'denied', 'cancelled'];
 // Active = approved and in progress; pending/pre-release/history each have their own tab
 const ACTIVE_STATUSES: RequestStatus[] = ['approved', 'downloading', 'no_sources_requested'];
+const FAILED_ADMIN_STYLE: { bg: string; text: string; label: string; customStyle?: React.CSSProperties } = { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' };
+const TAB_LABELS: Record<FilterTab, string> = {
+  needs_action: 'Needs action', all: 'Active', prerelease: 'Pre-release', pending: 'Pending', history: 'History',
+};
+
+const formatResetDay = (iso: string): string => {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? 'Monday'
+    : date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+};
 
 export const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string; customStyle?: React.CSSProperties }> = {
   pending: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Pending' },
@@ -57,7 +72,8 @@ export const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; la
     }
   },
   fulfilled: { bg: 'bg-green-500/20', text: 'text-green-700 dark:text-green-300', label: 'Fulfilled' },
-  failed: { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' },
+  // What users see; admins get FAILED_ADMIN_STYLE.
+  failed: { bg: 'bg-amber-500/20', text: 'text-amber-700 dark:text-amber-300', label: 'Needs review' },
   cancelled: { bg: 'bg-gray-500/20', text: 'text-gray-700 dark:text-gray-300', label: 'Cancelled' },
 };
 
@@ -137,8 +153,21 @@ export const RequestsSidebar = ({
   onDelete,
   onMarkCompleted,
   onRefresh,
+  quota,
 }: RequestsSidebarProps) => {
-  const [filter, setFilter] = useState<FilterTab>('pending');
+  // 'default' until the viewer picks a tab, so the default follows isAdmin once it loads.
+  const [chosenFilter, setFilter] = useState<FilterTab | 'default'>('default');
+  const filter: FilterTab = chosenFilter === 'default' ? (isAdmin ? 'needs_action' : 'all') : chosenFilter;
+  const hasPending = requests.some((r) => r.status === 'pending');
+  const tabs: FilterTab[] = [
+    ...(isAdmin ? ['needs_action' as const] : []),
+    'all',
+    'prerelease',
+    'history',
+    // Requests are approved automatically; the tab only remains for older pending ones.
+    ...(hasPending || filter === 'pending' ? ['pending' as const] : []),
+  ];
+  const needsActionCount = requests.filter((r) => r.status === 'failed').length;
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
   const [denyNote, setDenyNote] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
@@ -164,10 +193,11 @@ export const RequestsSidebar = ({
 
   // Filter requests based on active tab
   const filteredRequests = requests.filter((req) => {
+    if (filter === 'needs_action') return req.status === 'failed';
     if (filter === 'prerelease') return req.status === 'prerelease_requested';
     if (filter === 'pending') return req.status === 'pending';
     if (filter === 'history') return HISTORY_STATUSES.includes(req.status);
-    return ACTIVE_STATUSES.includes(req.status);
+    return ACTIVE_STATUSES.includes(req.status) || (!isAdmin && req.status === 'failed');
   }).sort((a, b) => {
     if (filter !== 'history') return 0;
     const aTime = new Date(normalizeTimestamp(a.completed_at || a.updated_at)).getTime();
@@ -254,10 +284,8 @@ export const RequestsSidebar = ({
   };
 
   const handleClearFulfilled = async () => {
-    // Clear all completed requests (fulfilled, denied, failed, cancelled)
-    const clearableRequests = requests.filter(
-      (r) => r.status === 'fulfilled' || r.status === 'denied' || r.status === 'failed' || r.status === 'cancelled'
-    );
+    // Clear all completed requests (fulfilled, denied, cancelled); failed ones still need the admin
+    const clearableRequests = requests.filter((r) => HISTORY_STATUSES.includes(r.status));
 
     // Delete all clearable requests in parallel using the API directly,
     // then refresh once at the end to avoid stale optimistic rollback snapshots
@@ -318,7 +346,7 @@ export const RequestsSidebar = ({
   };
 
   const renderRequestItem = (req: BookRequest) => {
-    const statusStyle = STATUS_STYLES[req.status];
+    const statusStyle = isAdmin && req.status === 'failed' ? FAILED_ADMIN_STYLE : STATUS_STYLES[req.status];
     const isPending = req.status === 'pending';
     const isPrerelease = req.status === 'prerelease_requested';
     const selectedStatus = getSelectedStatus(req);
@@ -328,7 +356,9 @@ export const RequestsSidebar = ({
     const isDeniable = req.status === 'pending' || req.status === 'approved' || req.status === 'downloading' || req.status === 'failed';
     // Show "Mark Completed" for any non-fulfilled/non-cancelled request
     const canMarkCompleted = req.status !== 'fulfilled' && req.status !== 'cancelled';
-    const canDelete = filter === 'history' && isHistoryItem;
+    // Admins can also dismiss (hide) a failed request from Needs action.
+    const canDismiss = isAdmin && filter === 'needs_action' && req.status === 'failed';
+    const canDelete = (filter === 'history' && isHistoryItem) || canDismiss;
 
     return (
       <div
@@ -342,8 +372,8 @@ export const RequestsSidebar = ({
             type="button"
             onClick={() => onDelete(req.id)}
             className="absolute top-1 right-1 z-10 flex h-8 w-8 items-center justify-center rounded-full transition-colors text-gray-500 hover:text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30"
-            title="Remove from history"
-            aria-label="Remove from history"
+            title={canDismiss ? 'Dismiss from Needs action' : 'Remove from history'}
+            aria-label={canDismiss ? 'Dismiss from Needs action' : 'Remove from history'}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -390,10 +420,15 @@ export const RequestsSidebar = ({
             {/* Admin note */}
             {!!req.admin_note && (
               <p
-                className={`text-xs mt-1 ${req.status === 'failed' ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400 italic'}`}
+                className={`text-xs mt-1 ${req.status === 'failed' && isAdmin ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400 italic'}`}
                 title={req.admin_note}
               >
                 {req.admin_note}
+              </p>
+            )}
+            {!isAdmin && req.status === 'failed' && (
+              <p className="text-xs mt-1 text-amber-700 dark:text-amber-300">
+                We couldn&apos;t get this one automatically. The admin has been notified and will look into it.
               </p>
             )}
 
@@ -678,9 +713,16 @@ export const RequestsSidebar = ({
           className="flex items-center justify-between p-4 border-b"
           style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))', borderColor: 'var(--border-muted)' }}
         >
-          <h2 className="text-lg font-semibold">
-            {isAdmin ? 'User Requests' : 'My Requests'}{requests.length > 0 && ` (${requests.length})`}
-          </h2>
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold">
+              {isAdmin ? 'User Requests' : 'My Requests'}{requests.length > 0 && ` (${requests.length})`}
+            </h2>
+            {!isAdmin && quota && (
+              <p className={`text-xs ${quota.remaining === 0 ? 'text-red-600 dark:text-red-400 font-medium' : 'opacity-70'}`}>
+                {formatQuotaLeft(quota)} &middot; resets {formatResetDay(quota.resets_at)}
+              </p>
+            )}
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -702,7 +744,7 @@ export const RequestsSidebar = ({
 
         {/* Filter Tabs */}
         <div className="flex gap-1 px-4 pt-3 pb-1">
-          {(['pending', 'all', 'prerelease', 'history'] as FilterTab[]).map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab}
               type="button"
@@ -714,7 +756,7 @@ export const RequestsSidebar = ({
               }`}
               style={filter === tab ? { backgroundColor: theme.button.primary } : {}}
             >
-              {tab === 'all' ? 'Active' : tab === 'prerelease' ? 'Pre-release' : tab === 'pending' ? 'Pending' : 'History'}
+              {TAB_LABELS[tab]}{tab === 'needs_action' && needsActionCount > 0 ? ` (${needsActionCount})` : ''}
             </button>
           ))}
         </div>
@@ -728,7 +770,7 @@ export const RequestsSidebar = ({
             filteredRequests.map((req) => renderRequestItem(req))
           ) : (
             <div className="text-center text-sm opacity-70 mt-8">
-              No requests{filter !== 'all' ? ` (${filter})` : ''}
+              {filter === 'needs_action' ? 'Nothing needs your attention' : `No requests${filter !== 'all' ? ` (${TAB_LABELS[filter].toLowerCase()})` : ''}`}
             </div>
           )}
         </div>
