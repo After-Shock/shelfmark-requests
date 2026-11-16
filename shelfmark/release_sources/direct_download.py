@@ -375,6 +375,9 @@ def _parse_book_info_page(soup: BeautifulSoup, book_id: str, fetch_download_coun
                     size = _normalize_size(f)
 
     book_title = (_find_in_divs(divs, "🔍") or [""])[0].strip("🔍").strip()
+    if not book_title:
+        # AA serves unknown md5s as a normal "not found" page; every real book page has a title.
+        raise Exception(f"Book not found on Anna's Archive: {book_id}")
 
     # Extract basic information
     description = _extract_book_description(soup)
