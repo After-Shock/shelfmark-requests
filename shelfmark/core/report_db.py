@@ -114,6 +114,42 @@ def update_report(request_db, report_id: int, **fields: Any) -> dict[str, Any]:
     return result
 
 
+def claim_report(request_db, report_id: int, allowed: tuple, new_status: str) -> Optional[dict[str, Any]]:
+    """Atomically move a report to new_status if it is in an allowed status; None if not."""
+    with request_db._lock:
+        conn = request_db._connect()
+        try:
+            cur = conn.execute(
+                f"UPDATE media_reports SET status = ?, resolution_note = NULL, updated_at = CURRENT_TIMESTAMP "
+                f"WHERE id = ? AND status IN ({','.join('?' * len(allowed))})",
+                (new_status, report_id, *allowed),
+            )
+            conn.commit()
+            return _row(conn, report_id) if cur.rowcount else None
+        finally:
+            conn.close()
+
+
+def count_reports(request_db, statuses: list[str]) -> int:
+    conn = request_db._connect()
+    try:
+        return conn.execute(
+            f"SELECT COUNT(*) FROM media_reports WHERE status IN ({','.join('?' * len(statuses))})", statuses
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def joined_counts(request_db) -> dict[int, int]:
+    """report_id -> number of users who joined besides the creator."""
+    conn = request_db._connect()
+    try:
+        return {r[0]: r[1] - 1 for r in conn.execute(
+            "SELECT report_id, COUNT(*) FROM media_report_users GROUP BY report_id")}
+    finally:
+        conn.close()
+
+
 def list_reports(
     request_db, *, user_id: Optional[int] = None, statuses: Optional[list[str]] = None
 ) -> list[dict[str, Any]]:

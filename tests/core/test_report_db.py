@@ -105,3 +105,12 @@ def test_deliveries_and_auto_attempt(env):
     assert not report_db.had_auto_attempt(db, key, "wrong_language")
     report_db.update_report(db, r["id"], auto_attempted=1, status="dismissed")
     assert report_db.had_auto_attempt(db, key, "wrong_language")
+
+
+def test_claim_report_is_atomic(env):
+    db, _ = env
+    r = report_db.create_or_join_report(db, user_id=1, fields=_fields(), quota_limit=None, quota_since=None)[0]
+    report_db.update_report(db, r["id"], status="awaiting_approval")
+    assert report_db.claim_report(db, r["id"], ("awaiting_approval",), "fixing")["status"] == "fixing"
+    assert report_db.claim_report(db, r["id"], ("awaiting_approval",), "fixing") is None
+    assert report_db.count_reports(db, ["fixing"]) == 1 and report_db.joined_counts(db) == {r["id"]: 0}

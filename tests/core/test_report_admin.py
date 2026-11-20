@@ -170,3 +170,15 @@ def test_report_limit_routes_mirror_request_limits(env):
     assert c.post("/api/admin/report-limits/reset", json={"user_id": 99}).status_code == 404
     assert c.post("/api/admin/report-limits/reset", json={}).status_code == 200
     assert users.get_user(user_id=2)["report_limit_reset_at"] is not None
+
+
+def test_double_approve_and_dismiss_after_claim(env):
+    app, requests, _ = env
+    r = _report(requests)
+    c = _client(app, 3, True)
+    spawned = []
+    with patch.object(report_routes, "_spawn", lambda fn, *a: spawned.append(a)):
+        assert c.post(f"/api/admin/reports/{r['id']}/approve").status_code == 202
+        assert c.post(f"/api/admin/reports/{r['id']}/approve").status_code == 409
+        assert c.post(f"/api/admin/reports/{r['id']}/dismiss").status_code == 409
+    assert len(spawned) == 1

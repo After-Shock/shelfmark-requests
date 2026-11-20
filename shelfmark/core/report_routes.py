@@ -165,64 +165,54 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
 
     # --- admin ---------------------------------------------------------------
 
-    def _admin_row(report: dict) -> dict:
-        conn = request_db._connect()
-        try:
-            others = conn.execute(
-                "SELECT COUNT(*) - 1 FROM media_report_users WHERE report_id = ?", (report["id"],)
-            ).fetchone()[0]
-        finally:
-            conn.close()
-        user = user_db.get_user(user_id=report["created_by"]) if report.get("created_by") else None
-        return {**report, "reporter": (user or {}).get("username"), "joined_count": max(0, others)}
-
     @app.route("/api/admin/reports", methods=["GET"])
     @_require_admin
     def admin_list_reports():
         statuses = [s for s in request.args.get("status", "needs_action,awaiting_approval").split(",") if s]
-        return jsonify([_admin_row(r) for r in report_db.list_reports(request_db, statuses=statuses)])
+        joined = report_db.joined_counts(request_db)
+        names: dict = {}
+        rows = []
+        for r in report_db.list_reports(request_db, statuses=statuses):
+            uid = r.get("created_by")
+            if uid not in names:
+                names[uid] = (user_db.get_user(user_id=uid) or {}).get("username") if uid else None
+            rows.append({**r, "reporter": names[uid], "joined_count": max(0, joined.get(r["id"], 0))})
+        return jsonify(rows)
 
-    def _claim(report_id: int, allowed: tuple, check=None):
-        """The report if it is in an allowed state, else a 409 response."""
+    def _start(report_id: int, allowed: tuple, new_status: str, worker, check=None):
         report = report_db.get_report(request_db, report_id)
         if report is None:
-            return None, (jsonify({"error": "Report not found"}), 404)
-        if report["status"] not in allowed or (check and not check(report)):
-            return None, (jsonify({"error": f"Can't do that to a report that is {report['status']}"}), 409)
-        return report, None
-
-    def _start(report_id: int, allowed: tuple, worker, check=None, busy: bool = True):
-        report, err = _claim(report_id, allowed, check)
-        if err:
-            return err
-        if busy:  # blocks a second click from starting the same work twice
-            report = report_fixes.set_report_status(report_id, "fixing")
-        _spawn(worker, report)
-        return jsonify({"report": report}), 202
+            return jsonify({"error": "Report not found"}), 404
+        claimed = (report_db.claim_report(request_db, report_id, allowed, new_status)
+                   if not check or check(report) else None)
+        if claimed is None:
+            return jsonify({"error": f"Can't do that to a report that is {report['status']}"}), 409
+        _spawn(worker, claimed)
+        return jsonify({"report": claimed}), 202
 
     @app.route("/api/admin/reports/<int:report_id>/approve", methods=["POST"])
     @_require_admin
     def admin_approve_report(report_id):
-        return _start(report_id, ("awaiting_approval",), lambda r: approve_worker(request_db, r))
+        return _start(report_id, ("awaiting_approval",), "fixing", lambda r: approve_worker(request_db, r))
 
     @app.route("/api/admin/reports/<int:report_id>/retry", methods=["POST"])
     @_require_admin
     def admin_retry_report(report_id):
         return _start(
-            report_id, ("needs_action",), lambda r: retry_worker(request_db, user_db, r["id"]),
+            report_id, ("needs_action",), "fixing", lambda r: retry_worker(request_db, user_db, r["id"]),
             check=lambda r: r["problem_type"] in _FILE_PROBLEMS and r["library"] == "abs" and r["library_item_id"],
         )
 
     @app.route("/api/admin/reports/<int:report_id>/undo", methods=["POST"])
     @_require_admin
     def admin_undo_report(report_id):
-        return _start(report_id, ("fixed",), lambda r: report_fixes.undo(request_db, r["id"]))
+        return _start(report_id, ("fixed",), "fixing", lambda r: report_fixes.undo(request_db, r["id"]))
 
     @app.route("/api/admin/reports/<int:report_id>/dismiss", methods=["POST"])
     @_require_admin
     def admin_dismiss_report(report_id):
         note = ((request.get_json(silent=True) or {}).get("note") or "").strip()[:1000] or "Dismissed by admin"
         return _start(
-            report_id, ("needs_action", "awaiting_approval"),
-            lambda r: dismiss_worker(request_db, r, note), busy=False,
+            report_id, ("needs_action", "awaiting_approval"), "dismissed",
+            lambda r: dismiss_worker(request_db, r, note),
         )
