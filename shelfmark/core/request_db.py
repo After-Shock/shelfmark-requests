@@ -178,6 +178,62 @@ CREATE TABLE IF NOT EXISTS request_quota_usage (
 )
 """
 
+_CREATE_REPORT_TABLES_SQL = """
+CREATE TABLE IF NOT EXISTS request_deliveries (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id       INTEGER REFERENCES requests(id) ON DELETE SET NULL,
+    report_id        INTEGER,
+    source           TEXT,
+    release_id       TEXT,
+    release_title    TEXT,
+    format           TEXT,
+    final_path       TEXT,
+    library          TEXT CHECK (library IN ('abs', 'calibre')),
+    library_item_id  TEXT,
+    item_key         TEXT,
+    delivered_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_request_deliveries_item_key ON request_deliveries(item_key);
+CREATE TABLE IF NOT EXISTS media_reports (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key         TEXT NOT NULL,
+    library          TEXT,
+    library_item_id  TEXT,
+    content_type     TEXT,
+    title            TEXT,
+    author           TEXT,
+    provider         TEXT,
+    provider_id      TEXT,
+    request_id       INTEGER,
+    problem_type     TEXT CHECK (problem_type IN (
+        'wrong_language', 'wrong_edition', 'broken_file', 'audio_problem',
+        'wrong_cover', 'wrong_details', 'other')),
+    note             TEXT,
+    status           TEXT CHECK (status IN (
+        'open', 'fixing', 'awaiting_approval', 'needs_action', 'fixed', 'dismissed')),
+    auto_attempted   INTEGER DEFAULT 0,
+    created_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    task_id          TEXT,
+    undo_json        TEXT,
+    resolution_note  TEXT,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_reports_one_open
+    ON media_reports(item_key)
+    WHERE status IN ('open', 'fixing', 'awaiting_approval', 'needs_action');
+CREATE TABLE IF NOT EXISTS media_report_users (
+    report_id INTEGER NOT NULL REFERENCES media_reports(id) ON DELETE CASCADE,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (report_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS report_quota_usage (
+    report_id  INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 
 class RequestLimitReached(Exception):
     """The user has no weekly requests left and the request would be a new one."""
@@ -457,6 +513,27 @@ class RequestDB:
                 "AND user_id IN (SELECT id FROM users)"
             )
             conn.execute("UPDATE schema_version SET version = 11")
+
+        if current_version < 12:
+            # Media issue reports plus a record of what Shelfmark delivered, so a
+            # reported item can be traced back to its release.
+            from shelfmark.core.report_db import item_key
+
+            conn.executescript(_CREATE_REPORT_TABLES_SQL)
+            rows = conn.execute(
+                "SELECT id, download_task_id, title, author, content_type FROM requests "
+                "WHERE canonical_request_id IS NULL AND status = 'fulfilled' "
+                "AND download_task_id IS NOT NULL AND download_task_id != ''"
+            ).fetchall()
+            for row in rows:
+                library = "abs" if row["content_type"] == "audiobook" else "calibre"
+                conn.execute(
+                    "INSERT INTO request_deliveries (request_id, release_id, library, item_key) "
+                    "VALUES (?, ?, ?, ?)",
+                    (row["id"], row["download_task_id"], library,
+                     item_key(library, row["content_type"], row["title"] or "", row["author"] or "")),
+                )
+            conn.execute("UPDATE schema_version SET version = 12")
 
     def _insert_request(
         self,

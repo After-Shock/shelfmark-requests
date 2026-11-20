@@ -106,7 +106,7 @@ def test_schema_v9_adds_canonical_request_id_and_index(tmp_path):
     assert "canonical_request_id" in columns
     assert "idx_requests_canonical_request_id" in indexes
     assert "series_pack_offer" in columns
-    assert version == 11
+    assert version == 12
 
 
 def test_admin_lists_exclude_linked_rows_but_user_lists_include_them(request_db, two_users):
