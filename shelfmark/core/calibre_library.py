@@ -61,3 +61,24 @@ def find_matches(title: str, author: str, limit: int = 5) -> list[dict[str, Any]
             if len(found) >= limit:
                 break
     return found
+
+
+def get_book(book_id: int) -> Optional[dict[str, Any]]:
+    """The library book with this id as {'id','title','author'}, or None."""
+    path = os.getenv("CALIBRE_LIBRARY_DB_PATH", _DEFAULT_DB_PATH)
+    if not os.path.isfile(path):
+        return None
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    try:
+        row = conn.execute(
+            "SELECT b.id, b.title, group_concat(a.name, '&') FROM books b "
+            "LEFT JOIN books_authors_link l ON l.book = b.id "
+            "LEFT JOIN authors a ON a.id = l.author WHERE b.id = ? GROUP BY b.id",
+            (book_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"id": row[0], "title": row[1] or "",
+            "author": " & ".join(n.strip() for n in (row[2] or "").split("&"))}

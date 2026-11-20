@@ -32,8 +32,10 @@ def env(tmp_path):
     return app, requests, users
 
 
-def _post(app, body, uid=1):
-    with app.test_client() as c:
+def _post(app, body, uid=1, item=None):
+    item = {} if item is False else item or {"id": body.get("library_item_id"), "title": body["title"], "author": body["author"]}
+    with app.test_client() as c, \
+         patch("shelfmark.core.report_routes.abs_client.get_cached_item", return_value=item or None):
         with c.session_transaction() as s:
             s.update(user_id=f"u{uid}", db_user_id=uid, is_admin=False)
         with patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"), \
@@ -152,3 +154,44 @@ def test_not_delivered_cover_waits_for_approval(env):
     assert json.loads(rep["undo_json"]) == {"action": "wrong_cover", "item_id": "abs1"}
     assert push.call_args[0][2] == "Report Fix Ready to Approve"
     fm.assert_not_called()
+
+
+def test_item_id_binds_title_and_author_server_side(env):
+    app, requests, _ = env
+    report_db.record_delivery(requests, source="x", item_key=report_db.item_key("abs", "audiobook", "Dune", "Herbert"))
+    other = {"id": "abs2", "title": "Emma", "author": "Austen"}
+    with patch("shelfmark.core.report_routes.abs_client.get_cached_item", return_value=other):
+        resp, _, _ = _post(app, _body(library_item_id="abs2"), item=other)
+    rep = resp.json["report"]
+    assert (rep["title"], rep["item_key"]) == ("Emma", report_db.item_key("abs", "audiobook", "Emma", "Austen"))
+    with patch("shelfmark.core.report_fixes.abs_client.get_item", return_value={"path": "/a/b"}), \
+         patch("shelfmark.core.report_fixes.local_path_for", return_value="/l/b"), \
+         patch("shelfmark.core.report_fixes._send_pushover"), \
+         patch("shelfmark.core.report_fixes.start_file_fix") as sff:
+        report_fixes.triage(requests, env[2], rep["id"])
+    assert sff.call_args.kwargs["auto_swap"] is False
+
+
+def test_unknown_item_id_is_400(env):
+    app, _, _ = env
+    resp, _, _ = _post(app, _body(library_item_id="gone"), item=False)
+    assert resp.status_code == 400 and "no longer" in resp.json["error"]
+
+
+def test_field_validation(env):
+    app, _, _ = env
+    assert _post(app, _body(note="x" * 1001))[0].status_code == 400
+    assert _post(app, _body(title="t" * 301))[0].status_code == 400
+    assert _post(app, _body(library_item_id=5))[0].status_code == 400
+    assert _post(app, _body(request_id="5"))[0].status_code == 400
+
+
+def test_triage_exception_goes_to_needs_action(env):
+    _, requests, users = env
+    rep = _report(requests)
+    with patch("shelfmark.core.report_fixes.abs_client.get_item", side_effect=RuntimeError("boom")), \
+         patch("shelfmark.core.report_fixes._send_pushover") as push:
+        report_fixes.triage(requests, users, rep["id"])
+    got = report_db.get_report(requests, rep["id"])
+    assert got["status"] == "needs_action" and got["resolution_note"] == "Automatic check failed: boom"
+    push.assert_called_once()

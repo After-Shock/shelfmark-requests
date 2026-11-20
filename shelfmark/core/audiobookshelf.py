@@ -221,6 +221,19 @@ class ABSClient:
 
         return found
 
+    def get_cached_item(self, item_id: str) -> Optional[dict[str, Any]]:
+        """Cache entry ({'id','title','author',...}) for item_id; falls back to ABS; None if gone."""
+        with self._cache_lock:
+            hit = next((i for i in self._cache if i.get('id') == item_id), None)
+        if hit:
+            return hit
+        item = self.get_item(item_id)
+        if not item:
+            return None
+        meta = (item.get('media') or {}).get('metadata') or {}
+        return {'id': item_id, 'title': meta.get('title') or '', 'author': meta.get('authorName') or '',
+                'path': item.get('path') or ''}
+
     def find_match(self, title: str, author: str) -> Optional[dict[str, Any]]:
         """First of find_matches, or None."""
         return next(iter(self.find_matches(title, author, limit=1)), None)

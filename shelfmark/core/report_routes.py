@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request
 
 from shelfmark.core import report_db, report_fixes, request_quota
 from shelfmark.core.audiobookshelf import abs_client
+from shelfmark.core import calibre_library
 from shelfmark.core.calibre_library import find_matches as calibre_find_matches
 from shelfmark.core.request_routes import (
     _get_db_user_id, _is_admin, _quota_user, _require_auth, _send_pushover,
@@ -56,6 +57,13 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
             return jsonify({"error": "Please describe the problem"}), 400
         if not title or content_type not in ("ebook", "audiobook"):
             return jsonify({"error": "title and content_type are required"}), 400
+        author = data.get("author") or ""
+        item_id = data.get("library_item_id")
+        if (len(note) > 1000 or len(title) > 300 or not isinstance(author, str) or len(author) > 300
+                or (item_id is not None and not isinstance(item_id, str))
+                or (data.get("request_id") is not None
+                    and (type(data["request_id"]) is not int))):
+            return jsonify({"error": "Invalid field"}), 400
 
         user_id = _get_db_user_id()
         request_id = data.get("request_id")
@@ -65,7 +73,15 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
                 return jsonify({"error": "Request not found"}), 404
 
         library = "abs" if content_type == "audiobook" else "calibre"
-        author = data.get("author") or ""
+        if item_id:
+            # Bind the report to the real library item so identity and fix target can't diverge.
+            if library == "abs":
+                item = abs_client.get_cached_item(item_id)
+            else:
+                item = calibre_library.get_book(int(item_id)) if item_id.isdigit() else None
+            if not item:
+                return jsonify({"error": "That item is no longer in the library"}), 400
+            title, author = item["title"], item["author"]
         fields = {
             **{k: data.get(k) for k in ("library_item_id", "provider", "provider_id")},
             "library": library, "content_type": content_type, "title": title, "author": author,

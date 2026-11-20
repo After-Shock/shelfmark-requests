@@ -1,6 +1,7 @@
 """Report triage and status transitions (the fixers themselves land in later tasks)."""
 
 import json
+import logging
 from typing import Optional
 
 from shelfmark.core import report_db
@@ -8,6 +9,7 @@ from shelfmark.core.audiobookshelf import abs_client, local_path_for
 from shelfmark.core.request_routes import _send_pushover
 from shelfmark.core.user_db import UserDB
 
+logger = logging.getLogger(__name__)
 _request_db = None
 _user_db: Optional[UserDB] = None
 
@@ -48,6 +50,14 @@ def fix_metadata(request_db, report_id: int) -> None:
 
 
 def triage(request_db, user_db, report_id: int) -> None:
+    try:
+        _triage(request_db, user_db, report_id)
+    except Exception as e:
+        logger.exception("Report %s triage failed", report_id)
+        set_report_status(report_id, "needs_action", f"Automatic check failed: {str(e)[:100]}")
+
+
+def _triage(request_db, user_db, report_id: int) -> None:
     report = report_db.get_report(request_db, report_id)
     if report is None:
         return
