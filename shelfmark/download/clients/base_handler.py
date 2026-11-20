@@ -116,9 +116,32 @@ def _scan_abs_then_remove_torrent(
         logger.warning(f"'{title}' is in Audiobookshelf but removing torrent {download_id} failed: {e}")
 
 
-# Fix downloads (task.output_args["report_id"]): task_id -> (client, download_id). The torrent
-# stays until report_fixes has swapped the staged copy into the library.
-deferred_torrent_cleanup: dict[str, tuple[DownloadClient, str]] = {}
+# Fix downloads (task.output_args["report_id"]) keep their torrent until report_fixes has
+# swapped the staged copy into the library. Either side can come first: the terminal hook
+# (and so the swap) can fire inside post-processing, before post_process_cleanup runs.
+_fix_cleanup_lock = threading.Lock()
+deferred_torrent_cleanup: dict[str, tuple[DownloadClient, str]] = {}  # task_id -> (client, download_id)
+# ponytail: a swapped usenet fix never claims its marker; a few bytes per fix until restart.
+swapped_fix_tasks: dict[str, tuple[str, Optional[str]]] = {}  # task_id -> (title, author)
+
+
+def _start_torrent_cleanup(client: DownloadClient, download_id: str, title: str, author: Optional[str]) -> None:
+    threading.Thread(
+        target=_scan_abs_then_remove_torrent,
+        args=(client, download_id, title, author),
+        daemon=True,
+        name=f"abs-scan-{download_id}",
+    ).start()
+
+
+def release_fix_torrent(task_id: str, title: str, author: Optional[str]) -> None:
+    """The fix's staged copy is in the library: remove its torrent now, or once cleanup reports it."""
+    with _fix_cleanup_lock:
+        ref = deferred_torrent_cleanup.pop(task_id, None)
+        if ref is None:
+            swapped_fix_tasks[task_id] = (title, author)
+            return
+    _start_torrent_cleanup(*ref, title, author)
 
 
 class ExternalClientHandler(DownloadHandler, ABC):
@@ -189,7 +212,12 @@ class ExternalClientHandler(DownloadHandler, ABC):
         client, download_id, protocol = client_ref
         if protocol == "torrent":
             if task.output_args.get("report_id"):
-                deferred_torrent_cleanup[task.task_id] = (client, download_id)
+                with _fix_cleanup_lock:
+                    swapped = swapped_fix_tasks.pop(task.task_id, None)
+                    if swapped is None:
+                        deferred_torrent_cleanup[task.task_id] = (client, download_id)
+                        return
+                _start_torrent_cleanup(client, download_id, *swapped)
                 return
             if is_audiobook(task.content_type) and abs_client.is_configured():
                 threading.Thread(

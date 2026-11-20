@@ -74,6 +74,9 @@ def start_file_fix(request_db, user_db, report_id: int, auto_swap: bool) -> None
     """Re-download the reported audiobook into staging; on_fix_task_terminal takes it from there."""
     report = report_db.get_report(request_db, report_id)
     item = abs_client.get_item(report["library_item_id"])
+    if not item:
+        set_report_status(report_id, "needs_action", "No longer in Audiobookshelf")
+        return
     if item.get("isFile"):
         set_report_status(report_id, "needs_action", "Single-file audiobook; replace it by hand")
         return
@@ -134,7 +137,12 @@ def on_fix_task_terminal(task, status) -> None:
         report = report_db.get_report(_request_db, report_id)
         if not report or report["status"] != "fixing" or report["task_id"] != task.task_id:
             return  # superseded or already handled
-        if status in (QueueStatus.ERROR, QueueStatus.CANCELLED):
+        if status == QueueStatus.CANCELLED:
+            with _fixes_lock:
+                _fixes.pop(report_id, None)
+            set_report_status(report_id, "needs_action", "Fix download was cancelled")
+            return
+        if status == QueueStatus.ERROR:
             if not _queue_next(report_id):
                 set_report_status(report_id, "needs_action", "The replacement download failed")
             return
@@ -198,6 +206,9 @@ def swap_in(request_db, report: dict) -> None:
         set_report_status(report_id, "needs_action", f"Swap failed, nothing changed: {str(e)[:100]}")
         return
 
+    # First, before anything else can fail: the staged folder is gone, so undo must point here.
+    report_db.update_report(request_db, report_id, undo_json=json.dumps(
+        {"archived": str(archived), "placed": str(old)}))
     logger.info("Report #%s: replaced %s (old copy in %s)", report_id, old, archived)
     from shelfmark.download import orchestrator as backend
     from shelfmark.download.clients import base_handler
@@ -214,18 +225,10 @@ def swap_in(request_db, report: dict) -> None:
         )
     except Exception as e:
         logger.warning("Report #%s: swapped, but rescan/delivery record failed: %s", report_id, e)
-    report_db.update_report(request_db, report_id, undo_json=json.dumps(
-        {"archived": str(archived), "placed": str(old)}))
     set_report_status(report_id, "fixed")
 
-    cleanup = base_handler.deferred_torrent_cleanup.pop(task_id, None) if task_id else None
-    if cleanup:
-        client, download_id = cleanup
-        threading.Thread(
-            target=base_handler._scan_abs_then_remove_torrent,
-            args=(client, download_id, report["title"], report["author"]),
-            daemon=True, name=f"abs-scan-report-{report_id}",
-        ).start()
+    if task_id:
+        base_handler.release_fix_torrent(task_id, report["title"], report["author"])
 
 
 _interrupted_lock = None  # held open for the process lifetime once taken

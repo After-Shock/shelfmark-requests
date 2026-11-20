@@ -51,6 +51,7 @@ def env(tmp_path):
                               queued=queued, scan=scan, push=push, tmp=tmp_path)
     report_fixes._fixes.clear()
     base_handler.deferred_torrent_cleanup.clear()
+    base_handler.swapped_fix_tasks.clear()
 
 
 def _report(env, **kw):
@@ -211,26 +212,87 @@ def test_not_delivered_waits_for_approval_with_staged_copy(env):
     env.scan.assert_not_called()
 
 
-def test_torrent_removed_only_after_swap(env):
-    report = _report(env)
-    _start(env, report, [_rel("r1")])
+def _cleanup(handler_task):
     handler = MagicMock(spec=base_handler.ExternalClientHandler)
     handler._cleanup_refs = {"r1": ("client", "dl1", "torrent")}
+    base_handler.ExternalClientHandler.post_process_cleanup(handler, handler_task, success=True)
+
+
+@pytest.mark.parametrize("swap_first", [True, False], ids=["swap-then-cleanup", "cleanup-then-swap"])
+def test_torrent_removed_only_after_swap(env, swap_first):
+    # In production the terminal hook (and so the swap) fires inside post-processing,
+    # before post_process_cleanup runs; either order must remove the torrent exactly once.
+    report = _report(env)
+    _start(env, report, [_rel("r1")])
+    _stage(env, report["id"])
+    task = SimpleNamespace(task_id="r1", content_type="audiobook", title="Dune [64k]", author="x",
+                           output_args={"report_id": report["id"]})
+    with patch.object(base_handler.threading, "Thread") as thread:
+        if not swap_first:
+            _cleanup(task)
+            thread.assert_not_called()
+            assert base_handler.deferred_torrent_cleanup["r1"] == ("client", "dl1")
+        report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.COMPLETE)
+        assert _status(env, report["id"])["status"] == "fixed"
+        if swap_first:
+            thread.assert_not_called()  # torrent not reported yet
+            _cleanup(task)
+    thread.assert_called_once()
+    kwargs = thread.call_args.kwargs
+    assert kwargs["target"] is base_handler._scan_abs_then_remove_torrent
+    assert kwargs["args"] == ("client", "dl1", "Dune", "Herbert")
+    assert not base_handler.deferred_torrent_cleanup and not base_handler.swapped_fix_tasks
+
+
+def test_torrent_kept_when_fix_not_swapped(env):
+    report = _report(env)
+    _start(env, report, [_rel("r1")], auto_swap=False)
+    _stage(env, report["id"])
     task = SimpleNamespace(task_id="r1", content_type="audiobook", title="Dune", author="Herbert",
                            output_args={"report_id": report["id"]})
     with patch.object(base_handler.threading, "Thread") as thread:
-        base_handler.ExternalClientHandler.post_process_cleanup(handler, task, success=True)
-        thread.assert_not_called()
-        assert base_handler.deferred_torrent_cleanup["r1"] == ("client", "dl1")
+        report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.COMPLETE)
+        _cleanup(task)
+    thread.assert_not_called()
+    assert base_handler.deferred_torrent_cleanup["r1"] == ("client", "dl1")
 
-        _stage(env, report["id"])
-        with patch.object(report_fixes.threading, "Thread") as fix_thread:
-            report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.COMPLETE)
-    assert _status(env, report["id"])["status"] == "fixed"
-    kwargs = fix_thread.call_args.kwargs
-    assert kwargs["target"] is base_handler._scan_abs_then_remove_torrent
-    assert kwargs["args"] == ("client", "dl1", "Dune", "Herbert")
-    assert "r1" not in base_handler.deferred_torrent_cleanup
+
+def test_undo_points_at_library_once_swapped_even_if_later_steps_fail(env):
+    report = _report(env)
+    _start(env, report, [_rel("r1")])
+    _stage(env, report["id"])
+    real = report_fixes.set_report_status
+
+    def status(report_id, new_status, note=None):
+        if new_status == "fixed":
+            raise RuntimeError("db locked")
+        return real(report_id, new_status, note)
+
+    with patch.object(report_fixes, "set_report_status", side_effect=status):
+        report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.COMPLETE)
+    row = _status(env, report["id"])
+    archived = env.root.parent / ".shelfmark-replaced" / str(report["id"]) / "Dune"
+    assert row["status"] == "needs_action"
+    assert json.loads(row["undo_json"]) == {"archived": str(archived), "placed": str(env.old)}
+    assert (env.old / "Dune.m4b").exists() and (archived / "old.m4b").exists()
+
+
+def test_cancelled_fix_goes_to_admin_without_retrying(env):
+    report = _report(env)
+    _start(env, report, [_rel("r1"), _rel("r2")])
+    report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.CANCELLED)
+    row = _status(env, report["id"])
+    assert (row["status"], row["resolution_note"]) == ("needs_action", "Fix download was cancelled")
+    assert len(env.queued) == 1
+
+
+def test_item_gone_from_abs_goes_to_admin(env):
+    report = _report(env)
+    with patch.object(report_fixes.abs_client, "get_item", return_value=None):
+        _start(env, report, [_rel("r1")])
+    row = _status(env, report["id"])
+    assert (row["status"], row["resolution_note"]) == ("needs_action", "No longer in Audiobookshelf")
+    assert env.queued == []
 
 
 def test_interrupted_fix_moves_to_needs_action(env):
