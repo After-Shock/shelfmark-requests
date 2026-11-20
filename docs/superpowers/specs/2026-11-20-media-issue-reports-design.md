@@ -120,8 +120,8 @@ Statuses: `open` → `fixing` → `fixed` | `awaiting_approval` (option C) | `ne
   item if one exists, else creates one.
 - **Delivered item, file problem:** create a fixing request internally (reusing
   `_auto_download_request` with an excluded-release set seeded from the delivery record). On
-  COMPLETE: move the old file/folder to an archive dir (`/UnRaid/audiobooks/.shelfmark-replaced/
-  <report_id>/`), place the new one, ABS rescan, record the new delivery, report → `fixed`.
+  COMPLETE: move the old file/folder to an archive dir outside every ABS library root
+  (`/UnRaid/.shelfmark-replaced/<report_id>/`), place the new one, ABS rescan, record the new delivery, report → `fixed`.
   No replacement found → `needs_action` + Pushover.
 - **Non-delivered item, file problem:** download the replacement into a staging dir, report →
   `awaiting_approval`, Pushover "Fix ready to approve" with Approve/Dismiss in Needs action. Approve
@@ -169,8 +169,9 @@ Statuses: `open` → `fixing` → `fixed` | `awaiting_approval` (option C) | `ne
 
 - One automatic attempt per item per problem type; repeat → admin.
 - Dismissing a report does not refund the report slot.
-- Archive dir for replaced audiobooks lives under the library root, hidden folder, so ABS ignores it
-  (builder must confirm ABS skips dot-folders, else use a path outside the library).
+- Archive and staging dirs live next to (not inside) the ABS library folder, so ABS never sees them.
+- ABS's second library root `/audiobooks` (union mount) isn't writable by Shelfmark: file problems
+  there go to the admin; covers/details still auto-fix.
 - No Discord posts for reports.
 
 ## Left to the builder
