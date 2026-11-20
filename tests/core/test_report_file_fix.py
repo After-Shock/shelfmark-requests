@@ -78,17 +78,20 @@ def _start(env, report, candidates, auto_swap=True):
     return find
 
 
-def _task(env, report_id, task_id="r1", source="prowlarr"):
+def _staging(env, report_id, attempt=1):
+    return env.root.parent / ".shelfmark-staging" / str(report_id) / str(attempt)
+
+
+def _task(env, report_id, task_id="r1", source="prowlarr", attempt=1):
     return SimpleNamespace(
         task_id=task_id, source=source, title="Dune", author="Herbert", format="m4b",
-        output_args={"destination": str(env.root.parent / ".shelfmark-staging" / str(report_id)),
-                     "report_id": report_id},
+        output_args={"destination": str(_staging(env, report_id, attempt)), "report_id": report_id},
     )
 
 
-def _stage(env, report_id, files=("Dune.m4b",)):
-    book_dir = env.root.parent / ".shelfmark-staging" / str(report_id) / "Herbert" / "Dune (2020)"
-    book_dir.mkdir(parents=True)
+def _stage(env, report_id, files=("Dune.m4b",), attempt=1):
+    book_dir = _staging(env, report_id, attempt) / "Herbert" / "Dune (2020)"
+    book_dir.mkdir(parents=True, exist_ok=True)
     for f in files:
         (book_dir / f).write_bytes(b"new")
     return book_dir
@@ -105,10 +108,7 @@ def test_fix_excludes_delivered_release(env):
     assert find.call_args.args[2] == {"r0"}
     release, kw = env.queued[0]
     assert release["source_id"] == "r1"
-    assert kw["output_args"] == {
-        "destination": str(env.root.parent / ".shelfmark-staging" / str(report["id"])),
-        "report_id": report["id"],
-    }
+    assert kw["output_args"] == {"destination": str(_staging(env, report["id"])), "report_id": report["id"]}
     row = _status(env, report["id"])
     assert (row["status"], row["auto_attempted"], row["task_id"]) == ("fixing", 1, "r1")
 
@@ -121,6 +121,7 @@ def test_broken_file_prefers_other_source(env):
     # A failed download moves on to the next candidate, keeping the stable order.
     report_fixes.on_fix_task_terminal(_task(env, report["id"], "b"), QueueStatus.ERROR)
     assert env.queued[1][0]["source_id"] == "a"
+    assert env.queued[1][1]["output_args"]["destination"] == str(_staging(env, report["id"], 2))
     assert _status(env, report["id"])["task_id"] == "a"
 
 
@@ -257,3 +258,16 @@ def test_fix_creates_no_request_rows_and_no_discord(env, main_module):  # noqa: 
     discord.assert_not_called()
     with sqlite3.connect(env.tmp / "users.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
+
+
+def test_failed_attempt_leftovers_never_reach_the_library(env):
+    report = _report(env)
+    _start(env, report, [_rel("r1"), _rel("r2")])
+    leftover = _stage(env, report["id"], files=("partial.mp3",), attempt=1)
+    report_fixes.on_fix_task_terminal(_task(env, report["id"], "r1"), QueueStatus.ERROR)
+    _stage(env, report["id"], files=("Dune.m4b",), attempt=2)
+    report_fixes.on_fix_task_terminal(_task(env, report["id"], "r2", attempt=2), QueueStatus.COMPLETE)
+
+    assert _status(env, report["id"])["status"] == "fixed"
+    assert sorted(p.name for p in env.old.iterdir()) == ["Dune.m4b"]
+    assert (leftover / "partial.mp3").exists()

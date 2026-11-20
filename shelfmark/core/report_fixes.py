@@ -110,9 +110,13 @@ def _queue_next(report_id: int) -> bool:
                 _fixes.pop(report_id, None)
                 return False
             release = state["candidates"].pop(0)
-            staging = state["staging"]
+            staging = Path(state["staging"])
+        # Each attempt gets a fresh numbered subfolder, so a failed attempt's leftovers are
+        # never verified or swapped in. Numbering skips folders left by earlier attempts.
+        attempt = next(staging / str(n) for n in range(1, 10_000) if not (staging / str(n)).exists())
+        attempt.mkdir(parents=True)
         ok, error = backend.queue_release(
-            release, priority=0, output_args={"destination": staging, "report_id": report_id},
+            release, priority=0, output_args={"destination": str(attempt), "report_id": report_id},
         )
         if ok:
             break
@@ -138,9 +142,13 @@ def on_fix_task_terminal(task, status) -> None:
             return
         with _fixes_lock:
             auto_swap = (_fixes.pop(report_id, None) or {}).get("auto_swap", False)
-        if _audio_dir(Path(task.output_args["destination"])) is None:
+        staged = task.output_args["destination"]
+        if _audio_dir(Path(staged)) is None:
             set_report_status(report_id, "needs_action", "The downloaded copy has no audio files")
-        elif auto_swap:
+            return
+        # Remember which attempt holds the good copy, for swap_in now or after approval.
+        report = report_db.update_report(_request_db, report_id, undo_json=json.dumps({"staged": staged}))
+        if auto_swap:
             swap_in(_request_db, report)
         else:
             set_report_status(report_id, "awaiting_approval")
@@ -150,7 +158,10 @@ def on_fix_task_terminal(task, status) -> None:
 
 
 def swap_in(request_db, report: dict) -> None:
-    """Archive the library copy and put the staged one at exactly its path. Never deletes."""
+    """Archive the library copy and put the staged one at exactly its path. Never deletes.
+
+    The staged copy is the completed attempt's folder recorded in undo_json["staged"].
+    """
     report_id = report["id"]
     item = abs_client.get_item(report["library_item_id"])
     if not item:
@@ -160,8 +171,9 @@ def swap_in(request_db, report: dict) -> None:
         set_report_status(report_id, "needs_action", "Single-file audiobook; replace it by hand")
         return
     old = local_path_for(item.get("path") or "")
-    staging, archive_dir = _fix_dirs(item["path"], report_id) if old else (None, None)
-    new = _audio_dir(staging) if staging and staging.is_dir() else None
+    _, archive_dir = _fix_dirs(item["path"], report_id) if old else (None, None)
+    staged = Path(json.loads(report.get("undo_json") or "{}").get("staged") or "")
+    new = _audio_dir(staged) if staged.is_absolute() and staged.is_dir() else None
     if not old or not old.is_dir() or new is None:
         set_report_status(report_id, "needs_action", "Nothing to swap: library folder or staged copy missing")
         return
