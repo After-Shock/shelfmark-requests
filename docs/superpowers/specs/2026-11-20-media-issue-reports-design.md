@@ -170,8 +170,9 @@ Statuses: `open` → `fixing` → `fixed` | `awaiting_approval` (option C) | `ne
 - One automatic attempt per item per problem type; repeat → admin.
 - Dismissing a report does not refund the report slot.
 - Archive and staging dirs live next to (not inside) the ABS library folder, so ABS never sees them.
-- ABS's second library root `/audiobooks` (union mount) isn't writable by Shelfmark: file problems
-  there go to the admin; covers/details still auto-fix.
+- Prod ABS has two book libraries (`/Audiobooks`, `/UnRaid/audiobooks-children`), both writable by
+  Shelfmark, mapped by `ABS_PATH_MAPPINGS`. An item outside every mapping goes to the admin for file
+  problems; covers/details still auto-fix.
 - No Discord posts for reports.
 
 ## Left to the builder

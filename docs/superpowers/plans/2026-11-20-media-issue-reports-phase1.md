@@ -21,7 +21,7 @@ is routed to the report instead of a request.
 - One open report per item (statuses `open`, `fixing`, `awaiting_approval`, `needs_action` are "open").
 - Option C: Shelfmark-delivered items fix automatically; others wait for admin approval. Ebooks (Phase 1) → `needs_action`.
 - One automatic attempt per item per problem type; a repeat goes to `needs_action`.
-- Nothing is hard-deleted: replaced files go to `<parent of ABS local prefix>/.shelfmark-replaced/<report_id>/`, staging is `<parent>/.shelfmark-staging/<report_id>/` (prod: `/UnRaid/.shelfmark-replaced`, `/UnRaid/.shelfmark-staging` — same filesystem as `/UnRaid/audiobooks`, outside every ABS library root).
+- Nothing is hard-deleted: replaced files go to `<parent of the matched local prefix>/.shelfmark-replaced/<report_id>/`, staging is `<parent>/.shelfmark-staging/<report_id>/` (prod: `/UnRaid/.shelfmark-replaced`, `/UnRaid/.shelfmark-staging` — same filesystem as `/UnRaid/audiobooks`, outside every ABS library root).
 - Only remove torrents Shelfmark added; a fix task's torrent is removed only after its swap is verified.
 - Pushover only for `needs_action`, `awaiting_approval` and "weekly report limit reached". No Discord for reports.
 - Fix downloads never create `requests` rows, never touch request quota, History, or "book available" Discord.
@@ -30,7 +30,7 @@ is routed to the report instead of a request.
 
 ## Review Focus
 
-1. Book lives in ABS's `/audiobooks` (union mount, not under `ABS_PATH_PREFIX`) → file problems go to `needs_action` with "Shelfmark can't replace files in this library"; covers/details still auto-fix. (Task 4 test `test_unmapped_abs_path_goes_to_admin`.)
+1. Book lives in ABS's `/audiobooks` (union mount, not under any `ABS_PATH_MAPPINGS` line) → file problems go to `needs_action` with "Shelfmark can't replace files in this library"; covers/details still auto-fix. (Task 4 test `test_unmapped_abs_path_goes_to_admin`.)
 2. Staged download is empty, has no audio file, or ABS later lists nothing → no swap, old copy untouched, `needs_action`. (Task 5 `test_staged_copy_without_audio_is_not_swapped`.)
 3. Swap fails halfway (old moved to archive, new move raises) → old copy moved back, `needs_action`. (Task 5 `test_swap_rolls_back_when_new_move_fails`.)
 4. Shelfmark restarts while a report is `fixing` (task gone) → on startup it becomes `needs_action` with "Interrupted by a restart". (Task 5 `test_interrupted_fix_moves_to_needs_action`.)
@@ -201,6 +201,6 @@ is routed to the report instead of a request.
 
 - [ ] **Step 1:** Full backend suite, frontend checks, e2e against throwaway containers (18084/18085, scratch config) → all pass; record counts.
 - [ ] **Step 2:** Flow check on the throwaway container with a fake ABS (or mocked): report a delivered audiobook → swapped and archived; report an unmapped one → Needs action.
-- [ ] **Step 3:** Set prod settings `ABS_PATH_PREFIX=/Audiobooks`, `ABS_LOCAL_PATH_PREFIX=/UnRaid/audiobooks` (via settings UI after deploy).
+- [ ] **Step 3:** Set prod settings `ABS_PATH_MAPPINGS` = `/Audiobooks=/UnRaid/audiobooks` and `/UnRaid/audiobooks-children=/UnRaid/audiobooks-children` (via settings UI after deploy).
 - [ ] **Step 4:** Commit, push `app-sso`, `~/bin/shelfmark-release --deploy`; verify schema 12, delivery backfill count (expect 185), no errors in logs; note rollback tag.
 - [ ] **Step 5:** Update memory `request-workflow-quota.md` (deny cancels download; reports feature pointer).
