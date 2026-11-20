@@ -150,3 +150,65 @@ def test_undo_file_fix_swaps_back_without_deleting(env):
     assert (env.folder / "old.m4b").read_bytes() == b"old"
     assert (archive / "undo-1" / "Dune" / "new.m4b").read_bytes() == b"new"
     assert report_db.get_report(env.requests, r["id"])["resolution_note"] == "Undone by admin"
+
+
+def _file_fix_report(env):
+    archive = env.tmp / "UnRaid" / ".shelfmark-replaced" / "9"
+    (archive / "Dune").mkdir(parents=True)
+    (archive / "Dune" / "old.m4b").write_bytes(b"old")
+    (env.folder / "new.m4b").write_bytes(b"new")
+    r = _report(env, "broken_file")
+    report_db.update_report(env.requests, r["id"], undo_json=json.dumps(
+        {"archived": str(archive / "Dune"), "placed": str(env.folder)}))
+    return r, archive
+
+
+def _assert_refused(env, r, archive):
+    after = report_db.get_report(env.requests, r["id"])
+    assert after["status"] == "needs_action"
+    assert not list(archive.glob("undo-*"))
+    return after
+
+
+def test_undo_archived_missing_moves_nothing(env):
+    r, archive = _file_fix_report(env)
+    (archive / "Dune" / "old.m4b").unlink()
+    (archive / "Dune").rmdir()
+    report_fixes.undo(env.requests, r["id"])
+    assert (env.folder / "new.m4b").exists()
+    assert "archived copy missing" in _assert_refused(env, r, archive)["resolution_note"]
+
+
+def test_undo_placed_missing_moves_nothing(env):
+    r, archive = _file_fix_report(env)
+    (env.folder / "new.m4b").unlink()
+    (env.folder / "cover.jpg").unlink()
+    env.folder.rmdir()
+    report_fixes.undo(env.requests, r["id"])
+    assert (archive / "Dune" / "old.m4b").exists()
+    assert "library folder missing" in _assert_refused(env, r, archive)["resolution_note"]
+
+
+def test_repeat_undo_is_refused(env):
+    r, archive = _file_fix_report(env)
+    report_fixes.undo(env.requests, r["id"])
+    report_fixes.undo(env.requests, r["id"])
+    assert (env.folder / "old.m4b").read_bytes() == b"old"
+    assert sorted(p.name for p in archive.glob("undo-*")) == ["undo-1"]
+    assert report_db.get_report(env.requests, r["id"])["resolution_note"] == "Nothing to undo"
+
+
+def test_undo_rescan_failure_is_not_undo_failure(env):
+    r, archive = _file_fix_report(env)
+    report_fixes.abs_client.scan_libraries.side_effect = RuntimeError("down")
+    report_fixes.undo(env.requests, r["id"])
+    assert (env.folder / "old.m4b").exists()
+    assert report_db.get_report(env.requests, r["id"])["resolution_note"] == "Undone; library rescan failed"
+
+
+def test_fix_metadata_from_awaiting_approval(env):
+    r = _report(env, "wrong_details")
+    report_db.update_report(env.requests, r["id"], status="awaiting_approval",
+                            undo_json=json.dumps({"action": "wrong_details", "item_id": "abs1"}))
+    report_fixes.fix_metadata(env.requests, r["id"])
+    assert report_db.get_report(env.requests, r["id"])["status"] == "fixed"

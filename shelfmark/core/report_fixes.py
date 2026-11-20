@@ -319,8 +319,15 @@ def undo(request_db, report_id: int) -> None:
 def _undo(request_db, report_id: int) -> str:
     report = report_db.get_report(request_db, report_id)
     data = json.loads(report.get("undo_json") or "{}")
+    if data.get("undone"):
+        return "Nothing to undo"
+    done = lambda: report_db.update_report(  # noqa: E731
+        request_db, report_id, undo_json=json.dumps({**data, "undone": True}))
     if "archived" in data:
         placed, archived = Path(data["placed"]), Path(data["archived"])
+        missing = [n for n, p in (("archived copy", archived), ("library folder", placed)) if not p.exists()]
+        if missing:
+            return f"Undo not possible: {' and '.join(missing)} missing"
         undo_dir = archived.parent / next(f"undo-{n}" for n in range(1, 10_000)
                                           if not (archived.parent / f"undo-{n}").exists())
         undo_dir.mkdir()
@@ -330,7 +337,12 @@ def _undo(request_db, report_id: int) -> str:
         except Exception:
             os.replace(undo_dir / placed.name, placed)  # leave the library as it was
             raise
-        abs_client.scan_libraries()
+        done()
+        try:
+            abs_client.scan_libraries()
+        except Exception:
+            logger.exception("Report #%s: undone, but rescan failed", report_id)
+            return "Undone; library rescan failed"
         return "Undone by admin"
     if "cover_path" in data:
         note = "Undone by admin"
@@ -344,6 +356,7 @@ def _undo(request_db, report_id: int) -> str:
                 note += "; the old cover could not be kept"
         if data.get("title"):
             abs_client.update_details(report["library_item_id"], data["title"], data.get("author") or "")
+        done()
         return note
     return "Nothing to undo"
 
