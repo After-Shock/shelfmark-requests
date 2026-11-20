@@ -5,6 +5,7 @@ import logging
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import requests as http_requests
@@ -149,6 +150,8 @@ class ABSClient:
                             'title': title,
                             'author': author,
                             'series': meta.get('seriesName') or '',  # "Riley Thorn #1, Other #2"
+                            'path': item.get('path') or '',
+                            'cover': f"{url}/api/items/{item.get('id', '')}/cover",  # no token
                         })
 
             with self._cache_lock:
@@ -180,8 +183,8 @@ class ABSClient:
             logger.warning("Failed to start ABS library scan: %s", exc)
             return False
 
-    def find_match(self, title: str, author: str) -> Optional[dict[str, Any]]:
-        """Return first ABS item fuzzy-matching title+author, or None (fail open).
+    def find_matches(self, title: str, author: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Return up to `limit` ABS items fuzzy-matching title+author (empty = none, fail open).
 
         Note: if ABS was previously configured and the cache was populated, then
         the API token is later removed, this method will continue returning matches
@@ -194,13 +197,14 @@ class ABSClient:
 
         if not cache:
             if not self.is_configured():
-                return None
+                return []
             self.refresh()
             with self._cache_lock:
                 cache = list(self._cache)
 
         norm_author = _normalize(author or '')
 
+        found: list[dict[str, Any]] = []
         for item in cache:
             item_title = item.get('title', '')
             # ABS often lists the narrator too ("Therese Plummer/Eowyn Ivey"), so match any name.
@@ -209,13 +213,46 @@ class ABSClient:
             if not any(_titles_match(title, t) for t in _titles_without_series(item_title, item.get('series', ''))):
                 continue
 
-            if not norm_author or not item_authors:
-                return item
+            if (not norm_author or not item_authors
+                    or any(difflib.SequenceMatcher(None, norm_author, a).ratio() >= 0.70 for a in item_authors)):
+                found.append(item)
+                if len(found) >= limit:
+                    break
 
-            if any(difflib.SequenceMatcher(None, norm_author, a).ratio() >= 0.70 for a in item_authors):
-                return item
+        return found
 
-        return None
+    def find_match(self, title: str, author: str) -> Optional[dict[str, Any]]:
+        """First of find_matches, or None."""
+        return next(iter(self.find_matches(title, author, limit=1)), None)
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        url, token = self._get_credentials()
+        if not url or not token:
+            raise RuntimeError("Audiobookshelf is not configured")
+        return getattr(http_requests, method.lower())(
+            f'{url}{path}', headers={'Authorization': f'Bearer {token}'}, timeout=30, **kwargs
+        )
+
+    def get_item(self, item_id: str) -> Optional[dict[str, Any]]:
+        """Expanded ABS item, or None when it no longer exists."""
+        resp = self._request('GET', f'/api/items/{item_id}', params={'expanded': 1})
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    def set_cover_url(self, item_id: str, url: str) -> None:
+        self._request('POST', f'/api/items/{item_id}/cover', json={'url': url}).raise_for_status()
+
+    def match_item(self, item_id: str, title: str, author: str) -> None:
+        self._request('POST', f'/api/items/{item_id}/match', json={
+            'title': title, 'author': author, 'overrideCover': True, 'overrideDetails': True,
+        }).raise_for_status()
+
+    def update_details(self, item_id: str, title: str, author: str) -> None:
+        self._request('PATCH', f'/api/items/{item_id}/media', json={
+            'metadata': {'title': title, 'authors': [{'name': author}]},
+        }).raise_for_status()
 
     def start_background_refresh(self) -> None:
         """Start a daemon thread that refreshes the cache every hour."""
@@ -232,6 +269,15 @@ class ABSClient:
             target=_loop, daemon=True, name='abs-cache-refresh'
         )
         self._refresh_thread.start()
+
+
+def local_path_for(abs_path: str) -> Optional[Path]:
+    """Map an ABS item path to the same folder inside Shelfmark; None when unmapped."""
+    abs_prefix = (config.get('ABS_PATH_PREFIX', '') or '').rstrip('/')
+    local_prefix = (config.get('ABS_LOCAL_PATH_PREFIX', '') or '').rstrip('/')
+    if not abs_prefix or not local_prefix or not abs_path.startswith(abs_prefix + '/'):
+        return None
+    return Path(local_prefix + abs_path[len(abs_prefix):])
 
 
 # Module-level singleton
