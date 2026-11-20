@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import shutil
 import threading
 from pathlib import Path
 from typing import Optional
@@ -254,8 +255,97 @@ def fail_interrupted_fixes(request_db) -> None:
 
 
 def fix_metadata(request_db, report_id: int) -> None:
-    # Placeholder until the metadata-fix task replaces it.
-    set_report_status(report_id, "needs_action", "Automatic fix not available yet")
+    """Fix a wrong cover or wrong details in ABS. Works from open or awaiting_approval."""
+    try:
+        _fix_metadata(request_db, report_id)
+    except Exception as e:
+        logger.exception("Report #%s: metadata fix failed", report_id)
+        set_report_status(report_id, "needs_action", f"Automatic fix failed: {str(e)[:100]}")
+
+
+def _fix_metadata(request_db, report_id: int) -> None:
+    report = report_db.get_report(request_db, report_id)
+    item = abs_client.get_item(report["library_item_id"]) if report["library_item_id"] else None
+    if not item:
+        set_report_status(report_id, "needs_action", "No longer in Audiobookshelf")
+        return
+    media = item.get("media") or {}
+    meta = media.get("metadata") or {}
+    cover_path = media.get("coverPath")
+    is_cover = report["problem_type"] == "wrong_cover"
+
+    # ABS overwrites the cover file when it sets a new one, so keep a copy first.
+    backup = None
+    local = local_path_for(cover_path) if is_cover and cover_path else None
+    if local and local.is_file():
+        _, archive = _fix_dirs(item["path"], report_id)
+        archive.mkdir(parents=True, exist_ok=True)
+        backup = archive / f"cover{local.suffix}"
+        shutil.copy2(local, backup)
+    # Saved before any ABS write, so undo works even if the write half-fails.
+    report_db.update_report(request_db, report_id, auto_attempted=1, undo_json=json.dumps({
+        "cover_path": cover_path, "cover_backup": str(backup) if backup else None,
+        "title": meta.get("title"), "author": ", ".join(a["name"] for a in meta.get("authors") or []),
+    }))
+
+    if is_cover:
+        provider, provider_id = report["provider"], report["provider_id"]
+        req = request_db.get_request(report["request_id"]) if report["request_id"] else None
+        if not (provider and provider_id) and req:
+            provider, provider_id = req.get("provider"), req.get("provider_id")
+        book = _load_book(provider, provider_id) if provider and provider_id else None
+        new_cover = getattr(book, "cover_url", None)
+        seen = (req or {}).get("cover_url")
+        if new_cover and not (req and new_cover == seen):
+            abs_client.set_cover_url(item["id"], new_cover)
+        else:
+            abs_client.match_item(item["id"], report["title"], report["author"])
+        set_report_status(report_id, "fixed", "Cover updated")
+    else:
+        abs_client.match_item(item["id"], report["title"], report["author"])
+        set_report_status(report_id, "fixed", "Details updated")
+
+
+def undo(request_db, report_id: int) -> None:
+    """Reverse a fix recorded in undo_json; never deletes, never raises."""
+    try:
+        note = _undo(request_db, report_id)
+        set_report_status(report_id, "needs_action", note)
+    except Exception as e:
+        logger.exception("Report #%s: undo failed", report_id)
+        set_report_status(report_id, "needs_action", f"Undo failed: {str(e)[:100]}")
+
+
+def _undo(request_db, report_id: int) -> str:
+    report = report_db.get_report(request_db, report_id)
+    data = json.loads(report.get("undo_json") or "{}")
+    if "archived" in data:
+        placed, archived = Path(data["placed"]), Path(data["archived"])
+        undo_dir = archived.parent / next(f"undo-{n}" for n in range(1, 10_000)
+                                          if not (archived.parent / f"undo-{n}").exists())
+        undo_dir.mkdir()
+        os.replace(placed, undo_dir / placed.name)
+        try:
+            os.replace(archived, placed)
+        except Exception:
+            os.replace(undo_dir / placed.name, placed)  # leave the library as it was
+            raise
+        abs_client.scan_libraries()
+        return "Undone by admin"
+    if "cover_path" in data:
+        note = "Undone by admin"
+        if report["problem_type"] == "wrong_cover":
+            backup, cover_path = data.get("cover_backup"), data.get("cover_path")
+            local = local_path_for(cover_path) if cover_path else None
+            if backup and local and Path(backup).is_file():
+                shutil.copy2(backup, local)
+                abs_client.set_cover_path(report["library_item_id"], cover_path)
+            else:
+                note += "; the old cover could not be kept"
+        if data.get("title"):
+            abs_client.update_details(report["library_item_id"], data["title"], data.get("author") or "")
+        return note
+    return "Nothing to undo"
 
 
 def triage(request_db, user_db, report_id: int) -> None:

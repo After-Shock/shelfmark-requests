@@ -257,6 +257,9 @@ class ABSClient:
     def set_cover_url(self, item_id: str, url: str) -> None:
         self._request('POST', f'/api/items/{item_id}/cover', json={'url': url}).raise_for_status()
 
+    def set_cover_path(self, item_id: str, path: str) -> None:
+        self._request('PATCH', f'/api/items/{item_id}/cover', json={'cover': path}).raise_for_status()
+
     def match_item(self, item_id: str, title: str, author: str) -> None:
         self._request('POST', f'/api/items/{item_id}/match', json={
             'title': title, 'author': author, 'overrideCover': True, 'overrideDetails': True,
