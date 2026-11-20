@@ -33,15 +33,15 @@ def env(tmp_path):
          patch.object(ab, "set_cover_url") as set_url, \
          patch.object(ab, "set_cover_path") as set_path, \
          patch.object(ab, "match_item") as match, \
-         patch.object(ab, "update_details") as details, \
+         patch.object(ab, "update_metadata") as details, \
          patch.object(ab, "scan_libraries", return_value=True), \
          patch.object(report_fixes, "local_path_for", side_effect=lambda p: root / p[len("/abs/"):]), \
          patch.object(report_fixes, "local_root_for", return_value=root), \
          patch.object(report_fixes, "_load_book", return_value=SimpleNamespace(cover_url="http://new")) as load, \
-         patch.object(report_fixes, "_send_pushover"):
+         patch.object(report_fixes, "_send_pushover") as push:
         yield SimpleNamespace(requests=requests, root=root, folder=folder, get_item=get_item,
                               set_url=set_url, set_path=set_path, match=match, details=details,
-                              load=load, tmp=tmp_path)
+                              load=load, tmp=tmp_path, item=item, push=push)
 
 
 def _report(env, problem="wrong_cover", **kw):
@@ -53,9 +53,9 @@ def _report(env, problem="wrong_cover", **kw):
         env.requests, user_id=1, fields=fields, quota_limit=None, quota_since=None)[0]
 
 
-def _req(env, cover):
+def _req(env, cover, title="Dune", author="Herbert"):
     return env.requests.create_request(
-        user_id=1, title="Dune", author="Herbert", content_type="audiobook", cover_url=cover,
+        user_id=1, title=title, author=author, content_type="audiobook", cover_url=cover,
         provider="hardcover", provider_id="42")["id"]
 
 
@@ -68,14 +68,15 @@ def test_cover_uses_provider_url_when_different(env):
     assert (after["status"], after["resolution_note"], after["auto_attempted"]) == ("fixed", "Cover updated", 1)
     undo = json.loads(after["undo_json"])
     assert (env.tmp / "UnRaid" / ".shelfmark-replaced" / str(r["id"]) / "cover.jpg").read_bytes() == b"oldcover"
-    assert undo["cover_backup"] and undo["title"] == "Dune (wrong)" and undo["author"] == "Herbert"
+    assert undo["cover_backup"] and undo["metadata"]["title"] == "Dune (wrong)"
+    assert undo["metadata"]["authors"] == [{"name": "Herbert"}]
     assert (env.folder / "cover.jpg").exists()  # copied, not moved
 
 
 def test_cover_rematches_when_same_image(env):
     r = _report(env, request_id=_req(env, "http://new"))
     report_fixes.fix_metadata(env.requests, r["id"])
-    env.match.assert_called_once_with("abs1", "Dune", "Herbert")
+    env.match.assert_called_once_with("abs1", "Dune", "Herbert", override_details=False)
     env.set_url.assert_not_called()
 
 
@@ -94,9 +95,9 @@ def test_cover_without_provider_ids_rematches(env):
 def test_details_rematch_saves_undo_first(env):
     r = _report(env, "wrong_details")
     seen = {}
-    env.match.side_effect = lambda *a: seen.update(undo=report_db.get_report(env.requests, r["id"])["undo_json"])
+    env.match.side_effect = lambda *a, **k: seen.update(undo=report_db.get_report(env.requests, r["id"])["undo_json"])
     report_fixes.fix_metadata(env.requests, r["id"])
-    assert json.loads(seen["undo"])["title"] == "Dune (wrong)"
+    assert json.loads(seen["undo"])["metadata"]["title"] == "Dune (wrong)"
     after = report_db.get_report(env.requests, r["id"])
     assert (after["status"], after["resolution_note"]) == ("fixed", "Details updated")
 
@@ -123,9 +124,11 @@ def test_undo_cover_restores_file_and_details(env):
     report_fixes.undo(env.requests, r["id"])
     assert (env.folder / "cover.jpg").read_bytes() == b"oldcover"
     env.set_path.assert_called_once_with("abs1", "/abs/Herbert/Dune/cover.jpg")
-    env.details.assert_called_once_with("abs1", "Dune (wrong)", "Herbert")
+    assert env.details.call_args.args[0] == "abs1"
+    assert env.details.call_args.args[1]["title"] == "Dune (wrong)"
     after = report_db.get_report(env.requests, r["id"])
     assert (after["status"], after["resolution_note"]) == ("needs_action", "Undone by admin")
+    env.push.assert_not_called()  # the admin did this; no push about it
 
 
 def test_undo_cover_without_backup_says_so(env):
@@ -212,3 +215,38 @@ def test_fix_metadata_from_awaiting_approval(env):
                             undo_json=json.dumps({"action": "wrong_details", "item_id": "abs1"}))
     report_fixes.fix_metadata(env.requests, r["id"])
     assert report_db.get_report(env.requests, r["id"])["status"] == "fixed"
+
+
+def test_details_rematch_uses_request_title_and_author(env):
+    r = _report(env, "wrong_details", request_id=_req(env, None, "Dune", "Frank Herbert"))
+    report_fixes.fix_metadata(env.requests, r["id"])
+    env.match.assert_called_once_with("abs1", "Dune", "Frank Herbert")
+
+
+def test_details_rematch_uses_provider_book_without_request(env):
+    env.load.return_value = SimpleNamespace(title="Dune", authors=["Frank Herbert", "Brian Herbert"])
+    r = _report(env, "wrong_details")
+    report_fixes.fix_metadata(env.requests, r["id"])
+    env.match.assert_called_once_with("abs1", "Dune", "Frank Herbert")
+
+
+def test_multi_author_details_round_trip(env):
+    meta = {
+        "title": "Good Omens", "subtitle": "The Nice and Accurate Prophecies",
+        "authors": [{"id": "a1", "name": "Terry Pratchett"}, {"id": "a2", "name": "Neil Gaiman"}],
+        "narrators": ["Martin Jarvis"], "series": [{"id": "s1", "name": "Omens", "sequence": "1"}],
+        "description": "End times", "genres": ["Fantasy"], "publishedYear": "1990",
+        "publisher": "Gollancz", "isbn": "123", "asin": "B0", "language": "English",
+        "authorName": "Terry Pratchett, Neil Gaiman",
+    }
+    env.item["media"]["metadata"] = meta
+    r = _report(env, "wrong_details")
+    report_fixes.fix_metadata(env.requests, r["id"])
+    report_fixes.undo(env.requests, r["id"])
+    env.details.assert_called_once_with("abs1", {
+        "title": "Good Omens", "subtitle": "The Nice and Accurate Prophecies",
+        "authors": [{"name": "Terry Pratchett"}, {"name": "Neil Gaiman"}],
+        "narrators": ["Martin Jarvis"], "series": [{"name": "Omens", "sequence": "1"}],
+        "description": "End times", "genres": ["Fantasy"], "publishedYear": "1990",
+        "publisher": "Gollancz", "isbn": "123", "asin": "B0", "language": "English",
+    })

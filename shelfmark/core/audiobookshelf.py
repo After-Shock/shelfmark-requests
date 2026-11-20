@@ -97,6 +97,17 @@ def _titles_without_series(item_title: str, series: str) -> list[str]:
     return titles
 
 
+def item_matches(title: str, author: str, item: dict[str, Any]) -> bool:
+    """True when an ABS item ({'title','author','series'}) is the book title+author describe."""
+    if not any(_titles_match(title, t) for t in _titles_without_series(item.get('title', ''), item.get('series', ''))):
+        return False
+    norm_author = _normalize(author or '')
+    # ABS often lists the narrator too ("Therese Plummer/Eowyn Ivey"), so match any name.
+    item_authors = [_normalize(a) for a in re.split(r'[/,;&]', item.get('author', '') or '') if a.strip()]
+    return (not norm_author or not item_authors
+            or any(difflib.SequenceMatcher(None, norm_author, a).ratio() >= 0.70 for a in item_authors))
+
+
 class ABSClient:
     """Audiobookshelf API client with in-memory library cache."""
 
@@ -202,19 +213,9 @@ class ABSClient:
             with self._cache_lock:
                 cache = list(self._cache)
 
-        norm_author = _normalize(author or '')
-
         found: list[dict[str, Any]] = []
         for item in cache:
-            item_title = item.get('title', '')
-            # ABS often lists the narrator too ("Therese Plummer/Eowyn Ivey"), so match any name.
-            item_authors = [_normalize(a) for a in re.split(r'[/,;&]', item.get('author', '') or '') if a.strip()]
-
-            if not any(_titles_match(title, t) for t in _titles_without_series(item_title, item.get('series', ''))):
-                continue
-
-            if (not norm_author or not item_authors
-                    or any(difflib.SequenceMatcher(None, norm_author, a).ratio() >= 0.70 for a in item_authors)):
+            if item_matches(title, author, item):
                 found.append(item)
                 if len(found) >= limit:
                     break
@@ -260,15 +261,13 @@ class ABSClient:
     def set_cover_path(self, item_id: str, path: str) -> None:
         self._request('PATCH', f'/api/items/{item_id}/cover', json={'cover': path}).raise_for_status()
 
-    def match_item(self, item_id: str, title: str, author: str) -> None:
+    def match_item(self, item_id: str, title: str, author: str, override_details: bool = True) -> None:
         self._request('POST', f'/api/items/{item_id}/match', json={
-            'title': title, 'author': author, 'overrideCover': True, 'overrideDetails': True,
+            'title': title, 'author': author, 'overrideCover': True, 'overrideDetails': override_details,
         }).raise_for_status()
 
-    def update_details(self, item_id: str, title: str, author: str) -> None:
-        self._request('PATCH', f'/api/items/{item_id}/media', json={
-            'metadata': {'title': title, 'authors': [{'name': author}]},
-        }).raise_for_status()
+    def update_metadata(self, item_id: str, metadata: dict[str, Any]) -> None:
+        self._request('PATCH', f'/api/items/{item_id}/media', json={'metadata': metadata}).raise_for_status()
 
     def start_background_refresh(self) -> None:
         """Start a daemon thread that refreshes the cache every hour."""

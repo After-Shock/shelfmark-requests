@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request
 
 from shelfmark.core import report_db, report_fixes, request_quota
-from shelfmark.core.audiobookshelf import abs_client
+from shelfmark.core.audiobookshelf import _titles_match, _titles_without_series, abs_client
 from shelfmark.core import calibre_library
 from shelfmark.core.calibre_library import find_matches as calibre_find_matches
 from shelfmark.core.request_routes import (
@@ -23,6 +23,10 @@ _PROBLEM_TYPES = (
     "wrong_cover", "wrong_details", "other",
 )
 _FILE_PROBLEMS = ("wrong_language", "wrong_edition", "broken_file", "audio_problem")
+# What a reporter sees of their reports; the admin's resolution notes can hold server paths.
+_USER_FIELDS = ("id", "title", "author", "content_type", "problem_type", "note", "status",
+                "created_at", "updated_at", "request_id")
+_SIGN_IN = {"error": "Sign in to report problems"}
 
 
 def _spawn(fn, *args) -> None:
@@ -50,6 +54,8 @@ def retry_worker(request_db, user_db, report_id: int) -> None:
 
 def dismiss_worker(request_db, report: dict, note: str) -> None:
     """Park any staged copy in the archive (never deleted), then close the report."""
+    with report_fixes._fixes_lock:
+        report_fixes._fixes.pop(report["id"], None)  # a running fix queues nothing more
     try:
         staged = Path(json.loads(report.get("undo_json") or "{}").get("staged") or "")
         if staged.is_absolute() and staged.is_dir():
@@ -71,6 +77,8 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
     @app.route("/api/library/matches", methods=["GET"])
     @_require_auth
     def library_matches():
+        if _get_db_user_id() is None:
+            return jsonify(_SIGN_IN), 401
         title = request.args.get("title", "").strip()
         author = request.args.get("author", "").strip()
         if request.args.get("content_type") == "audiobook":
@@ -90,11 +98,18 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
     @app.route("/api/reports", methods=["GET"])
     @_require_auth
     def list_my_reports():
-        return jsonify(report_db.list_reports(request_db, user_id=_get_db_user_id()))
+        user_id = _get_db_user_id()
+        if user_id is None:
+            return jsonify(_SIGN_IN), 401
+        return jsonify([{**{k: r[k] for k in _USER_FIELDS}, "resolution_note": None}
+                        for r in report_db.list_reports(request_db, user_id=user_id)])
 
     @app.route("/api/reports", methods=["POST"])
     @_require_auth
     def create_report():
+        user_id = _get_db_user_id()
+        if user_id is None:
+            return jsonify(_SIGN_IN), 401
         data = request.get_json(silent=True) or {}
         problem = data.get("problem_type")
         note = (data.get("note") or "").strip()
@@ -114,12 +129,15 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
                     and (type(data["request_id"]) is not int))):
             return jsonify({"error": "Invalid field"}), 400
 
-        user_id = _get_db_user_id()
         request_id = data.get("request_id")
+        provider, provider_id = data.get("provider"), data.get("provider_id")
+        req = None
         if request_id is not None:
             req = request_db.get_request(request_id)
             if not req or (req.get("user_id") != user_id and not _is_admin()):
                 return jsonify({"error": "Request not found"}), 404
+            # The fix searches with these, so they come from the (owned) request, not the client.
+            provider, provider_id = req.get("provider"), req.get("provider_id")
 
         library = "abs" if content_type == "audiobook" else "calibre"
         if item_id:
@@ -127,12 +145,16 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
             if library == "abs":
                 item = abs_client.get_cached_item(item_id)
             else:
-                item = calibre_library.get_book(int(item_id)) if item_id.isdigit() else None
+                item = calibre_library.get_book(int(item_id)) if item_id.isdecimal() else None
             if not item:
                 return jsonify({"error": "That item is no longer in the library"}), 400
             title, author = item["title"], item["author"]
+            req_title = (req or {}).get("title") or ""
+            if req and not any(_titles_match(req_title, t) or _titles_match(t, req_title)
+                               for t in _titles_without_series(title, item.get("series") or "")):
+                return jsonify({"error": "That request is for a different book"}), 400
         fields = {
-            **{k: data.get(k) for k in ("library_item_id", "provider", "provider_id")},
+            "library_item_id": item_id, "provider": provider, "provider_id": provider_id,
             "library": library, "content_type": content_type, "title": title, "author": author,
             "request_id": request_id, "problem_type": problem, "note": note or None,
             "item_key": report_db.item_key(library, content_type, title, author),
@@ -213,6 +235,6 @@ def register_report_routes(app: Flask, request_db, user_db) -> None:
     def admin_dismiss_report(report_id):
         note = ((request.get_json(silent=True) or {}).get("note") or "").strip()[:1000] or "Dismissed by admin"
         return _start(
-            report_id, ("needs_action", "awaiting_approval"), "dismissed",
+            report_id, ("needs_action", "awaiting_approval", "fixing"), "dismissed",
             lambda r: dismiss_worker(request_db, r, note),
         )

@@ -33,7 +33,8 @@ def env(tmp_path):
     old = root / "Herbert" / "Dune"
     old.mkdir(parents=True)
     (old / "old.m4b").write_bytes(b"old")
-    item = {"id": "abs1", "path": "/abs/Herbert/Dune", "isFile": False}
+    item = {"id": "abs1", "path": "/abs/Herbert/Dune", "isFile": False,
+            "media": {"metadata": {"title": "Dune", "authorName": "Herbert"}}}
     queued = []
 
     def queue_release(release, **kw):
@@ -333,3 +334,69 @@ def test_failed_attempt_leftovers_never_reach_the_library(env):
     assert _status(env, report["id"])["status"] == "fixed"
     assert sorted(p.name for p in env.old.iterdir()) == ["Dune.m4b"]
     assert (leftover / "partial.mp3").exists()
+
+
+def test_task_failing_inside_queue_release_moves_on(env):
+    # The task can end before queue_release returns; its terminal event must still count.
+    report = _report(env)
+    calls = []
+
+    def queue_release(release, **kw):
+        calls.append(release["source_id"])
+        if release["source_id"] == "r1":
+            report_fixes.on_fix_task_terminal(_task(env, report["id"], "r1"), QueueStatus.ERROR)
+        return True, None
+
+    with patch("shelfmark.download.orchestrator.queue_release", side_effect=queue_release):
+        _start(env, report, [_rel("r1"), _rel("r2")])
+    assert calls == ["r1", "r2"]
+    row = _status(env, report["id"])
+    assert (row["status"], row["task_id"]) == ("fixing", "r2")
+
+
+def test_queue_release_raising_tries_next_release(env):
+    report = _report(env)
+
+    def queue_release(release, **kw):
+        if release["source_id"] == "r1":
+            raise RuntimeError("client down")
+        env.queued.append((release, kw))
+        return True, None
+
+    with patch("shelfmark.download.orchestrator.queue_release", side_effect=queue_release):
+        _start(env, report, [_rel("r1"), _rel("r2")])
+    row = _status(env, report["id"])
+    assert (row["status"], row["task_id"]) == ("fixing", "r2")
+
+
+def test_provider_book_not_matching_item_is_never_auto_swapped(env):
+    report = _report(env)
+    with patch.object(report_fixes, "_load_book", return_value=SimpleNamespace(title="Emma", authors=["Austen"])):
+        _start(env, report, [_rel("r1")], auto_swap=True)
+    staged = _stage(env, report["id"])
+    report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.COMPLETE)
+    assert _status(env, report["id"])["status"] == "awaiting_approval"
+    assert (staged / "Dune.m4b").exists() and (env.old / "old.m4b").exists()
+
+
+def test_deliveries_found_by_request_when_item_title_differs(env):
+    req_id = env.requests.create_request(user_id=1, title="Dune (Unabridged)", author="Frank Herbert",
+                                         content_type="audiobook")["id"]
+    report_db.record_delivery(env.requests, request_id=req_id, release_id="r0", source="prowlarr", library="abs",
+                              item_key=report_db.item_key("abs", "audiobook", "Dune (Unabridged)", "Frank Herbert"))
+    report = _report(env, request_id=req_id)
+    find = _start(env, report, [_rel("a", "prowlarr"), _rel("b", "audiobookbay")])
+    assert find.call_args.args[2] == {"r0"}
+    assert env.queued[0][0]["source_id"] == "b"
+
+
+def test_swap_skipped_once_dismissed(env):
+    report = _report(env)
+    _start(env, report, [_rel("r1")], auto_swap=False)
+    staged = _stage(env, report["id"])
+    report_fixes.on_fix_task_terminal(_task(env, report["id"]), QueueStatus.COMPLETE)
+    approved = report_db.claim_report(env.requests, report["id"], ("awaiting_approval",), "fixing")
+    report_db.claim_report(env.requests, report["id"], ("fixing",), "dismissed")
+    report_fixes.swap_in(env.requests, approved)
+    assert (staged / "Dune.m4b").exists() and (env.old / "old.m4b").exists()
+    assert _status(env, report["id"])["status"] == "dismissed"

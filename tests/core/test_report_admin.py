@@ -45,7 +45,7 @@ def _client(app, uid, admin):
 
 
 def _report(requests, status="awaiting_approval", **kw):
-    extra = {k: kw.pop(k) for k in ("undo_json",) if k in kw}
+    extra = {k: kw.pop(k) for k in ("undo_json", "task_id") if k in kw}
     fields = {"library": "abs", "library_item_id": "abs1", "content_type": "audiobook",
               "title": "Dune", "author": "Herbert", "problem_type": "broken_file", **kw}
     fields["item_key"] = report_db.item_key("abs", "audiobook", fields["title"], "Herbert")
@@ -180,5 +180,20 @@ def test_double_approve_and_dismiss_after_claim(env):
     with patch.object(report_routes, "_spawn", lambda fn, *a: spawned.append(a)):
         assert c.post(f"/api/admin/reports/{r['id']}/approve").status_code == 202
         assert c.post(f"/api/admin/reports/{r['id']}/approve").status_code == 409
+        # A fixing report can be dismissed (a stuck fix must not be stuck for good).
+        assert c.post(f"/api/admin/reports/{r['id']}/dismiss").status_code == 202
         assert c.post(f"/api/admin/reports/{r['id']}/dismiss").status_code == 409
-    assert len(spawned) == 1
+    assert len(spawned) == 2
+
+
+def test_dismiss_a_stuck_fixing_report(env):
+    app, requests, _ = env
+    r = _report(requests, status="fixing", task_id="t1")
+    report_fixes._fixes[r["id"]] = {"candidates": [{"source_id": "t2"}], "auto_swap": True, "staging": "/x"}
+    assert _client(app, 3, True).post(f"/api/admin/reports/{r['id']}/dismiss").status_code == 202
+    assert r["id"] not in report_fixes._fixes
+    task = type("T", (), {"task_id": "t1", "output_args": {"report_id": r["id"], "destination": "/x/1"}})
+    with patch.object(report_fixes, "swap_in") as swap:
+        report_fixes.on_fix_task_terminal(task, report_fixes.QueueStatus.COMPLETE)
+    swap.assert_not_called()
+    assert report_db.get_report(requests, r["id"])["status"] == "dismissed"

@@ -21,7 +21,7 @@ export const useReports = ({ enabled, isAdmin, isOpen, onChanged }: UseReportsOp
   const refresh = useCallback(async () => {
     if (!enabled) return;
     try {
-      if (isAdmin) setAdminReports(await getAdminReports(['needs_action', 'awaiting_approval', 'fixed']));
+      if (isAdmin) setAdminReports(await getAdminReports(['needs_action', 'awaiting_approval', 'fixing', 'fixed']));
       else setReports(await getMyReports());
     } catch (err) {
       console.error('Failed to fetch reports:', err);

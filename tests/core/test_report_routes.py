@@ -101,7 +101,7 @@ def test_other_requires_note(env):
 
 def test_cannot_report_someone_elses_request_id(env):
     app, requests, _ = env
-    with patch.object(requests, "get_request", return_value={"id": 5, "user_id": 2}):
+    with patch.object(requests, "get_request", return_value={"id": 5, "user_id": 2, "title": "Dune"}):
         assert _post(app, _body(request_id=5))[0].status_code == 404
         assert _post(app, _body(request_id=5), uid=2)[0].status_code == 201
 
@@ -195,3 +195,60 @@ def test_triage_exception_goes_to_needs_action(env):
     got = report_db.get_report(requests, rep["id"])
     assert got["status"] == "needs_action" and got["resolution_note"] == "Automatic check failed: boom"
     push.assert_called_once()
+
+
+def test_request_provider_wins_over_client_provider(env):
+    app, requests, _ = env
+    req = {"id": 5, "user_id": 1, "title": "Dune", "provider": "hardcover", "provider_id": "99"}
+    with patch.object(requests, "get_request", return_value=req):
+        resp, _, _ = _post(app, _body(request_id=5, provider="openlibrary", provider_id="evil"))
+    rep = resp.json["report"]
+    assert (rep["provider"], rep["provider_id"]) == ("hardcover", "99")
+
+
+def test_request_for_a_different_book_is_400(env):
+    app, requests, _ = env
+    with patch.object(requests, "get_request", return_value={"id": 5, "user_id": 1, "title": "Emma"}):
+        resp, _, _ = _post(app, _body(request_id=5))
+    assert resp.status_code == 400 and resp.json["error"] == "That request is for a different book"
+
+
+def test_reports_need_a_db_user(env):
+    app, _, _ = env
+    with app.test_client() as c, patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"):
+        with c.session_transaction() as s:
+            s.update(user_id="proxy", is_admin=False)
+        for resp in (c.get("/api/reports"), c.post("/api/reports", json=_body()),
+                     c.get("/api/library/matches?title=Dune")):
+            assert resp.status_code == 401 and resp.json["error"] == "Sign in to report problems"
+
+
+def test_my_reports_hide_internal_fields(env):
+    app, requests, _ = env
+    rep = _report(requests)
+    report_db.update_report(requests, rep["id"], status="needs_action", task_id="t1",
+                            undo_json='{"staged": "/UnRaid/x"}', resolution_note="/UnRaid/x already exists")
+    with app.test_client() as c, patch("shelfmark.core.request_routes._get_auth_mode", return_value="builtin"):
+        with c.session_transaction() as s:
+            s.update(user_id="u1", db_user_id=1, is_admin=False)
+        mine = c.get("/api/reports").json
+    assert set(mine[0]) == {"id", "title", "author", "content_type", "problem_type", "note", "status",
+                            "resolution_note", "created_at", "updated_at", "request_id"}
+    assert mine[0]["resolution_note"] is None
+
+
+def test_calibre_item_id_must_be_decimal(env):
+    app, _, _ = env
+    resp, _, _ = _post(app, _body(content_type="ebook", library_item_id="\u00b2"))
+    assert resp.status_code == 400
+
+
+def test_triage_counts_request_deliveries_as_delivered(env):
+    _, requests, users = env
+    req_id = requests.create_request(user_id=1, title="Dune (Unabridged)", content_type="audiobook")["id"]
+    report_db.record_delivery(requests, request_id=req_id, source="x",
+                              item_key=report_db.item_key("abs", "audiobook", "Dune (Unabridged)", ""))
+    with patch("shelfmark.core.report_fixes.abs_client.get_item", return_value={"path": "/a/b"}), \
+         patch("shelfmark.core.report_fixes.local_path_for", return_value="/l/b"):
+        rep, _, sff, _ = _triage(env, request_id=req_id)
+    assert sff.call_args.kwargs["auto_swap"] is True

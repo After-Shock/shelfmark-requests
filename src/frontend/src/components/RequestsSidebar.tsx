@@ -44,7 +44,7 @@ const REPORT_WAITING: MediaReport['status'][] = ['needs_action', 'awaiting_appro
 const FILE_PROBLEMS: MediaReport['problem_type'][] = ['wrong_language', 'wrong_edition', 'broken_file', 'audio_problem'];
 const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ADMIN_REPORT_LABELS: Record<string, string> = {
-  awaiting_approval: 'Awaiting approval', needs_action: 'Needs action', fixing: 'Fixing', fixed: 'Fixed',
+  awaiting_approval: 'Awaiting approval', needs_action: 'Needs action', fixing: 'Fixing…', fixed: 'Fixed',
 };
 const TAB_LABELS: Record<FilterTab, string> = {
   needs_action: 'Needs action', all: 'Active', prerelease: 'Pre-release', pending: 'Pending', history: 'History',
@@ -393,7 +393,7 @@ export const RequestsSidebar = ({
     const actionClass = 'px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
     const canRetry = report.status === 'needs_action' && FILE_PROBLEMS.includes(report.problem_type)
       && report.library === 'abs' && !!report.library_item_id;
-    const canDismiss = report.status === 'needs_action' || report.status === 'awaiting_approval';
+    const canDismiss = report.status === 'needs_action' || report.status === 'awaiting_approval' || report.status === 'fixing';
     const action = (label: string, kind: ReportAction, className: string) => (
       <button
         type="button"

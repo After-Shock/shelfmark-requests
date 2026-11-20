@@ -81,14 +81,16 @@ def test_edit_endpoints_send_expected_payloads():
             patch.object(audiobookshelf.http_requests, "patch", return_value=_resp()) as patch_:
         c.set_cover_url("i1", "http://img/c.jpg")
         c.match_item("i1", "T", "A")
-        c.update_details("i1", "T", "A")
+        c.match_item("i1", "T", "A", override_details=False)
+        c.update_metadata("i1", {"title": "T", "authors": [{"name": "A"}, {"name": "B"}]})
     assert post.call_args_list[0].args[0] == "http://abs/api/items/i1/cover"
     assert post.call_args_list[0].kwargs["json"] == {"url": "http://img/c.jpg"}
     assert post.call_args_list[1].args[0] == "http://abs/api/items/i1/match"
     assert post.call_args_list[1].kwargs["json"] == {
         "title": "T", "author": "A", "overrideCover": True, "overrideDetails": True}
+    assert post.call_args_list[2].kwargs["json"]["overrideDetails"] is False
     assert patch_.call_args.args[0] == "http://abs/api/items/i1/media"
-    assert patch_.call_args.kwargs["json"] == {"metadata": {"title": "T", "authors": [{"name": "A"}]}}
+    assert patch_.call_args.kwargs["json"] == {"metadata": {"title": "T", "authors": [{"name": "A"}, {"name": "B"}]}}
 
 
 def test_calibre_find_matches_has_id_and_find_match_compatible(tmp_path, monkeypatch):

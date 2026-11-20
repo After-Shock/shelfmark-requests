@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from shelfmark.core import report_db
-from shelfmark.core.audiobookshelf import abs_client, local_path_for, local_root_for
+from shelfmark.core.audiobookshelf import abs_client, item_matches, local_path_for, local_root_for
 from shelfmark.core.models import QueueStatus
 from shelfmark.core.request_routes import _send_pushover, find_release_candidates
 from shelfmark.core.user_db import UserDB
@@ -34,10 +34,17 @@ def init(request_db, user_db) -> None:
     _request_db, _user_db = request_db, user_db
 
 
-def set_report_status(report_id: int, status: str, note: Optional[str] = None) -> dict:
-    """Move a report to `status`; the single place that decides when the admin gets a push."""
+_METADATA_KEYS = ("title", "subtitle", "description", "genres", "publishedYear", "publisher",
+                  "isbn", "asin", "language", "narrators")
+
+
+def set_report_status(report_id: int, status: str, note: Optional[str] = None, push: bool = True) -> dict:
+    """Move a report to `status`; the single place that decides when the admin gets a push.
+
+    push=False when the admin caused the change themselves.
+    """
     report = report_db.update_report(_request_db, report_id, status=status, resolution_note=note)
-    heading = _PUSH_HEADINGS.get(status)
+    heading = _PUSH_HEADINGS.get(status) if push else None
     if heading:
         problem = report["problem_type"].replace("_", " ")
         _send_pushover(
@@ -46,6 +53,24 @@ def set_report_status(report_id: int, status: str, note: Optional[str] = None) -
             _user_db, heading, f"{problem}: {note}" if note else problem,
         )
     return report
+
+
+def _deliveries(request_db, report: dict) -> list[dict]:
+    """What Shelfmark delivered for this item: by item key, plus by the linked request.
+
+    Deliveries are keyed by the request's title/author, reports by the library item's,
+    so the key alone can miss a delivery.
+    """
+    rows = {d["id"]: d for d in report_db.deliveries_for_key(request_db, report["item_key"])}
+    rows.update((d["id"], d) for d in report_db.deliveries_for_request(request_db, report["request_id"]))
+    return sorted(rows.values(), key=lambda d: (d["delivered_at"] or "", d["id"]), reverse=True)
+
+
+def _book_matches_item(book, item: dict) -> bool:
+    meta = (item.get("media") or {}).get("metadata") or {}
+    entry = {"title": meta.get("title") or "", "author": meta.get("authorName") or "",
+             "series": meta.get("seriesName") or ""}
+    return any(item_matches(book.title or "", a, entry) for a in (getattr(book, "authors", None) or [""]))
 
 
 def _load_book(provider: str, provider_id: str):
@@ -90,7 +115,10 @@ def start_file_fix(request_db, user_db, report_id: int, auto_swap: bool) -> None
         set_report_status(report_id, "needs_action", "No book details to search with")
         return
 
-    deliveries = report_db.deliveries_for_key(request_db, report["item_key"])
+    if auto_swap and not _book_matches_item(book, item):
+        logger.info("Report #%s: provider book doesn't match the library item; waiting for approval", report_id)
+        auto_swap = False
+    deliveries = _deliveries(request_db, report)
     excluded = {d["release_id"] for d in deliveries if d["release_id"]}
     candidates, note = find_release_candidates(book, "audiobook", excluded, f"Report #{report_id}")
     if report["problem_type"] == "broken_file" and deliveries:
@@ -119,14 +147,26 @@ def _queue_next(report_id: int) -> bool:
         # never verified or swapped in. Numbering skips folders left by earlier attempts.
         attempt = next(staging / str(n) for n in range(1, 10_000) if not (staging / str(n)).exists())
         attempt.mkdir(parents=True)
-        ok, error = backend.queue_release(
-            release, priority=0, output_args={"destination": str(attempt), "report_id": report_id},
-        )
+        report = report_db.get_report(_request_db, report_id)
+        if report["status"] == "dismissed":
+            with _fixes_lock:
+                _fixes.pop(report_id, None)
+            return True  # nothing more to do; don't hand it back to the admin
+        # Recorded before queueing: the task can end before queue_release returns, and
+        # on_fix_task_terminal only acts on the report's current task.
+        report_db.update_report(_request_db, report_id, auto_attempted=1, task_id=release.get("source_id", ""))
+        if report["status"] != "fixing":
+            set_report_status(report_id, "fixing")
+        try:
+            ok, error = backend.queue_release(
+                release, priority=0, output_args={"destination": str(attempt), "report_id": report_id},
+            )
+        except Exception as e:
+            ok, error = False, e
         if ok:
             break
+        # Same as a download that errored: move on to the next release.
         logger.warning("Report #%s: failed to queue release %s: %s", report_id, release.get("source_id"), error)
-    set_report_status(report_id, "fixing")
-    report_db.update_report(_request_db, report_id, auto_attempted=1, task_id=release.get("source_id", ""))
     logger.info("Report #%s: re-download queued (task=%s)", report_id, release.get("source_id"))
     return True
 
@@ -137,7 +177,7 @@ def on_fix_task_terminal(task, status) -> None:
     try:
         report = report_db.get_report(_request_db, report_id)
         if not report or report["status"] != "fixing" or report["task_id"] != task.task_id:
-            return  # superseded or already handled
+            return  # superseded, dismissed or already handled; a staged copy stays in staging
         if status == QueueStatus.CANCELLED:
             with _fixes_lock:
                 _fixes.pop(report_id, None)
@@ -185,6 +225,9 @@ def swap_in(request_db, report: dict) -> None:
     new = _audio_dir(staged) if staged.is_absolute() and staged.is_dir() else None
     if not old or not old.is_dir() or new is None:
         set_report_status(report_id, "needs_action", "Nothing to swap: library folder or staged copy missing")
+        return
+    if report_db.get_report(request_db, report_id)["status"] == "dismissed":
+        logger.info("Report #%s: dismissed before the swap; staged copy left in staging", report_id)
         return
     archived = archive_dir / old.name
     if archived.exists():
@@ -282,27 +325,38 @@ def _fix_metadata(request_db, report_id: int) -> None:
         archive.mkdir(parents=True, exist_ok=True)
         backup = archive / f"cover{local.suffix}"
         shutil.copy2(local, backup)
-    # Saved before any ABS write, so undo works even if the write half-fails.
+    # Everything a match can overwrite, saved before any ABS write so undo works even if the
+    # write half-fails. Authors/series go back as ABS's PATCH expects them.
+    snapshot = {k: meta.get(k) for k in _METADATA_KEYS}
+    snapshot["authors"] = [{"name": a["name"]} for a in meta.get("authors") or []]
+    snapshot["series"] = [{"name": s["name"], "sequence": s.get("sequence")} for s in meta.get("series") or []]
     report_db.update_report(request_db, report_id, auto_attempted=1, undo_json=json.dumps({
-        "cover_path": cover_path, "cover_backup": str(backup) if backup else None,
-        "title": meta.get("title"), "author": ", ".join(a["name"] for a in meta.get("authors") or []),
+        "cover_path": cover_path, "cover_backup": str(backup) if backup else None, "metadata": snapshot,
     }))
 
+    provider, provider_id = report["provider"], report["provider_id"]
+    req = request_db.get_request(report["request_id"]) if report["request_id"] else None
+    if not (provider and provider_id) and req:
+        provider, provider_id = req.get("provider"), req.get("provider_id")
+    book = _load_book(provider, provider_id) if provider and provider_id else None
     if is_cover:
-        provider, provider_id = report["provider"], report["provider_id"]
-        req = request_db.get_request(report["request_id"]) if report["request_id"] else None
-        if not (provider and provider_id) and req:
-            provider, provider_id = req.get("provider"), req.get("provider_id")
-        book = _load_book(provider, provider_id) if provider and provider_id else None
         new_cover = getattr(book, "cover_url", None)
         seen = (req or {}).get("cover_url")
         if new_cover and not (req and new_cover == seen):
             abs_client.set_cover_url(item["id"], new_cover)
         else:
-            abs_client.match_item(item["id"], report["title"], report["author"])
+            abs_client.match_item(item["id"], report["title"], report["author"], override_details=False)
         set_report_status(report_id, "fixed", "Cover updated")
     else:
-        abs_client.match_item(item["id"], report["title"], report["author"])
+        # The item's own title/author are the wrong ones; match on what was asked for.
+        book_authors = getattr(book, "authors", None) or []
+        if req and req.get("title"):
+            title, author = req["title"], req.get("author") or ""
+        elif getattr(book, "title", None):
+            title, author = book.title, book_authors[0] if book_authors else ""
+        else:
+            title, author = report["title"], report["author"]
+        abs_client.match_item(item["id"], title, author)
         set_report_status(report_id, "fixed", "Details updated")
 
 
@@ -310,10 +364,10 @@ def undo(request_db, report_id: int) -> None:
     """Reverse a fix recorded in undo_json; never deletes, never raises."""
     try:
         note = _undo(request_db, report_id)
-        set_report_status(report_id, "needs_action", note)
+        set_report_status(report_id, "needs_action", note, push=False)
     except Exception as e:
         logger.exception("Report #%s: undo failed", report_id)
-        set_report_status(report_id, "needs_action", f"Undo failed: {str(e)[:100]}")
+        set_report_status(report_id, "needs_action", f"Undo failed: {str(e)[:100]}", push=False)
 
 
 def _undo(request_db, report_id: int) -> str:
@@ -354,8 +408,8 @@ def _undo(request_db, report_id: int) -> str:
                 abs_client.set_cover_path(report["library_item_id"], cover_path)
             else:
                 note += "; the old cover could not be kept"
-        if data.get("title"):
-            abs_client.update_details(report["library_item_id"], data["title"], data.get("author") or "")
+        if data.get("metadata"):
+            abs_client.update_metadata(report["library_item_id"], data["metadata"])
         done()
         return note
     return "Nothing to undo"
@@ -381,7 +435,7 @@ def _triage(request_db, user_db, report_id: int) -> None:
     elif report_db.had_auto_attempt(request_db, key, problem):
         set_report_status(report_id, "needs_action", "Already tried automatically once")
     elif problem in _METADATA_TYPES:
-        if report_db.deliveries_for_key(request_db, key):
+        if _deliveries(request_db, report):
             fix_metadata(request_db, report_id)
         else:
             report_db.update_report(
@@ -395,4 +449,4 @@ def _triage(request_db, user_db, report_id: int) -> None:
             set_report_status(report_id, "needs_action", "Shelfmark can't replace files in this library")
         else:
             start_file_fix(request_db, user_db, report_id,
-                           auto_swap=bool(report_db.deliveries_for_key(request_db, key)))
+                           auto_swap=bool(_deliveries(request_db, report)))

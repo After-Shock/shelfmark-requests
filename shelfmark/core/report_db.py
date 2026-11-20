@@ -225,3 +225,17 @@ def deliveries_for_key(request_db, item_key: str) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def deliveries_for_request(request_db, request_id: Optional[int]) -> list[dict[str, Any]]:
+    if request_id is None:
+        return []
+    conn = request_db._connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM request_deliveries WHERE request_id = ? ORDER BY delivered_at DESC, id DESC",
+            (request_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
