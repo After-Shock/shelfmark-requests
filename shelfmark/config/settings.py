@@ -389,16 +389,10 @@ def general_settings():
             placeholder="",
         ),
         TextField(
-            key="ABS_PATH_PREFIX",
-            label="Audiobookshelf path",
-            description="Where Audiobookshelf sees your audiobooks. Used with the field below to fix audiobook files from issue reports; leave both empty to disable file swaps.",
-            placeholder="/Audiobooks",
-        ),
-        TextField(
-            key="ABS_LOCAL_PATH_PREFIX",
-            label="Same folder inside Shelfmark",
-            description="The same audiobook folder as Shelfmark sees it.",
-            placeholder="/UnRaid/audiobooks",
+            key="ABS_PATH_MAPPINGS",
+            label="Audiobookshelf folder mappings",
+            description="One per line: Audiobookshelf folder=same folder inside Shelfmark, e.g. /Audiobooks=/UnRaid/audiobooks. Leave empty to turn off automatic file swaps.",
+            placeholder="/Audiobooks=/UnRaid/audiobooks",
         ),
         CheckboxField(
             key="ABS_USER_SYNC_ENABLED",

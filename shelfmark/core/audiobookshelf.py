@@ -5,7 +5,7 @@ import logging
 import re
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
 import requests as http_requests
@@ -271,13 +271,28 @@ class ABSClient:
         self._refresh_thread.start()
 
 
+def _mapping_for(abs_path: str) -> Optional[tuple[str, str]]:
+    """First "abs=local" line of ABS_PATH_MAPPINGS whose ABS folder contains abs_path."""
+    if '..' in PurePosixPath(abs_path).parts:
+        return None
+    for line in (config.get('ABS_PATH_MAPPINGS', '') or '').splitlines():
+        abs_prefix, sep, local_prefix = (part.strip() for part in line.partition('='))
+        abs_prefix, local_prefix = abs_prefix.rstrip('/'), local_prefix.rstrip('/')
+        if sep and abs_prefix and local_prefix and abs_path.startswith(abs_prefix + '/'):
+            return abs_prefix, local_prefix
+    return None
+
+
 def local_path_for(abs_path: str) -> Optional[Path]:
     """Map an ABS item path to the same folder inside Shelfmark; None when unmapped."""
-    abs_prefix = (config.get('ABS_PATH_PREFIX', '') or '').rstrip('/')
-    local_prefix = (config.get('ABS_LOCAL_PATH_PREFIX', '') or '').rstrip('/')
-    if not abs_prefix or not local_prefix or not abs_path.startswith(abs_prefix + '/'):
-        return None
-    return Path(local_prefix + abs_path[len(abs_prefix):])
+    mapping = _mapping_for(abs_path)
+    return Path(mapping[1] + abs_path[len(mapping[0]):]) if mapping else None
+
+
+def local_root_for(abs_path: str) -> Optional[Path]:
+    """The Shelfmark-side library folder that contains abs_path; None when unmapped."""
+    mapping = _mapping_for(abs_path)
+    return Path(mapping[1]) if mapping else None
 
 
 # Module-level singleton

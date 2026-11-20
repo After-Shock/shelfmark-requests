@@ -3,7 +3,7 @@ import sqlite3
 from unittest.mock import MagicMock, patch
 
 from shelfmark.core import audiobookshelf
-from shelfmark.core.audiobookshelf import ABSClient, local_path_for
+from shelfmark.core.audiobookshelf import ABSClient, local_path_for, local_root_for
 
 
 def _cfg(values):
@@ -41,11 +41,17 @@ def test_find_matches_returns_all_hits():
 
 
 def test_local_path_for_maps_prefix():
-    cfg = {"ABS_PATH_PREFIX": "/Audiobooks", "ABS_LOCAL_PATH_PREFIX": "/UnRaid/audiobooks"}
+    cfg = {"ABS_PATH_MAPPINGS": "garbage\n\n =x\n/Audiobooks = /UnRaid/audiobooks \n"
+           "/UnRaid/audiobooks-children=/UnRaid/audiobooks-children"}
     with _cfg(cfg):
         assert str(local_path_for("/Audiobooks/A/B")) == "/UnRaid/audiobooks/A/B"
+        assert str(local_root_for("/Audiobooks/A/B")) == "/UnRaid/audiobooks"
+        assert str(local_path_for("/UnRaid/audiobooks-children/K/B")) == "/UnRaid/audiobooks-children/K/B"
+        assert str(local_root_for("/UnRaid/audiobooks-children/K/B")) == "/UnRaid/audiobooks-children"
         assert local_path_for("/audiobooks/A") is None
         assert local_path_for("/AudiobooksX/A") is None
+        assert local_path_for("/Audiobooks/../etc") is None
+        assert local_root_for("/Audiobooks/../etc") is None
     with _cfg({}):
         assert local_path_for("/Audiobooks/A/B") is None
 
