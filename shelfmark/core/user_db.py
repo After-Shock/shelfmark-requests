@@ -241,6 +241,10 @@ class UserDB:
             conn.execute("ALTER TABLE users ADD COLUMN weekly_request_limit INTEGER")
         if "request_limit_reset_at" not in column_names:
             conn.execute("ALTER TABLE users ADD COLUMN request_limit_reset_at TIMESTAMP")
+        if "weekly_report_limit" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN weekly_report_limit INTEGER")
+        if "report_limit_reset_at" not in column_names:
+            conn.execute("ALTER TABLE users ADD COLUMN report_limit_reset_at TIMESTAMP")
 
     def _migrate_requests_last_viewed_column(self, conn: sqlite3.Connection) -> None:
         """Ensure legacy user databases support request-count tracking."""
@@ -646,6 +650,7 @@ class UserDB:
         "role",
         "provisioned_services",
         "weekly_request_limit",
+        "weekly_report_limit",
     }
 
     def update_user(self, user_id: int, **kwargs) -> None:
@@ -713,6 +718,22 @@ class UserDB:
                 else:
                     conn.execute(
                         "UPDATE users SET request_limit_reset_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (user_id,),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def reset_report_limits(self, user_id: Optional[int] = None) -> None:
+        """Start the weekly report count over now, for one user or everyone."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                if user_id is None:
+                    conn.execute("UPDATE users SET report_limit_reset_at = CURRENT_TIMESTAMP")
+                else:
+                    conn.execute(
+                        "UPDATE users SET report_limit_reset_at = CURRENT_TIMESTAMP WHERE id = ?",
                         (user_id,),
                     )
                 conn.commit()

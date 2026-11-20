@@ -60,4 +60,13 @@ def users_settings():
             max_value=100,
             env_supported=False,
         ),
+        NumberField(
+            key="WEEKLY_REPORT_LIMIT",
+            label="Weekly report limit",
+            description="Problem reports each non-admin user can make per week (Monday to Sunday, US Eastern).",
+            default=6,
+            min_value=0,
+            max_value=100,
+            env_supported=False,
+        ),
     ]

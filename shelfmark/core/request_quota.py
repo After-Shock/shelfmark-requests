@@ -27,38 +27,55 @@ def week_bounds(now: Optional[datetime] = None) -> tuple[datetime, datetime]:
     return start, resets
 
 
-def default_limit() -> int:
+_KINDS = {
+    "request": ("WEEKLY_REQUEST_LIMIT", "weekly_request_limit", "request_limit_reset_at"),
+    "report": ("WEEKLY_REPORT_LIMIT", "weekly_report_limit", "report_limit_reset_at"),
+}
+
+
+def default_limit(kind: str = "request") -> int:
     try:
-        return max(0, int(config.get("WEEKLY_REQUEST_LIMIT", DEFAULT_WEEKLY_LIMIT)))
+        return max(0, int(config.get(_KINDS[kind][0], DEFAULT_WEEKLY_LIMIT)))
     except (TypeError, ValueError):
         return DEFAULT_WEEKLY_LIMIT
 
 
-def limit_for(user: dict[str, Any]) -> Optional[int]:
+def limit_for(user: dict[str, Any], kind: str = "request") -> Optional[int]:
     """The user's weekly limit, or None when unlimited (admins)."""
     if user.get("role") == "admin":
         return None
-    own = user.get("weekly_request_limit")
-    return max(0, own) if isinstance(own, int) and not isinstance(own, bool) else default_limit()
+    own = user.get(_KINDS[kind][1])
+    return max(0, own) if isinstance(own, int) and not isinstance(own, bool) else default_limit(kind)
 
 
-def counting_since(user: dict[str, Any], now: Optional[datetime] = None) -> str:
-    """UTC timestamp (SQLite format) from which this user's requests count."""
+def counting_since(user: dict[str, Any], now: Optional[datetime] = None, kind: str = "request") -> str:
+    """UTC timestamp (SQLite format) from which this user's requests/reports count."""
     start = week_bounds(now)[0].astimezone(timezone.utc).strftime(_SQLITE_FORMAT)
-    reset_at = user.get("request_limit_reset_at")
+    reset_at = user.get(_KINDS[kind][2])
     return max(start, reset_at) if isinstance(reset_at, str) and reset_at else start
 
 
-def quota_for(request_db, user: dict[str, Any], now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
-    """Limit, used and remaining for this week, or None for unlimited users."""
-    limit = limit_for(user)
+def _quota(used_fn, user: dict[str, Any], now: Optional[datetime], kind: str) -> Optional[dict[str, Any]]:
+    limit = limit_for(user, kind)
     if limit is None:
         return None
-    used = request_db.count_quota_usage(user["id"], counting_since(user, now))
+    used = used_fn(user["id"], counting_since(user, now, kind))
     return {
         "limit": limit,
         "used": used,
         "remaining": max(0, limit - used),
-        "is_default": not isinstance(user.get("weekly_request_limit"), int),
+        "is_default": not isinstance(user.get(_KINDS[kind][1]), int),
         "resets_at": week_bounds(now)[1].isoformat(),
     }
+
+
+def quota_for(request_db, user: dict[str, Any], now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+    """Limit, used and remaining for this week, or None for unlimited users."""
+    return _quota(request_db.count_quota_usage, user, now, "request")
+
+
+def report_quota_for(request_db, user: dict[str, Any], now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+    """Same as quota_for, for problem reports."""
+    from shelfmark.core import report_db
+
+    return _quota(lambda uid, since: report_db.count_report_usage(request_db, uid, since), user, now, "report")

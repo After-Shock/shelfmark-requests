@@ -967,6 +967,29 @@ def _on_download_terminal(task_id: str, status: QueueStatus, task: Any) -> None:
     _notify_admin_for_terminal_download_status(task_id=task_id, status=status, task=task)
 
 
+def _record_delivery(req_id: int, task_id: str) -> None:
+    """Remember what was delivered for a request, so a later problem report can fix it."""
+    try:
+        from shelfmark.core import report_db
+
+        req = request_db.get_request(req_id) or {}
+        task = backend.book_queue.get_task(task_id)
+        library = "abs" if req.get("content_type") == "audiobook" else "calibre"
+        report_db.record_delivery(
+            request_db,
+            request_id=req_id,
+            source=getattr(task, "source", None),
+            release_id=getattr(task, "task_id", None) or req.get("download_task_id") or task_id,
+            release_title=getattr(task, "title", None),
+            format=getattr(task, "format", None),
+            final_path=getattr(task, "download_path", None),
+            library=library,
+            item_key=report_db.item_key(library, req.get("content_type") or "ebook", req.get("title"), req.get("author")),
+        )
+    except Exception as exc:
+        logger.warning("Failed to record delivery for request #%s: %s", req_id, exc)
+
+
 def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
     """Update our custom request_db when a download task reaches a terminal state.
 
@@ -997,6 +1020,7 @@ def _sync_request_db_on_terminal(task_id: str, status: QueueStatus) -> bool:
                 request_db.update_request_status(req_id, status="fulfilled", admin_note="")  # drop stale failure notes
                 request_routes.forget_release_retries(req_id)
                 logger.info("Request #%s marked fulfilled after download %s completed", req_id, task_id)
+                _record_delivery(req_id, task_id)
                 try:
                     from shelfmark.core.discord_notifications import send_discord_book_available
                     fulfilled_req = request_db.get_request(req_id)

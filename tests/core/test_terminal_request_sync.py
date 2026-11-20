@@ -102,3 +102,31 @@ def test_terminal_event_leaves_a_denied_request_alone(main_module, status):
     db.update_request_status.assert_not_called()
     retry.assert_not_called()
     notify.assert_not_called()
+
+
+def test_complete_records_delivery(main_module):
+    db = _group_db()
+    db.get_request.return_value = {"title": "Dune", "author": "Herbert", "content_type": "audiobook",
+                                   "download_task_id": "T1"}
+    task = Mock(task_id="T1", source="prowlarr", title="Dune (Unabridged)", format="m4b", download_path="/dl/Dune")
+    with patch.object(main_module, "request_db", db), \
+            patch.object(main_module.backend.book_queue, "get_task", return_value=task), \
+            patch("shelfmark.core.discord_notifications.send_discord_book_available"), \
+            patch("shelfmark.core.report_db.record_delivery") as record:
+        main_module._sync_request_db_on_terminal("T1", QueueStatus.COMPLETE)
+
+    record.assert_called_once()
+    assert record.call_args.args == (db,)
+    kw = record.call_args.kwargs
+    assert (kw["request_id"], kw["source"], kw["release_id"], kw["release_title"], kw["format"],
+            kw["final_path"], kw["library"]) == (1, "prowlarr", "T1", "Dune (Unabridged)", "m4b", "/dl/Dune", "abs")
+    assert kw["item_key"] == "abs|audiobook|dune|herbert"
+
+
+def test_denied_complete_records_nothing(main_module):
+    db = Mock()
+    db.get_requests_by_download_task.return_value = [{"id": 1, "canonical_request_id": None, "status": "denied"}]
+    with patch.object(main_module, "request_db", db), \
+            patch("shelfmark.core.report_db.record_delivery") as record:
+        main_module._sync_request_db_on_terminal("T1", QueueStatus.COMPLETE)
+    record.assert_not_called()
