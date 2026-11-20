@@ -39,7 +39,13 @@ export const useReports = ({ enabled, isAdmin, isOpen, onChanged }: UseReportsOp
 
   /** Actions answer 202 and finish in the background: show the row now, refetch once shortly after. */
   const act = useCallback(async (reportId: number, action: ReportAction) => {
-    const row = await adminReportAction(reportId, action);
+    let row: MediaReport | null = null;
+    try {
+      row = await adminReportAction(reportId, action);
+    } catch (err) {
+      refresh();  // 409: the card is stale, drop it
+      throw err;
+    }
     setAdminReports((prev) => prev.map((r) => (r.id === reportId ? { ...r, ...row } : r)));
     const timer = setTimeout(() => {
       timers.current.delete(timer);

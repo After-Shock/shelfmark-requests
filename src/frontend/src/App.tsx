@@ -1109,6 +1109,7 @@ function App() {
           onRefresh={refreshRequests}
           quota={requestCounts.quota}
           reports={reports}
+          reportsNeedingAction={requestCounts.reports_needing_action}
           adminReports={adminReports}
           onReportProblem={(req) => setReportTarget({
             title: req.title, author: req.author ?? '', contentType: req.content_type,

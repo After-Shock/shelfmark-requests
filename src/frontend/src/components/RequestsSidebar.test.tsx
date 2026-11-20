@@ -170,6 +170,17 @@ describe('reports', () => {
     expect(html.match(/>Dismiss</g)).toHaveLength(2);
   });
 
+  it('counts server-reported reports in the Needs action tab before the list loads', () => {
+    tab.value = 'all';
+    const html = renderToStaticMarkup(<RequestsSidebar
+      isOpen onClose={() => {}} isAdmin reportsNeedingAction={3}
+      requests={[{ id: 1, title: 'F', status: 'failed', content_type: 'ebook', created_at: '2026-11-01', updated_at: '2026-11-01' } as BookRequest]}
+      onApprove={noop} onDeny={noop} onRetry={noop} onActivatePrerelease={noop}
+      onMoveToPrerelease={noop} onSetStatus={noop} onDelete={noop} onMarkCompleted={noop} onRefresh={noop}
+    />);
+    expect(html).toContain('Needs action (4)');
+  });
+
   it('gives admins Undo on recently fixed reports in History', () => {
     tab.value = 'history';
     const recent = { ...report('fixed'), updated_at: new Date().toISOString() };

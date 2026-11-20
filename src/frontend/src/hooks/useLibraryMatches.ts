@@ -13,6 +13,7 @@ export const useLibraryMatches = (
   const key = `${title}|${author}|${contentType}`;
 
   useEffect(() => {
+    setMatches(null);
     if (!enabled || !contentType || !title) return;
     let live = true;
     let lookup = cache.get(key);

@@ -46,7 +46,7 @@ export const ReportProblemModal = ({ target, quota, onClose, onDone }: ReportPro
   const [matches, setMatches] = useState<LibraryMatch[] | null>(target.matches ?? null);
   const [problem, setProblem] = useState<ProblemType | null>(target.preset ?? null);
   const [note, setNote] = useState('');
-  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,7 +57,7 @@ export const ReportProblemModal = ({ target, quota, onClose, onDone }: ReportPro
       .catch(() => setMatches([]));
   }, [target]);
 
-  const chosen = matches?.length === 1 ? matches[0] : matches?.find((m) => m.library_item_id === pickedId);
+  const chosen = matches?.length === 1 ? matches[0] : (picked === null ? undefined : matches?.[picked]);
   const outOfReports = !!quota && quota.remaining === 0;
   const canSubmit = !busy && !outOfReports && !!problem && matches !== null
     && (problem !== 'other' || note.trim().length > 0)
@@ -120,13 +120,13 @@ export const ReportProblemModal = ({ target, quota, onClose, onDone }: ReportPro
             {matches && matches.length > 1 && (
               <fieldset className="flex flex-col gap-2">
                 <legend className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Which one?</legend>
-                {matches.map((m) => (
-                  <label key={m.library_item_id ?? m.title} className="flex items-center gap-3 cursor-pointer rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] p-2">
+                {matches.map((m, i) => (
+                  <label key={i} className="flex items-center gap-3 cursor-pointer rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] p-2">
                     <input
                       type="radio"
                       name="report-match"
-                      checked={m.library_item_id === pickedId}
-                      onChange={() => setPickedId(m.library_item_id)}
+                      checked={picked === i}
+                      onChange={() => setPicked(i)}
                     />
                     <MatchRow match={m} />
                   </label>

@@ -77,6 +77,10 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
   onThemeToggle,
 }, ref) => {
   const searchBarRef = useRef<SearchBarHandle>(null);
+  // Users see unviewed updates; admins (no unviewed count) see failed requests plus waiting reports.
+  const requestBadgeCount = requestCounts
+    ? requestCounts.unviewed ?? (requestCounts.failed + (requestCounts.reports_needing_action ?? 0))
+    : 0;
 
   useImperativeHandle(ref, () => ({
     submitSearch: () => {
@@ -227,13 +231,13 @@ export const Header = forwardRef<HeaderHandle, HeaderProps>(({
               />
             </svg>
             {/* Unviewed requests notification badge */}
-            {requestCounts && requestCounts.unviewed !== undefined && requestCounts.unviewed > 0 && (
+            {requestBadgeCount > 0 && (
               <span
                 className="absolute -top-1 -right-1 text-white text-[0.55rem] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center"
                 style={{ backgroundColor: '#FE9A76' }}
-                title={`${requestCounts.unviewed} new update${requestCounts.unviewed > 1 ? 's' : ''}`}
+                title={`${requestBadgeCount} ${requestCounts?.unviewed !== undefined ? 'new update' : 'item needing action'}${requestBadgeCount > 1 ? 's' : ''}`}
               >
-                {requestCounts.unviewed}
+                {requestBadgeCount}
               </span>
             )}
           </div>

@@ -26,6 +26,8 @@ interface RequestsSidebarProps {
   reports?: MediaReport[];
   /** Admin queue: needs_action, awaiting_approval and fixed reports. */
   adminReports?: MediaReport[];
+  /** Server count of reports waiting on the admin; shown even before the report list loads. */
+  reportsNeedingAction?: number;
   onReportProblem?: (request: BookRequest) => void;
   /** "Still wrong?" on a fixed cover report. */
   onReportAgain?: (report: MediaReport) => void;
@@ -171,6 +173,7 @@ export const RequestsSidebar = ({
   quota,
   reports = [],
   adminReports = [],
+  reportsNeedingAction,
   onReportProblem,
   onReportAgain,
   onReportAction,
@@ -188,7 +191,7 @@ export const RequestsSidebar = ({
     ...(hasPending || filter === 'pending' ? ['pending' as const] : []),
   ];
   const waitingReports = adminReports.filter((r) => REPORT_WAITING.includes(r.status));
-  const needsActionCount = requests.filter((r) => r.status === 'failed').length + waitingReports.length;
+  const needsActionCount = requests.filter((r) => r.status === 'failed').length + (reportsNeedingAction ?? waitingReports.length);
   const [busyReportIds, setBusyReportIds] = useState<Set<number>>(new Set());
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
   const [denyNote, setDenyNote] = useState('');
