@@ -647,6 +647,11 @@ def register_request_routes(app: Flask, request_db: RequestDB, user_db: UserDB) 
             unviewed = request_db.get_unviewed_count(user_id)
             counts["unviewed"] = unviewed
             counts["quota"] = request_quota.quota_for(request_db, _quota_user(user_db, user_id))
+            counts["report_quota"] = request_quota.report_quota_for(request_db, _quota_user(user_db, user_id))
+        else:
+            from shelfmark.core import report_db
+            counts["reports_needing_action"] = len(report_db.list_reports(
+                request_db, statuses=["needs_action", "awaiting_approval"]))
 
         return jsonify(counts)
 

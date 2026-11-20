@@ -173,6 +173,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
     def serialize(user: dict[str, Any], auth_mode: str, security_config: dict[str, Any]) -> dict[str, Any]:
         payload = _serialize_user(user, auth_mode, security_config=security_config)
         payload["request_quota"] = request_quota.quota_for(request_db, user) if request_db else None
+        payload["report_quota"] = request_quota.report_quota_for(request_db, user) if request_db else None
         return payload
 
     @app.route("/api/admin/request-limits", methods=["GET"])
@@ -203,6 +204,36 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
                 return jsonify({"error": "User not found"}), 404
         user_db.reset_request_limits(user_id)
         logger.info("Admin reset weekly request limits for %s", f"user {user_id}" if user_id else "all users")
+        return jsonify({"success": True})
+
+    @app.route("/api/admin/report-limits", methods=["GET"])
+    @_require_admin
+    def admin_get_report_limits():
+        return jsonify({"default": request_quota.default_limit("report")})
+
+    @app.route("/api/admin/report-limits", methods=["PUT"])
+    @_require_admin
+    def admin_update_report_limits():
+        try:
+            default = _parse_request_limit((request.get_json(silent=True) or {}).get("default"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Default limit must be a whole number from 0 to 100"}), 400
+        result = update_settings("users", {"WEEKLY_REPORT_LIMIT": default})
+        if not result.get("success"):
+            return jsonify({"error": result.get("message", "Could not save the default limit")}), 400
+        logger.info("Admin set the default weekly report limit to %s", default)
+        return jsonify({"default": request_quota.default_limit("report")})
+
+    @app.route("/api/admin/report-limits/reset", methods=["POST"])
+    @_require_admin
+    def admin_reset_report_limits():
+        """Start the weekly report count over for one user ({"user_id": n}) or everyone ({})."""
+        user_id = (request.get_json(silent=True) or {}).get("user_id")
+        if user_id is not None:
+            if isinstance(user_id, bool) or not isinstance(user_id, int) or not user_db.get_user(user_id=user_id):
+                return jsonify({"error": "User not found"}), 404
+        user_db.reset_report_limits(user_id)
+        logger.info("Admin reset weekly report limits for %s", f"user {user_id}" if user_id else "all users")
         return jsonify({"success": True})
 
     @app.route("/api/admin/users/<int:user_id>/library-accounts", methods=["GET"])
@@ -479,6 +510,16 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
                 except (TypeError, ValueError):
                     return jsonify({"error": "Weekly request limit must be a whole number from 0 to 100"}), 400
 
+        if "weekly_report_limit" in data:
+            raw_limit = data["weekly_report_limit"]
+            if raw_limit is None or raw_limit == "":
+                user_fields["weekly_report_limit"] = None
+            else:
+                try:
+                    user_fields["weekly_report_limit"] = _parse_request_limit(raw_limit)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Weekly report limit must be a whole number from 0 to 100"}), 400
+
         role_changed = "role" in user_fields and user_fields["role"] != user.get("role")
         email_changed = "email" in user_fields and user_fields["email"] != user.get("email")
         display_name_changed = (
@@ -529,7 +570,7 @@ def register_admin_routes(app: Flask, user_db: UserDB, request_db: RequestDB | N
             password_warnings = get_warnings(password_results)
 
         # Avoid unnecessary writes for no-op field updates.
-        for field in ("role", "email", "display_name", "weekly_request_limit"):
+        for field in ("role", "email", "display_name", "weekly_request_limit", "weekly_report_limit"):
             if field in user_fields and user_fields[field] == user.get(field):
                 user_fields.pop(field)
 
