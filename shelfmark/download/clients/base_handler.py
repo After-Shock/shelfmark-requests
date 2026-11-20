@@ -116,6 +116,11 @@ def _scan_abs_then_remove_torrent(
         logger.warning(f"'{title}' is in Audiobookshelf but removing torrent {download_id} failed: {e}")
 
 
+# Fix downloads (task.output_args["report_id"]): task_id -> (client, download_id). The torrent
+# stays until report_fixes has swapped the staged copy into the library.
+deferred_torrent_cleanup: dict[str, tuple[DownloadClient, str]] = {}
+
+
 class ExternalClientHandler(DownloadHandler, ABC):
     """Shared lifecycle handler for sources that hand off to torrent/usenet clients."""
 
@@ -183,6 +188,9 @@ class ExternalClientHandler(DownloadHandler, ABC):
 
         client, download_id, protocol = client_ref
         if protocol == "torrent":
+            if task.output_args.get("report_id"):
+                deferred_torrent_cleanup[task.task_id] = (client, download_id)
+                return
             if is_audiobook(task.content_type) and abs_client.is_configured():
                 threading.Thread(
                     target=_scan_abs_then_remove_torrent,

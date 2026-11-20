@@ -1268,6 +1268,112 @@ def _release_is_series_pack(book, release) -> bool:
     return _release_matches_author(book.authors, release)
 
 
+def find_release_candidates(
+    book,
+    content_type: str,
+    excluded_ids: set[str],
+    log_ref: str,
+    allow_series_pack: bool | None = None,
+) -> tuple[list[dict], str | None]:
+    """Search every enabled source for `book`: the best few releases as queueable dicts,
+    or ([], note) when nothing matched. `excluded_ids` are source_ids never to return.
+
+    allow_series_pack: None never falls back to series packs; True takes a pack of the
+    book's series when no release of the book itself exists; False returns only the first
+    such pack (series_pack=True, not filtered by excluded_ids) so the caller can offer it.
+    """
+    from dataclasses import asdict
+    from itertools import zip_longest
+
+    from shelfmark.core.search_plan import build_release_search_plan
+    from shelfmark.release_sources import get_source, get_source_display_name, list_available_sources
+
+    sources_to_search = [
+        src["name"] for src in list_available_sources()
+        if src["enabled"] and content_type in src["supported_content_types"]
+    ]
+    if not sources_to_search:
+        return [], f"No {content_type} download sources are enabled. Check settings."
+
+    def _search_all(manual_query=None):
+        found = []
+        for source_name in sources_to_search:
+            try:
+                source = get_source(source_name)
+                plan = build_release_search_plan(book, manual_query=manual_query)
+                found.extend(source.search(book, plan, expand_search=True, content_type=content_type))
+            except Exception as e:
+                logger.warning(f"Release search failed for {source_name} ({log_ref.lower()}): {e}")
+                source_errors.append(source_name)
+        return found
+
+    source_errors = []
+    searched_releases = _search_all()
+
+    # ABB, Libgen and Z-Library match loosely (descriptions, title-only
+    # fallback queries), so their top hits can be other books. Only grab the
+    # requested title, by the requested author, from them.
+    all_releases = [
+        r for r in searched_releases
+        if not _is_extra_release(book.title, r.title)
+        and (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
+             or (r.source == "direct_download" and _release_starts_with_title(book.title, r.title)))
+        and (r.source == "direct_download" or _release_matches_author(book.authors, r))
+    ]
+
+    # No release of the book itself: take a pack of its series that contains it.
+    series_pack = False
+    if not all_releases and allow_series_pack is not None and content_type == "audiobook" and book.series_name:
+        author = book.authors[0] if book.authors else ""
+        pool = searched_releases + _search_all(f"{book.series_name} {author}".strip())
+        all_releases = [r for r in pool if r.source != "direct_download" and _release_is_series_pack(book, r)]
+        series_pack = bool(all_releases)
+        if series_pack and not allow_series_pack:
+            all_releases, excluded_ids = all_releases[:1], set()
+        elif series_pack:
+            logger.info(
+                "%s: no release of '%s' on its own; using series pack '%s'",
+                log_ref, book.title, all_releases[0].title,
+            )
+
+    if not all_releases:
+        searched = [get_source_display_name(s) for s in sources_to_search if s not in source_errors]
+        if not searched:
+            failed = ", ".join(get_source_display_name(s) for s in source_errors)
+            return [], f"Search failed on {failed}. Try again later."
+        if content_type == "audiobook":
+            return [], f"No automation resources found: no {', '.join(searched)} release matches '{book.title}'."
+        return [], f"Not found on {', '.join(searched)}. Book may not be available for download yet."
+
+    # Keep the best few releases (deduped by source_id) so a dead top hit doesn't
+    # fail the whole download. Alternate sources so one source's dead top hits can't
+    # use up every attempt, and skip excluded copies (already failed or delivered).
+    by_source: dict[str, list] = {}
+    for release in all_releases:
+        by_source.setdefault(release.source, []).append(release)
+    ordered = [r for group in zip_longest(*by_source.values()) for r in group if r is not None]
+    candidates = []
+    seen_source_ids = set(excluded_ids)
+    for release in ordered:
+        release_data = asdict(release)
+        source_id = release_data.get("source_id", "")
+        if source_id in seen_source_ids:
+            continue
+        seen_source_ids.add(source_id)
+        release_data["author"] = book.authors[0] if book.authors else None
+        release_data["year"] = str(book.publish_year) if book.publish_year else None
+        release_data["preview"] = book.cover_url
+        release_data["content_type"] = content_type
+        release_data["series_name"] = book.series_name
+        release_data["series_position"] = book.series_position
+        release_data["series_pack"] = series_pack
+        release_data["isbn"] = book.isbn_13 or book.isbn_10 or None
+        candidates.append(release_data)
+        if len(candidates) >= _MAX_RELEASE_ATTEMPTS:
+            break
+    return candidates, None
+
+
 def _auto_download_request(
     request_db: RequestDB,
     user_db: UserDB,
@@ -1289,13 +1395,11 @@ def _auto_download_request(
 
     try:
         from shelfmark.download import orchestrator as backend
-        from shelfmark.release_sources import get_source, list_available_sources
         from shelfmark.metadata_providers import (
             get_provider,
             is_provider_registered,
             get_provider_kwargs,
         )
-        from shelfmark.core.search_plan import build_release_search_plan
 
         provider_name = req.get("provider")
         provider_id = req.get("provider_id")
@@ -1353,114 +1457,30 @@ def _auto_download_request(
                 _notify_admin(req, user_db, "already_exists", "Audiobook Already Exists", note, pushover=False)
                 return
 
-        # Search for releases
-        sources_to_search = [
-            src["name"] for src in list_available_sources()
-            if src["enabled"] and content_type in src["supported_content_types"]
-        ]
-        if not sources_to_search:
-            _safe_update_status("failed", admin_note=f"No {content_type} download sources are enabled. Check settings.")
-            return
-
-        def _search_all(manual_query=None):
-            found = []
-            for source_name in sources_to_search:
-                try:
-                    source = get_source(source_name)
-                    plan = build_release_search_plan(book, manual_query=manual_query)
-                    found.extend(source.search(book, plan, expand_search=True, content_type=content_type))
-                except Exception as e:
-                    logger.warning(f"Release search failed for {source_name} (request #{request_id}): {e}")
-                    source_errors.append(source_name)
-            return found
-
-        source_errors = []
-        searched_releases = _search_all()
-
-        # ABB, Libgen and Z-Library match loosely (descriptions, title-only
-        # fallback queries), so their top hits can be other books. Only grab the
-        # requested title, by the requested author, from them.
-        all_releases = [
-            r for r in searched_releases
-            if not _is_extra_release(book.title, r.title)
-            and (_release_matches_title(book.title, r.title, book.series_position, book.series_name)
-                 or (r.source == "direct_download" and _release_starts_with_title(book.title, r.title)))
-            and (r.source == "direct_download" or _release_matches_author(book.authors, r))
-        ]
-
-        # No release of the book itself: take a pack of its series that contains it.
-        series_pack = False
-        if not all_releases and content_type == "audiobook" and book.series_name:
-            author = book.authors[0] if book.authors else ""
-            pool = searched_releases + _search_all(f"{book.series_name} {author}".strip())
-            all_releases = [r for r in pool if r.source != "direct_download" and _release_is_series_pack(book, r)]
-            series_pack = bool(all_releases)
-            if series_pack and not allow_series_pack:
-                pack = all_releases[0]
-                note = f"Not available on its own. Series pack available: '{pack.title}'" + (
-                    f" ({pack.size})" if getattr(pack, "size", None) else ""
-                )
-                logger.info("Request #%s: %s; waiting for the admin", request_id, note)
-                _safe_update_status("failed", admin_note=note, series_pack_offer=pack.title)
-                _notify_admin(req, user_db, "series_pack", "Series Pack Available", note + ". Grab it from the requests page.")
-                return
-            if series_pack:
-                logger.info(
-                    "Request #%s: no release of '%s' on its own; using series pack '%s'",
-                    request_id, book.title, all_releases[0].title,
-                )
-
-        if not all_releases:
-            from shelfmark.release_sources import get_source_display_name
-
-            searched = [get_source_display_name(s) for s in sources_to_search if s not in source_errors]
-            if not searched:
-                failed = ", ".join(get_source_display_name(s) for s in source_errors)
-                note = f"Search failed on {failed}. Try again later."
-            elif content_type == "audiobook":
-                note = f"No automation resources found: no {', '.join(searched)} release matches '{book.title}'."
-            else:
-                note = f"Not found on {', '.join(searched)}. Book may not be available for download yet."
-            _safe_update_status("failed", admin_note=note)
-            return
-
-        # Keep the best few releases (deduped by md5) so a dead top hit doesn't
-        # fail the whole request.
-        user_overrides = user_db.get_user_settings(admin_user_id) if admin_user_id else {}
-
-        from dataclasses import asdict
-        from itertools import zip_longest
-        # Alternate sources so one source's dead top hits can't use up every
-        # attempt, and skip copies that already failed for this request.
-        by_source: dict[str, list] = {}
-        for release in all_releases:
-            by_source.setdefault(release.source, []).append(release)
-        ordered = [r for group in zip_longest(*by_source.values()) for r in group if r is not None]
         with _retry_lock:
             failed_ids = set(_failed_release_ids.get(request_id, ()))
-        candidates = []
-        seen_source_ids = set(failed_ids)
-        for release in ordered:
-            release_data = asdict(release)
-            source_id = release_data.get("source_id", "")
-            if source_id in seen_source_ids:
-                continue
-            seen_source_ids.add(source_id)
-            release_data["author"] = book.authors[0] if book.authors else None
-            release_data["year"] = str(book.publish_year) if book.publish_year else None
-            release_data["preview"] = book.cover_url
-            release_data["content_type"] = content_type
-            release_data["series_name"] = book.series_name
-            release_data["series_position"] = book.series_position
-            release_data["series_pack"] = series_pack
-            release_data["isbn"] = next(
-                (i for i in (book.isbn_13, book.isbn_10, req.get("isbn_13"), req.get("isbn_10"))
-                 if i and i not in edition_isbns),
-                None,
+        candidates, note = find_release_candidates(
+            book, content_type, failed_ids, f"Request #{request_id}",
+            allow_series_pack=allow_series_pack,
+        )
+        if note:
+            _safe_update_status("failed", admin_note=note)
+            return
+        if candidates and candidates[0]["series_pack"] and not allow_series_pack:
+            pack = candidates[0]
+            note = f"Not available on its own. Series pack available: '{pack['title']}'" + (
+                f" ({pack['size']})" if pack.get("size") else ""
             )
-            candidates.append(release_data)
-            if len(candidates) >= _MAX_RELEASE_ATTEMPTS:
-                break
+            logger.info("Request #%s: %s; waiting for the admin", request_id, note)
+            _safe_update_status("failed", admin_note=note, series_pack_offer=pack["title"])
+            _notify_admin(req, user_db, "series_pack", "Series Pack Available", note + ". Grab it from the requests page.")
+            return
+        for release_data in candidates:
+            release_data["isbn"] = release_data["isbn"] or next(
+                (i for i in (req.get("isbn_13"), req.get("isbn_10")) if i and i not in edition_isbns), None
+            )
+
+        user_overrides = user_db.get_user_settings(admin_user_id) if admin_user_id else {}
 
         with _retry_lock:
             _release_retries[request_id] = {

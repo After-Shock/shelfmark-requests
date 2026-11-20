@@ -140,6 +140,7 @@ try:
     register_oidc_provider_routes(app, user_db)
     if not app.config.get("TESTING"):
         from shelfmark.core.request_routes import resume_interrupted_requests, start_prerelease_download
+        report_fixes.fail_interrupted_fixes(request_db)
         threading.Thread(
             target=resume_interrupted_requests,
             args=(request_db, user_db),
@@ -963,6 +964,13 @@ def _notify_admin_for_terminal_download_status(*, task_id: str, status: QueueSta
 
 
 def _on_download_terminal(task_id: str, status: QueueStatus, task: Any) -> None:
+    # Report fixes never touch requests, quota or Discord.
+    output_args = getattr(task, "output_args", None)
+    if isinstance(output_args, dict) and output_args.get("report_id"):
+        from shelfmark.core import report_fixes
+
+        report_fixes.on_fix_task_terminal(task, status)
+        return
     if _sync_request_db_on_terminal(task_id, status):
         # Superseded attempt: the next release is already queued, so don't show
         # or notify a "cancelled"/"failed" item for this one.

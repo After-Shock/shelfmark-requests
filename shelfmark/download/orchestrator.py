@@ -175,8 +175,12 @@ def queue_release(
     username: Optional[str] = None,
     user_overrides: Optional[Dict[str, Any]] = None,  # deprecated: kept for back-compat with request_routes
     email_recipient: Optional[str] = None,  # deprecated: kept for back-compat
+    output_args: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Optional[str]]:
-    """Add a release to the download queue. Returns (success, error_message)."""
+    """Add a release to the download queue. Returns (success, error_message).
+
+    output_args merge into the task's (e.g. a "destination" override).
+    """
     try:
         source = release_data.get('source', 'direct_download')
         extra = release_data.get('extra', {})
@@ -213,7 +217,8 @@ def queue_release(
         is_audiobook = check_audiobook(content_type)
 
         output_mode = "folder" if is_audiobook else books_output_mode
-        output_args: Dict[str, Any] = {}
+        extra_output_args = output_args or {}
+        output_args = {}
 
         if output_mode == "email" and not is_audiobook:
             email_to, email_error = _resolve_email_destination(user_id=user_id)
@@ -241,7 +246,7 @@ def queue_release(
             series_pack=bool(release_data.get('series_pack')),
             search_mode=SearchMode.UNIVERSAL,
             output_mode=output_mode,
-            output_args=output_args,
+            output_args={**output_args, **extra_output_args},
             priority=priority,
             user_id=user_id,
             username=username,
