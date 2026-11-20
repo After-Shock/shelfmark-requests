@@ -130,6 +130,10 @@ try:
     register_admin_routes(app, user_db, request_db)
     register_self_user_routes(app, user_db)
     register_request_routes(app, request_db, user_db)
+    from shelfmark.core import report_fixes
+    from shelfmark.core.report_routes import register_report_routes
+    report_fixes.init(request_db, user_db)
+    register_report_routes(app, request_db, user_db)
     from shelfmark.core.app_sso import register_app_sso_routes
     from shelfmark.core.oidc_provider import register_oidc_provider_routes
     register_app_sso_routes(app, user_db)
