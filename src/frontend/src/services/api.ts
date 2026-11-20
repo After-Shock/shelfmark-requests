@@ -1,4 +1,4 @@
-import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, CreateBookRequestResponse, RequestsListResponse, RequestCounts, RequestQuota } from '../types';
+import { Book, StatusData, AppConfig, LoginCredentials, AuthResponse, ReleaseSource, ReleasesResponse, BookRequest, CreateBookRequestResponse, RequestsListResponse, RequestCounts, RequestQuota, ContentType, ProblemType, MediaReport, LibraryMatch, CreateReportResponse } from '../types';
 import { SettingsResponse, ActionResult, UpdateResult } from '../types/settings';
 import { MetadataBookData, transformMetadataToBook } from '../utils/bookTransformers';
 import { getApiBase } from '../utils/basePath';
@@ -95,7 +95,7 @@ async function fetchJSON<T>(
         throw new AuthenticationError(errorMessage);
       }
 
-      throw new Error(errorMessage);
+      throw Object.assign(new Error(errorMessage), { status: res.status });
     }
 
     return res.json();
@@ -462,6 +462,8 @@ export interface AdminUser {
   created_at: string;
   weekly_request_limit?: number | null;
   request_quota?: RequestQuota | null;
+  weekly_report_limit?: number | null;
+  report_quota?: RequestQuota | null;
 }
 
 export const getAdminUsers = async (): Promise<AdminUser[]> => {
@@ -483,7 +485,7 @@ export const createAdminUser = async (
 
 export const updateAdminUser = async (
   userId: number,
-  data: Partial<Pick<AdminUser, 'role' | 'email' | 'display_name' | 'weekly_request_limit'>> & {
+  data: Partial<Pick<AdminUser, 'role' | 'email' | 'display_name' | 'weekly_request_limit' | 'weekly_report_limit'>> & {
     password?: string;
   }
 ): Promise<AdminUser> => {
@@ -507,6 +509,25 @@ export const updateDefaultRequestLimit = async (value: number): Promise<{ defaul
 /** Start the weekly request count over for one user, or for everyone when userId is omitted. */
 export const resetRequestLimits = async (userId?: number): Promise<{ success: boolean }> => {
   return fetchJSON<{ success: boolean }>(`${API_BASE}/admin/request-limits/reset`, {
+    method: 'POST',
+    body: JSON.stringify(userId === undefined ? {} : { user_id: userId }),
+  });
+};
+
+export const getReportLimits = async (): Promise<{ default: number }> => {
+  return fetchJSON<{ default: number }>(`${API_BASE}/admin/report-limits`);
+};
+
+export const updateDefaultReportLimit = async (value: number): Promise<{ default: number }> => {
+  return fetchJSON<{ default: number }>(`${API_BASE}/admin/report-limits`, {
+    method: 'PUT',
+    body: JSON.stringify({ default: value }),
+  });
+};
+
+/** Start the weekly report count over for one user, or for everyone when userId is omitted. */
+export const resetReportLimits = async (userId?: number): Promise<{ success: boolean }> => {
+  return fetchJSON<{ success: boolean }>(`${API_BASE}/admin/report-limits/reset`, {
     method: 'POST',
     body: JSON.stringify(userId === undefined ? {} : { user_id: userId }),
   });
@@ -780,3 +801,49 @@ export const setAdminLibraryPassword = (userId: number, password: string, confir
   fetchJSON(`${API_BASE}/admin/users/${userId}/library-accounts/password`, {
     method: 'POST', body: JSON.stringify({ password, confirmation }),
   }, 60000);
+
+// --- Media issue reports ---
+
+export const getLibraryMatches = async (
+  title: string, author: string, contentType: ContentType
+): Promise<LibraryMatch[]> => {
+  const params = new URLSearchParams({ title, author, content_type: contentType });
+  const data = await fetchJSON<{ matches: LibraryMatch[] }>(`${API_BASE}/library/matches?${params}`);
+  return data.matches;
+};
+
+export const createReport = async (data: {
+  problem_type: ProblemType;
+  title: string;
+  author?: string;
+  content_type: ContentType;
+  note?: string;
+  library_item_id?: string;
+  request_id?: number;
+  provider?: string;
+  provider_id?: string;
+}): Promise<CreateReportResponse> => {
+  return fetchJSON<CreateReportResponse>(`${API_BASE}/reports`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+};
+
+export const getMyReports = async (): Promise<MediaReport[]> => {
+  return fetchJSON<MediaReport[]>(`${API_BASE}/reports`);
+};
+
+export const getAdminReports = async (statuses: string[]): Promise<MediaReport[]> => {
+  return fetchJSON<MediaReport[]>(`${API_BASE}/admin/reports?status=${statuses.join(',')}`);
+};
+
+export type ReportAction = 'approve' | 'dismiss' | 'undo' | 'retry';
+
+/** The server answers 202 and works in the background; a 409 throws with the server's text. */
+export const adminReportAction = async (reportId: number, action: ReportAction): Promise<MediaReport> => {
+  const data = await fetchJSON<{ report: MediaReport }>(`${API_BASE}/admin/reports/${reportId}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  return data.report;
+};

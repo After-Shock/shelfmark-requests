@@ -399,4 +399,47 @@ export interface RequestCounts {
   total: number;
   unviewed?: number;
   quota?: RequestQuota | null;
+  /** Weekly report limit for non-admins; null = unlimited. */
+  report_quota?: RequestQuota | null;
+  /** Admins only: reports waiting on them. */
+  reports_needing_action?: number;
+}
+
+export type ProblemType =
+  | 'wrong_language' | 'wrong_edition' | 'broken_file' | 'audio_problem'
+  | 'wrong_cover' | 'wrong_details' | 'other';
+
+export type ReportStatus = 'open' | 'fixing' | 'awaiting_approval' | 'needs_action' | 'fixed' | 'dismissed';
+
+export interface MediaReport {
+  id: number;
+  library: string | null;
+  library_item_id: string | null;
+  content_type: ContentType;
+  title: string;
+  author: string | null;
+  request_id: number | null;
+  problem_type: ProblemType;
+  note: string | null;
+  status: ReportStatus;
+  resolution_note: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Admin list only. */
+  reporter?: string | null;
+  joined_count?: number;
+}
+
+export interface LibraryMatch {
+  library: 'abs' | 'calibre';
+  library_item_id: string | null;
+  title: string;
+  author: string;
+  cover: string | null;
+}
+
+export interface CreateReportResponse {
+  report: MediaReport;
+  joined: boolean;
+  quota: RequestQuota | null;
 }

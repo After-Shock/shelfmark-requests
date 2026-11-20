@@ -19,6 +19,9 @@ import {
   getRequestLimits,
   updateDefaultRequestLimit,
   resetRequestLimits,
+  getReportLimits,
+  updateDefaultReportLimit,
+  resetReportLimits,
 } from '../../services/api';
 
 interface UsersPanelProps {
@@ -46,6 +49,10 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
   const [defaultLimitInput, setDefaultLimitInput] = useState('');
   const [savingDefaultLimit, setSavingDefaultLimit] = useState(false);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
+  const [defaultReportLimit, setDefaultReportLimit] = useState<number | null>(null);
+  const [defaultReportLimitInput, setDefaultReportLimitInput] = useState('');
+  const [savingDefaultReportLimit, setSavingDefaultReportLimit] = useState(false);
+  const [confirmResetAllReports, setConfirmResetAllReports] = useState(false);
 
   // Edit view state
   const [downloadDefaults, setDownloadDefaults] = useState<DownloadDefaults | null>(null);
@@ -54,16 +61,21 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
     try {
       setLoading(true);
       setLoadError(null);
-      const [data, inviteData, resetData, limits] = await Promise.all([
+      const [data, inviteData, resetData, limits, reportLimits] = await Promise.all([
         getAdminUsers(),
         getInviteCodes().catch(() => [] as InviteCode[]),
         getPasswordResetCodes().catch(() => [] as PasswordResetCode[]),
         getRequestLimits().catch(() => null),
+        getReportLimits().catch(() => null),
       ]);
       setUsers(data);
       if (limits) {
         setDefaultLimit(limits.default);
         setDefaultLimitInput(String(limits.default));
+      }
+      if (reportLimits) {
+        setDefaultReportLimit(reportLimits.default);
+        setDefaultReportLimitInput(String(reportLimits.default));
       }
       setInvites(inviteData);
       setPasswordResets(resetData);
@@ -112,6 +124,7 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
         email: editingUser.email,
         display_name: editingUser.display_name,
         weekly_request_limit: editingUser.weekly_request_limit ?? null,
+        weekly_report_limit: editingUser.weekly_report_limit ?? null,
         ...(!roleManaged ? { role: editingUser.role } : {}),
       });
       setEditingUser(null);
@@ -154,6 +167,37 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
       fetchUsers();
     } catch (err) {
       onShowToast?.(err instanceof Error ? err.message : 'Failed to reset request limit', 'error');
+    }
+  };
+
+  const handleSaveDefaultReportLimit = async () => {
+    const value = Number(defaultReportLimitInput);
+    if (defaultReportLimitInput.trim() === '' || !Number.isInteger(value) || value < 0 || value > 100) {
+      onShowToast?.('Default limit must be a whole number from 0 to 100', 'error');
+      return;
+    }
+    setSavingDefaultReportLimit(true);
+    try {
+      const result = await updateDefaultReportLimit(value);
+      setDefaultReportLimit(result.default);
+      setDefaultReportLimitInput(String(result.default));
+      onShowToast?.(`Default weekly report limit set to ${result.default}`, 'success');
+      fetchUsers();
+    } catch (err) {
+      onShowToast?.(err instanceof Error ? err.message : 'Failed to save default report limit', 'error');
+    } finally {
+      setSavingDefaultReportLimit(false);
+    }
+  };
+
+  const handleResetReportLimit = async (user?: AdminUser) => {
+    try {
+      await resetReportLimits(user?.id);
+      setConfirmResetAllReports(false);
+      onShowToast?.(user ? `Weekly reports reset for ${user.display_name || user.username}` : 'Weekly reports reset for everyone', 'success');
+      fetchUsers();
+    } catch (err) {
+      onShowToast?.(err instanceof Error ? err.message : 'Failed to reset report limit', 'error');
     }
   };
 
@@ -343,6 +387,30 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
             )}
           </div>
 
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Weekly report limit</label>
+            {editingUser.role === 'admin' ? (
+              <p className="text-xs opacity-60">Admins have no weekly limit.</p>
+            ) : (
+              <>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={editingUser.weekly_report_limit ?? ''}
+                  onChange={(e) => setEditingUser({
+                    ...editingUser,
+                    weekly_report_limit: e.target.value === '' ? null : Number(e.target.value),
+                  })}
+                  className={inputClasses}
+                  placeholder={defaultReportLimit === null ? 'Default' : `Default (${defaultReportLimit})`}
+                />
+                <p className="text-xs opacity-60">Leave blank to use the default.</p>
+              </>
+            )}
+          </div>
+
           <p className="text-xs opacity-60">Library account actions below save immediately. Save Changes applies to the profile fields above.</p>
           <AdminLibraryAccounts key={editingUser.id} user={editingUser} />
 
@@ -424,6 +492,57 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
           ) : (
             <button
               onClick={() => setConfirmResetAll(true)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors"
+            >
+              Reset Everyone
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mb-4 p-4 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] space-y-3">
+        <div>
+          <h4 className="text-sm font-medium">Weekly Report Limit</h4>
+          <p className="text-xs opacity-60">
+            Each user can report this many problems a week; the count resets Monday at midnight Eastern. Admins are unlimited, and dismissing a report does not give the slot back.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={defaultReportLimitInput}
+            onChange={(e) => setDefaultReportLimitInput(e.target.value)}
+            className="w-24 px-3 py-1.5 rounded-lg border border-[var(--border-muted)] bg-[var(--bg-soft)] text-sm"
+            aria-label="Default weekly report limit"
+          />
+          <button
+            onClick={handleSaveDefaultReportLimit}
+            disabled={savingDefaultReportLimit || defaultReportLimitInput === String(defaultReportLimit ?? '')}
+            className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors disabled:opacity-50"
+          >
+            {savingDefaultReportLimit ? 'Saving...' : 'Save Default'}
+          </button>
+          {confirmResetAllReports ? (
+            <>
+              <button
+                onClick={() => handleResetReportLimit()}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                Confirm Reset
+              </button>
+              <button
+                onClick={() => setConfirmResetAllReports(false)}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setConfirmResetAllReports(true)}
               className="px-3 py-1.5 rounded-lg text-sm font-medium border border-[var(--border-muted)] hover:bg-[var(--hover-surface)] transition-colors"
             >
               Reset Everyone
@@ -664,6 +783,26 @@ export const UsersPanel = ({ onShowToast }: UsersPanelProps) => {
                             onClick={() => handleResetLimit(user)}
                             className="ml-2 text-[var(--primary-color)] hover:underline"
                             title="Start this user's weekly count over"
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {user.report_quota && (
+                      <>
+                        <span className="opacity-50"> &middot; </span>
+                        <span
+                          className={user.report_quota.remaining === 0 ? 'text-red-500 font-medium' : 'opacity-50'}
+                          title={user.report_quota.is_default ? 'Default weekly limit' : 'Custom weekly limit'}
+                        >
+                          {user.report_quota.used}/{user.report_quota.limit} reports this week
+                        </span>
+                        {user.report_quota.used > 0 && (
+                          <button
+                            onClick={() => handleResetReportLimit(user)}
+                            className="ml-2 text-[var(--primary-color)] hover:underline"
+                            title="Start this user's weekly report count over"
                           >
                             Reset
                           </button>

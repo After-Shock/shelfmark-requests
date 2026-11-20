@@ -3,6 +3,8 @@ import { Book, ButtonStateInfo } from '../types';
 import { useSearchMode } from '../contexts/SearchModeContext';
 import { BookDownloadButton } from './BookDownloadButton';
 import { BookGetButton } from './BookGetButton';
+import { useReportContext } from '../contexts/ReportContext';
+import { useLibraryMatches } from '../hooks/useLibraryMatches';
 
 type ButtonSize = 'sm' | 'md';
 type ButtonVariant = 'default' | 'icon';
@@ -38,10 +40,35 @@ export function BookActionButton({
   onRequest,
 }: BookActionButtonProps) {
   const { searchMode } = useSearchMode();
+  const reports = useReportContext();
+  const matches = useLibraryMatches(
+    book.title, book.author, reports?.contentType, !!(showRequestButton && onRequest && reports),
+  );
 
   // All users with requests enabled see Request button / In Library badge
   if (showRequestButton && onRequest) {
     const sizeClasses = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
+
+    // In the library: report a problem instead of requesting it again.
+    if (reports && matches?.length) {
+      return (
+        <div className={`flex items-center gap-1 ${fullWidth ? 'w-full' : ''} ${className || ''}`} style={style}>
+          <span className={`${sizeClasses} rounded font-medium text-white inline-block`} style={{ backgroundColor: '#6B7280' }}>
+            In library
+          </span>
+          <button
+            type="button"
+            onClick={() => reports.openReport({
+              title: book.title, author: book.author, contentType: reports.contentType,
+              matches, provider: book.provider, providerId: book.provider_id,
+            })}
+            className={`${sizeClasses} flex-1 rounded font-medium transition-colors bg-accent-muted text-accent hover:bg-accent-muted-strong`}
+          >
+            Report a problem
+          </button>
+        </div>
+      );
+    }
 
     if (book.abs_owned) {
       return (

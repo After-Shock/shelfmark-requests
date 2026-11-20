@@ -38,10 +38,15 @@ import { AccountModal } from './components/AccountModal';
 import { ConfigSetupBanner } from './components/ConfigSetupBanner';
 import { OnboardingModal } from './components/OnboardingModal';
 import { ManualRequestModal } from './components/ManualRequestModal';
+import { ReportProblemModal, ReportTarget } from './components/ReportProblemModal';
+import { ReportContext } from './contexts/ReportContext';
+import { useReports } from './hooks/useReports';
 import { CommandPalette } from './components/CommandPalette';
 import { DEFAULT_LANGUAGES, DEFAULT_SUPPORTED_FORMATS } from './data/languages';
 import { buildSearchQuery } from './utils/buildSearchQuery';
 import { getRequestOutcomeMessage } from './utils/requestOutcome';
+import type { MediaReport } from './types';
+import type { ReportAction } from './services/api';
 import { UserCancelledError, isUserCancelledError } from './utils/errors';
 import { withBasePath } from './utils/basePath';
 import { SearchModeProvider } from './contexts/SearchModeContext';
@@ -269,6 +274,25 @@ function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [downloadsSidebarOpen, setDownloadsSidebarOpen] = useState(false);
   const [requestsSidebarOpen, setRequestsSidebarOpen] = useState(false);
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  const { reports, adminReports, refreshReports, handleReportAction } = useReports({
+    enabled: requestsEnabled, isAdmin, isOpen: requestsSidebarOpen, onChanged: refreshRequests,
+  });
+  const handleReportActionWithToast = useCallback(async (reportId: number, action: ReportAction) => {
+    try {
+      await handleReportAction(reportId, action);
+    } catch (error) {
+      // 409: the report moved on (or was already handled); show the server's reason
+      showToast(error instanceof Error ? error.message : 'Report action failed', 'error');
+    }
+  }, [handleReportAction, showToast]);
+  const handleReportAgain = useCallback((report: MediaReport) => setReportTarget({
+    title: report.title,
+    author: report.author ?? '',
+    contentType: report.content_type,
+    preset: 'wrong_cover',
+    requestId: report.request_id ?? undefined,
+  }), []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -836,6 +860,7 @@ function App() {
 
   const mainAppContent = (
     <SearchModeProvider searchMode={searchMode}>
+    <ReportContext.Provider value={{ contentType, openReport: setReportTarget }}>
       <Header
         calibreWebUrl={config?.calibre_web_url || ''}
         audiobookLibraryUrl={config?.audiobook_library_url || ''}
@@ -1083,6 +1108,28 @@ function App() {
           onMarkCompleted={handleMarkCompletedWithToast}
           onRefresh={refreshRequests}
           quota={requestCounts.quota}
+          reports={reports}
+          adminReports={adminReports}
+          onReportProblem={(req) => setReportTarget({
+            title: req.title, author: req.author ?? '', contentType: req.content_type,
+            requestId: req.id, provider: req.provider, providerId: req.provider_id,
+          })}
+          onReportAgain={handleReportAgain}
+          onReportAction={handleReportActionWithToast}
+        />
+      )}
+
+      {reportTarget && (
+        <ReportProblemModal
+          target={reportTarget}
+          quota={requestCounts.report_quota}
+          onClose={() => setReportTarget(null)}
+          onDone={(result) => {
+            setReportTarget(null);
+            showToast(result.joined ? 'Someone already reported this. We added you to it.' : 'Report sent. Thank you!', 'success');
+            refreshReports();
+            refreshRequests();
+          }}
         />
       )}
 
@@ -1122,6 +1169,7 @@ function App() {
         onShowToast={showToast}
       />
 
+    </ReportContext.Provider>
     </SearchModeProvider>
   );
 

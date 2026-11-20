@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { BookRequest, RequestQuota, RequestStatus } from '../types';
-import { deleteBookRequest } from '../services/api';
+import { BookRequest, MediaReport, RequestQuota, RequestStatus } from '../types';
+import { deleteBookRequest, ReportAction } from '../services/api';
 import { theme } from '../theme';
 import { formatQuotaLeft } from '../utils/requestOutcome';
+import { PROBLEM_LABELS, reportStatusText } from '../utils/reportOutcome';
 
 interface RequestsSidebarProps {
   isOpen: boolean;
@@ -21,6 +22,14 @@ interface RequestsSidebarProps {
   onRefresh: () => Promise<void>;
   /** Weekly request limit for non-admins; null/undefined = unlimited. */
   quota?: RequestQuota | null;
+  /** The viewer's own reports (non-admins). */
+  reports?: MediaReport[];
+  /** Admin queue: needs_action, awaiting_approval and fixed reports. */
+  adminReports?: MediaReport[];
+  onReportProblem?: (request: BookRequest) => void;
+  /** "Still wrong?" on a fixed cover report. */
+  onReportAgain?: (report: MediaReport) => void;
+  onReportAction?: (reportId: number, action: ReportAction) => Promise<void>;
 }
 
 type FilterTab = 'needs_action' | 'all' | 'prerelease' | 'pending' | 'history';
@@ -29,6 +38,12 @@ const HISTORY_STATUSES: RequestStatus[] = ['fulfilled', 'denied', 'cancelled'];
 // Active = approved and in progress; pending/pre-release/history each have their own tab
 const ACTIVE_STATUSES: RequestStatus[] = ['approved', 'downloading', 'no_sources_requested'];
 const FAILED_ADMIN_STYLE: { bg: string; text: string; label: string; customStyle?: React.CSSProperties } = { bg: 'bg-red-500/20', text: 'text-red-700 dark:text-red-300', label: 'Failed' };
+const REPORT_WAITING: MediaReport['status'][] = ['needs_action', 'awaiting_approval'];
+const FILE_PROBLEMS: MediaReport['problem_type'][] = ['wrong_language', 'wrong_edition', 'broken_file', 'audio_problem'];
+const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const ADMIN_REPORT_LABELS: Record<string, string> = {
+  awaiting_approval: 'Awaiting approval', needs_action: 'Needs action', fixing: 'Fixing', fixed: 'Fixed',
+};
 const TAB_LABELS: Record<FilterTab, string> = {
   needs_action: 'Needs action', all: 'Active', prerelease: 'Pre-release', pending: 'Pending', history: 'History',
 };
@@ -154,6 +169,11 @@ export const RequestsSidebar = ({
   onMarkCompleted,
   onRefresh,
   quota,
+  reports = [],
+  adminReports = [],
+  onReportProblem,
+  onReportAgain,
+  onReportAction,
 }: RequestsSidebarProps) => {
   // 'default' until the viewer picks a tab, so the default follows isAdmin once it loads.
   const [chosenFilter, setFilter] = useState<FilterTab | 'default'>('default');
@@ -167,7 +187,9 @@ export const RequestsSidebar = ({
     // Requests are approved automatically; the tab only remains for older pending ones.
     ...(hasPending || filter === 'pending' ? ['pending' as const] : []),
   ];
-  const needsActionCount = requests.filter((r) => r.status === 'failed').length;
+  const waitingReports = adminReports.filter((r) => REPORT_WAITING.includes(r.status));
+  const needsActionCount = requests.filter((r) => r.status === 'failed').length + waitingReports.length;
+  const [busyReportIds, setBusyReportIds] = useState<Set<number>>(new Set());
   const [denyNoteId, setDenyNoteId] = useState<number | null>(null);
   const [denyNote, setDenyNote] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<number>>(new Set());
@@ -204,6 +226,24 @@ export const RequestsSidebar = ({
     const bTime = new Date(normalizeTimestamp(b.completed_at || b.updated_at)).getTime();
     return bTime - aTime;
   });
+
+  // Admin report lists: waiting ones under Needs action, recently fixed (undoable) under History.
+  const tabReports: MediaReport[] = !isAdmin ? [] : filter === 'needs_action' ? waitingReports
+    : filter === 'history'
+      ? adminReports.filter((r) => r.status === 'fixed'
+        && Date.now() - new Date(normalizeTimestamp(r.updated_at)).getTime() < UNDO_WINDOW_MS)
+      : [];
+  const myReports = !isAdmin && filter === 'all' ? reports : [];
+
+  const handleReportActionClick = async (reportId: number, action: ReportAction) => {
+    if (!onReportAction) return;
+    setBusyReportIds((prev) => new Set(prev).add(reportId));
+    try {
+      await onReportAction(reportId, action);
+    } finally {
+      setBusyReportIds((prev) => { const next = new Set(prev); next.delete(reportId); return next; });
+    }
+  };
 
   const handleApproveClick = async (requestId: number) => {
     addProcessing(requestId);
@@ -343,6 +383,69 @@ export const RequestsSidebar = ({
     } finally {
       removeProcessing(req.id);
     }
+  };
+
+  const renderReportItem = (report: MediaReport) => {
+    const busy = busyReportIds.has(report.id);
+    const actionClass = 'px-2 py-0.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+    const canRetry = report.status === 'needs_action' && FILE_PROBLEMS.includes(report.problem_type)
+      && report.library === 'abs' && !!report.library_item_id;
+    const canDismiss = report.status === 'needs_action' || report.status === 'awaiting_approval';
+    const action = (label: string, kind: ReportAction, className: string) => (
+      <button
+        type="button"
+        onClick={() => handleReportActionClick(report.id, kind)}
+        disabled={busy}
+        className={`${actionClass} ${className}`}
+      >
+        {label}
+      </button>
+    );
+    return (
+      <div
+        key={`report-${report.id}`}
+        className="rounded-lg border p-3 flex flex-col gap-1"
+        style={{ borderColor: 'var(--border-muted)', background: 'var(--bg-soft)' }}
+      >
+        <h3 className="font-semibold text-sm truncate" title={report.title}>{report.title}</h3>
+        <p className="text-xs opacity-70 truncate">{report.author || 'Unknown Author'}</p>
+        <div className="text-xs opacity-70">
+          <span className="uppercase">{report.content_type}</span>
+          <span> &middot; </span>
+          <span>{PROBLEM_LABELS[report.problem_type]}</span>
+          {isAdmin && !!report.reporter && <span> &middot; {report.reporter}</span>}
+          {isAdmin && !!report.joined_count && <span> (+{report.joined_count} more)</span>}
+          <span> &middot; </span>
+          <span>{formatRelativeTime(report.created_at)}</span>
+        </div>
+        {!!report.note && <p className="text-xs italic text-gray-500 dark:text-gray-400">{report.note}</p>}
+        {!!report.resolution_note && (
+          <p className={`text-xs ${isAdmin && report.status === 'needs_action' ? 'text-red-600 dark:text-red-400 font-medium' : 'text-gray-500 dark:text-gray-400'}`}>
+            {report.resolution_note}
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <div className="flex items-center gap-1 flex-wrap">
+            {isAdmin && report.status === 'awaiting_approval' && action('Approve', 'approve', 'bg-green-500/20 text-green-700 dark:text-green-300 hover:bg-green-500/30')}
+            {isAdmin && canRetry && action('Retry', 'retry', 'bg-accent-muted text-accent enabled:hover:bg-accent-muted-strong')}
+            {isAdmin && canDismiss && action('Dismiss', 'dismiss', 'bg-red-500/20 text-red-700 dark:text-red-300 hover:bg-red-500/30')}
+            {isAdmin && report.status === 'fixed' && action('Undo', 'undo', 'bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30')}
+            {!isAdmin && report.status === 'fixed' && report.problem_type === 'wrong_cover' && onReportAgain && (
+              <button
+                type="button"
+                onClick={() => onReportAgain(report)}
+                className={`${actionClass} bg-accent-muted text-accent enabled:hover:bg-accent-muted-strong`}
+              >
+                Still wrong?
+              </button>
+            )}
+          </div>
+          <span className="ml-auto px-2 py-0.5 rounded-lg text-xs font-medium bg-gray-500/20 text-gray-700 dark:text-gray-300">
+            {isAdmin ? ADMIN_REPORT_LABELS[report.status] ?? report.status : reportStatusText(report.status)}
+          </span>
+        </div>
+      </div>
+    );
   };
 
   const renderRequestItem = (req: BookRequest) => {
@@ -602,6 +705,16 @@ export const RequestsSidebar = ({
                 </div>
               )}
 
+              {req.status === 'fulfilled' && onReportProblem && (
+                <button
+                  type="button"
+                  onClick={() => onReportProblem(req)}
+                  className="px-2 py-0.5 text-xs font-medium rounded-lg transition-colors bg-accent-muted text-accent hover:bg-accent-muted-strong"
+                >
+                  Report a problem
+                </button>
+              )}
+
               <span
                 className={`ml-auto px-2 py-0.5 rounded-lg text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}
                 style={statusStyle.customStyle}
@@ -766,9 +879,15 @@ export const RequestsSidebar = ({
           className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3"
           style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
         >
-          {filteredRequests.length > 0 ? (
-            filteredRequests.map((req) => renderRequestItem(req))
-          ) : (
+          {filteredRequests.length > 0 && filteredRequests.map((req) => renderRequestItem(req))}
+          {tabReports.map(renderReportItem)}
+          {myReports.length > 0 && (
+            <>
+              <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide opacity-70">Reports</h3>
+              {myReports.map(renderReportItem)}
+            </>
+          )}
+          {filteredRequests.length === 0 && tabReports.length === 0 && myReports.length === 0 && (
             <div className="text-center text-sm opacity-70 mt-8">
               {filter === 'needs_action' ? 'Nothing needs your attention' : `No requests${filter !== 'all' ? ` (${TAB_LABELS[filter].toLowerCase()})` : ''}`}
             </div>
